@@ -1,0 +1,134 @@
+openapi: 3.0.3
+info:
+  title: iRODS REST API
+  version: 0.1.0
+  description: |
+    Starter OpenAPI contract for an iRODS-backed REST service.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: health
+  - name: objects
+  - name: collections
+paths:
+  /healthz:
+    get:
+      operationId: getHealth
+      tags: [health]
+      summary: Health probe
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /api/v1/objects/{object_id}:
+    get:
+      operationId: getObject
+      tags: [objects]
+      summary: Fetch object metadata from iRODS
+      parameters:
+        - in: path
+          name: object_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Object metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Object"
+        "404":
+          description: Object not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/collections/{collection_id}:
+    get:
+      operationId: getCollection
+      tags: [collections]
+      summary: Fetch collection metadata from iRODS
+      parameters:
+        - in: path
+          name: collection_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Collection metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Collection"
+        "404":
+          description: Collection not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, service, environment]
+      properties:
+        status:
+          type: string
+          example: ok
+        service:
+          type: string
+          example: iRODS REST API
+        environment:
+          type: string
+          example: development
+    Object:
+      type: object
+      required: [id, path, checksum, size, zone]
+      properties:
+        id:
+          type: string
+        path:
+          type: string
+        checksum:
+          type: string
+        size:
+          type: integer
+          format: int64
+        zone:
+          type: string
+        resource:
+          type: string
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+    Collection:
+      type: object
+      required: [id, path, zone]
+      properties:
+        id:
+          type: string
+        path:
+          type: string
+        zone:
+          type: string
+        childCount:
+          type: integer
+          format: int32
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
