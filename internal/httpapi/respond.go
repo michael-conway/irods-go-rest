@@ -6,9 +6,8 @@ import (
 )
 
 type errorResponse struct {
-	Code    string            `json:"code"`
-	Message string            `json:"message"`
-	Fields  map[string]string `json:"fields,omitempty"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
@@ -22,14 +21,6 @@ func writeError(w http.ResponseWriter, status int, code string, message string) 
 	writeJSON(w, status, errorResponse{
 		Code:    code,
 		Message: message,
-	})
-}
-
-func writeValidationError(w http.ResponseWriter, status int, code string, message string, fields map[string]string) {
-	writeJSON(w, status, errorResponse{
-		Code:    code,
-		Message: message,
-		Fields:  fields,
 	})
 }
 

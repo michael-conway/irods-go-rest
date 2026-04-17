@@ -5,48 +5,27 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/michael-conway/irods-go-rest/internal/auth"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 	"github.com/michael-conway/irods-go-rest/internal/httpapi"
 	"github.com/michael-conway/irods-go-rest/internal/irods"
-	"github.com/michael-conway/irods-go-rest/internal/restservice"
 )
 
 type App struct {
 	server *http.Server
 }
 
-func listenAddr(publicURL string) string {
-	if publicURL == "" {
-		return ""
-	}
-
-	parsedURL, err := url.Parse(publicURL)
-	if err == nil && parsedURL.Host != "" {
-		return parsedURL.Host
-	}
-
-	return publicURL
-}
-
-func New(cfg config.RestConfig) *App {
+func New(cfg config.Config) *App {
 	catalog := irods.NewCatalogService(cfg)
-	paths := restservice.NewPathService(catalog)
-	serverInfo := restservice.NewServerInfoService(irods.NewServerInfoService(cfg))
-	resources := restservice.NewResourceService(irods.NewResourceService(cfg))
-	users := restservice.NewUserService(irods.NewUserService(cfg))
-	userGroups := restservice.NewUserGroupService(irods.NewUserGroupService(cfg))
-	tickets := restservice.NewTicketService(irods.NewTicketService(cfg))
 	authService := auth.NewKeycloakService(cfg)
 	sessionStore := auth.NewSessionStore()
-	handler := httpapi.NewHandler(cfg, paths, serverInfo, resources, users, userGroups, tickets, authService, authService, sessionStore)
+	handler := httpapi.NewHandler(cfg, catalog, authService, authService, sessionStore)
 
 	return &App{
 		server: &http.Server{
-			Addr:              listenAddr(cfg.PublicURL),
+			Addr:              cfg.ServerAddr,
 			Handler:           handler.Routes(),
 			ReadHeaderTimeout: 5 * time.Second,
 		},

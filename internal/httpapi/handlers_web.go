@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"html"
-	"log"
 	"net/http"
 
 	"github.com/michael-conway/irods-go-rest/internal/auth"
@@ -27,9 +26,7 @@ func (h *Handler) webHome(w http.ResponseWriter, r *http.Request) {
 		username = html.EscapeString(session.Principal.Subject)
 	}
 
-	accessToken := html.EscapeString(session.Token.AccessToken)
-
-	body := fmt.Sprintf(`<html><body><h1>iRODS REST Web Login</h1><p>Signed in as <strong>%s</strong>.</p><p>This browser session is separate from the bearer-token API.</p><h2>Bearer Token</h2><p>Copy this access token for API requests:</p><textarea id="access-token" rows="10" cols="100" readonly>%s</textarea><p><button type="button" onclick="navigator.clipboard.writeText(document.getElementById('access-token').value)">Copy token</button></p><form method="post" action="/web/logout"><button type="submit">Sign out</button></form></body></html>`, username, accessToken)
+	body := fmt.Sprintf(`<html><body><h1>iRODS REST Web Login</h1><p>Signed in as <strong>%s</strong>.</p><p>This browser session is separate from the bearer-token API.</p><form method="post" action="/web/logout"><button type="submit">Sign out</button></form></body></html>`, username)
 	writeHTML(w, http.StatusOK, body)
 }
 
@@ -39,14 +36,6 @@ func (h *Handler) webLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "auth_failed", err.Error())
 		return
 	}
-
-	log.Printf(
-		"web login requested: public_url=%q auth_flow_nil=%t verifier_nil=%t state_present=%t",
-		h.cfg.PublicURL,
-		h.authFlow == nil,
-		h.verifier == nil,
-		state != "",
-	)
 
 	redirectURL, err := h.authFlow.AuthorizationURL(state)
 	if err != nil {
@@ -75,20 +64,7 @@ func (h *Handler) webLogin(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) webCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
-	callbackError := r.URL.Query().Get("error")
-	callbackErrorDescription := r.URL.Query().Get("error_description")
 	state := r.URL.Query().Get("state")
-
-	if callbackError != "" {
-		message := callbackError
-		if callbackErrorDescription != "" {
-			message = fmt.Sprintf("%s: %s", callbackError, callbackErrorDescription)
-		}
-
-		writeError(w, http.StatusBadGateway, "auth_failed", message)
-		return
-	}
-
 	if code == "" || state == "" {
 		writeError(w, http.StatusBadRequest, "invalid_callback", "callback must include code and state")
 		return
