@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/michael-conway/irods-go-rest/internal/auth"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 	"github.com/michael-conway/irods-go-rest/internal/httpapi"
 	"github.com/michael-conway/irods-go-rest/internal/irods"
@@ -18,7 +19,9 @@ type App struct {
 
 func New(cfg config.Config) *App {
 	catalog := irods.NewCatalogService(cfg)
-	handler := httpapi.NewHandler(cfg, catalog)
+	authService := auth.NewKeycloakService(cfg)
+	sessionStore := auth.NewSessionStore()
+	handler := httpapi.NewHandler(cfg, catalog, authService, authService, sessionStore)
 
 	return &App{
 		server: &http.Server{

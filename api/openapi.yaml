@@ -3,7 +3,7 @@ info:
   title: iRODS REST API
   version: 0.1.0
   description: |
-    Starter OpenAPI contract for an iRODS-backed REST service.
+    REST-ful iRODS running on GoLang.
 servers:
   - url: http://localhost:8080
 tags:
@@ -28,6 +28,8 @@ paths:
       operationId: getObject
       tags: [objects]
       summary: Fetch object metadata from iRODS
+      security:
+        - BearerAuth: []
       parameters:
         - in: path
           name: object_id
@@ -47,11 +49,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/collections/{collection_id}:
     get:
       operationId: getCollection
       tags: [collections]
       summary: Fetch collection metadata from iRODS
+      security:
+        - BearerAuth: []
       parameters:
         - in: path
           name: collection_id
@@ -71,7 +81,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   schemas:
     HealthResponse:
       type: object

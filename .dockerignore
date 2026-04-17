@@ -1,0 +1,14 @@
+.git
+.gitignore
+.DS_Store
+tmp
+dist
+bin
+coverage.out
+*.test
+*.log
+.env
+.idea
+.vscode
+README.md
+DEVELOPER_NOTES.md
