@@ -11,11 +11,23 @@ import (
 )
 
 func main() {
+	log.Printf("starting irods-go-rest (startup marker: auth-config-debug-v2)")
+
 	cfg, err := config.ReadRestConfig("rest-config", "yaml", []string{})
 
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	log.Printf(
+		"loaded config: public_url=%q oidc_url=%q oidc_realm=%q oidc_client_id=%q irods_host=%q irods_port=%d",
+		cfg.PublicURL,
+		cfg.OidcUrl,
+		cfg.OidcRealm,
+		cfg.OidcClientId,
+		cfg.IrodsHost,
+		cfg.IrodsPort,
+	)
 
 	application := app.New(*cfg)
 

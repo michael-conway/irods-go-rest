@@ -82,3 +82,32 @@ func TestReadRestConfigSecretFileSupport(t *testing.T) {
 		t.Fatalf("expected secret file value for OidcClientSecret, got %q", cfg.OidcClientSecret)
 	}
 }
+
+func TestReadRestConfigConfigFileEnvOverride(t *testing.T) {
+	dir := t.TempDir()
+	configBody := "" +
+		"IrodsHost: env-file-host\n" +
+		"IrodsPort: 1247\n" +
+		"IrodsZone: tempZone\n" +
+		"IrodsAdminUser: rods\n" +
+		"IrodsAuthScheme: native\n" +
+		"IrodsNegotiationPolicy: native\n" +
+		"PublicURL: http://env-file.example\n" +
+		"RestLogLevel: info\n"
+	configPath := writeTestFile(t, dir, "custom-rest-config.yaml", configBody)
+
+	t.Setenv(ConfigFileEnvVar, configPath)
+
+	cfg, err := ReadRestConfig("does-not-exist", "yaml", []string{t.TempDir()})
+	if err != nil {
+		t.Fatalf("error reading config with %s override: %v", ConfigFileEnvVar, err)
+	}
+
+	if cfg.PublicURL != "http://env-file.example" {
+		t.Fatalf("expected PublicURL from %s override, got %q", ConfigFileEnvVar, cfg.PublicURL)
+	}
+
+	if cfg.IrodsHost != "env-file-host" {
+		t.Fatalf("expected IrodsHost from %s override, got %q", ConfigFileEnvVar, cfg.IrodsHost)
+	}
+}

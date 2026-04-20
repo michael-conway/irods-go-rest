@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"log"
 	"net/http"
 
 	"github.com/michael-conway/irods-go-rest/internal/auth"
@@ -36,6 +37,14 @@ func (h *Handler) webLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "auth_failed", err.Error())
 		return
 	}
+
+	log.Printf(
+		"web login requested: public_url=%q auth_flow_nil=%t verifier_nil=%t state_present=%t",
+		h.cfg.PublicURL,
+		h.authFlow == nil,
+		h.verifier == nil,
+		state != "",
+	)
 
 	redirectURL, err := h.authFlow.AuthorizationURL(state)
 	if err != nil {

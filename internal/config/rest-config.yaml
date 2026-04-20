@@ -9,7 +9,7 @@ IrodsAuthScheme:
 IrodsNegotiationPolicy: native
 IrodsDefaultResource:
 OidcUrl:
-OidcClientId:
+OidcClientId: irods-go-rest
 OidcClientSecret:
 OidcClientSecretFile:
 OidcRealm:

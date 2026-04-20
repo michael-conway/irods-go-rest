@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -73,9 +74,48 @@ func NewKeycloakService(cfg config.RestConfig) *KeycloakService {
 	}
 }
 
+func (k *KeycloakService) configError(requireRedirect bool) error {
+	if k == nil {
+		return ErrNotConfigured
+	}
+
+	missing := []string{}
+	if k.baseURL == "" {
+		missing = append(missing, "oidc_url")
+	}
+	if k.realm == "" {
+		missing = append(missing, "oidc_realm")
+	}
+	if k.clientID == "" {
+		missing = append(missing, "oidc_client_id")
+	}
+	if requireRedirect && k.redirectURL == "" {
+		missing = append(missing, "public_url")
+	}
+
+	if len(missing) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf("%w: missing %s", ErrNotConfigured, strings.Join(missing, ", "))
+}
+
 func (k *KeycloakService) AuthorizationURL(state string) (string, error) {
-	if k == nil || k.baseURL == "" || k.realm == "" || k.clientID == "" || k.redirectURL == "" {
-		return "", ErrNotConfigured
+	if err := k.configError(true); err != nil {
+		if k == nil {
+			log.Printf("keycloak AuthorizationURL config error: service=nil")
+		} else {
+			log.Printf(
+				"keycloak AuthorizationURL config error: base_url=%q realm=%q client_id=%q redirect_url=%q state_present=%t err=%v",
+				k.baseURL,
+				k.realm,
+				k.clientID,
+				k.redirectURL,
+				strings.TrimSpace(state) != "",
+				err,
+			)
+		}
+		return "", err
 	}
 
 	if strings.TrimSpace(state) == "" {
@@ -99,8 +139,8 @@ func (k *KeycloakService) AuthorizationURL(state string) (string, error) {
 }
 
 func (k *KeycloakService) ExchangeCode(ctx context.Context, code string) (Token, error) {
-	if k == nil || k.baseURL == "" || k.realm == "" || k.clientID == "" || k.redirectURL == "" {
-		return Token{}, ErrNotConfigured
+	if err := k.configError(true); err != nil {
+		return Token{}, err
 	}
 
 	if strings.TrimSpace(code) == "" {
@@ -171,8 +211,8 @@ func (k *KeycloakService) NewState() (string, error) {
 }
 
 func (k *KeycloakService) VerifyToken(ctx context.Context, accessToken string) (Principal, error) {
-	if k == nil || k.baseURL == "" || k.realm == "" || k.clientID == "" {
-		return Principal{}, ErrNotConfigured
+	if err := k.configError(false); err != nil {
+		return Principal{}, err
 	}
 
 	if strings.TrimSpace(accessToken) == "" {

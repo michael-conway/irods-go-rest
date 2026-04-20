@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/michael-conway/irods-go-rest/internal/auth"
@@ -17,6 +18,19 @@ type App struct {
 	server *http.Server
 }
 
+func listenAddr(publicURL string) string {
+	if publicURL == "" {
+		return ""
+	}
+
+	parsedURL, err := url.Parse(publicURL)
+	if err == nil && parsedURL.Host != "" {
+		return parsedURL.Host
+	}
+
+	return publicURL
+}
+
 func New(cfg config.RestConfig) *App {
 	catalog := irods.NewCatalogService(cfg)
 	authService := auth.NewKeycloakService(cfg)
@@ -25,7 +39,7 @@ func New(cfg config.RestConfig) *App {
 
 	return &App{
 		server: &http.Server{
-			Addr:              cfg.PublicURL,
+			Addr:              listenAddr(cfg.PublicURL),
 			Handler:           handler.Routes(),
 			ReadHeaderTimeout: 5 * time.Second,
 		},
