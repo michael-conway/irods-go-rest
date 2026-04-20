@@ -3,6 +3,7 @@ IrodsPort:
 IrodsZone:
 IrodsAdminUser:
 IrodsAdminPassword:
+IrodsAdminPasswordFile:
 IrodsAdminLoginType:
 IrodsAuthScheme:
 IrodsNegotiationPolicy: native
@@ -10,6 +11,7 @@ IrodsDefaultResource:
 OidcUrl:
 OidcClientId:
 OidcClientSecret:
+OidcClientSecretFile:
 OidcRealm:
 OidcScope: openid profile email
 PublicUrl: http://localhost:8080

@@ -49,11 +49,11 @@ Run it with the service bound on port `8080`:
 
 ```bash
 docker run --rm -p 8080:8080 \
-  -e IRODS_HOST=irods-provider \
-  -e IRODS_PORT=1247 \
-  -e KEYCLOAK_URL=http://keycloak:8080 \
-  -e KEYCLOAK_REALM=irods \
-  -e KEYCLOAK_CLIENT_ID=irods-go-rest \
+  -e GOREST_IRODS_HOST=irods-provider \
+  -e GOREST_IRODS_PORT=1247 \
+  -e GOREST_OIDC_URL=http://keycloak:8080 \
+  -e GOREST_OIDC_REALM=irods \
+  -e GOREST_OIDC_CLIENT_ID=irods-go-rest \
   irods-go-rest:local
 ```
 
@@ -73,38 +73,41 @@ If you want to add this service to the `irods-go-drs` compose stack, this servic
       keycloak:
         condition: service_started
     environment:
-      IRODS_REST_ADDR: :8080
-      IRODS_REST_PUBLIC_URL: http://irods-go-rest:8080
-      IRODS_REST_ENV: docker
-      IRODS_ZONE: tempZone
-      IRODS_HOST: irods-provider
-      IRODS_PORT: 1247
-      IRODS_DEFAULT_RESOURCE: demoResc
-      KEYCLOAK_URL: http://keycloak:8080
-      KEYCLOAK_REALM: drs
-      KEYCLOAK_CLIENT_ID: irods-go-rest
-      KEYCLOAK_CLIENT_SECRET: ""
+      GOREST_PUBLIC_URL: http://irods-go-rest:8080
+      GOREST_REST_LOG_LEVEL: info
+      GOREST_IRODS_ZONE: tempZone
+      GOREST_IRODS_HOST: irods-provider
+      GOREST_IRODS_PORT: 1247
+      GOREST_IRODS_DEFAULT_RESOURCE: demoResc
+      GOREST_OIDC_URL: http://keycloak:8080
+      GOREST_OIDC_REALM: drs
+      GOREST_OIDC_CLIENT_ID: irods-go-rest
+      GOREST_OIDC_CLIENT_SECRET: ""
     ports:
       - "8081:8080"
 ```
 
 Adjust the host port, realm, and client settings to match your Keycloak import and whichever external URL you want browsers to use for `/web/login`.
 
-## Environment variables
+## Configuration
 
-- `IRODS_REST_ADDR` default: `:8080`
-- `IRODS_REST_NAME` default: `iRODS REST API`
-- `IRODS_REST_ENV` default: `development`
-- `IRODS_ZONE` default: `tempZone`
-- `IRODS_HOST` default: `localhost`
-- `IRODS_PORT` default: `1247`
-- `IRODS_DEFAULT_RESOURCE` default: `demoResc`
-- `KEYCLOAK_URL` example: `http://localhost:8081`
-- `KEYCLOAK_REALM` example: `irods`
-- `KEYCLOAK_CLIENT_ID` example: `irods-go-rest`
-- `KEYCLOAK_CLIENT_SECRET` optional for confidential clients
-- `IRODS_REST_PUBLIC_URL` default: `http://localhost:8080`
-- `KEYCLOAK_SCOPES` default: `openid profile email`
+The service reads `rest-config.yaml` plus `GOREST_*` environment variables. Environment variables override file values.
+
+- `GOREST_PUBLIC_URL` example: `http://localhost:8080`
+- `GOREST_REST_LOG_LEVEL` default: `info`
+- `GOREST_IRODS_ZONE` example: `tempZone`
+- `GOREST_IRODS_HOST` example: `localhost`
+- `GOREST_IRODS_PORT` default: `1247`
+- `GOREST_IRODS_ADMIN_USER` example: `rods`
+- `GOREST_IRODS_ADMIN_PASSWORD` optional, but prefer `GOREST_IRODS_ADMIN_PASSWORD_FILE`
+- `GOREST_IRODS_ADMIN_PASSWORD_FILE` path to a mounted secret file
+- `GOREST_IRODS_DEFAULT_RESOURCE` example: `demoResc`
+- `GOREST_OIDC_URL` example: `http://localhost:8081`
+- `GOREST_OIDC_REALM` example: `irods`
+- `GOREST_OIDC_CLIENT_ID` example: `irods-go-rest`
+- `GOREST_OIDC_CLIENT_SECRET` optional, but prefer `GOREST_OIDC_CLIENT_SECRET_FILE`
+- `GOREST_OIDC_CLIENT_SECRET_FILE` path to a mounted secret file
+- `GOREST_OIDC_SCOPE` default: `openid profile email`
 
 ## Browser login flow
 
