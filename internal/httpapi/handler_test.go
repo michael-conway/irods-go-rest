@@ -12,7 +12,7 @@ import (
 )
 
 func TestHealthz(t *testing.T) {
-	handler := testHandler()
+	handler := testHandler(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -25,7 +25,7 @@ func TestHealthz(t *testing.T) {
 }
 
 func TestWebLoginRedirect(t *testing.T) {
-	handler := testHandler()
+	handler := testHandler(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/web/login", nil)
 	rec := httptest.NewRecorder()
@@ -38,7 +38,7 @@ func TestWebLoginRedirect(t *testing.T) {
 }
 
 func TestWebCallbackCreatesSession(t *testing.T) {
-	handler := testHandler()
+	handler := testHandler(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/web/callback?code=code123&state=state123", nil)
 	req.AddCookie(&http.Cookie{Name: authStateCookieName, Value: "state123"})
@@ -52,7 +52,7 @@ func TestWebCallbackCreatesSession(t *testing.T) {
 }
 
 func TestAPIRequiresBearerToken(t *testing.T) {
-	handler := testHandler()
+	handler := testHandler(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/demo-object", nil)
 	rec := httptest.NewRecorder()
@@ -65,7 +65,7 @@ func TestAPIRequiresBearerToken(t *testing.T) {
 }
 
 func TestAPIAcceptsValidBearerToken(t *testing.T) {
-	handler := testHandler()
+	handler := testHandler(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/demo-object", nil)
 	req.Header.Set("Authorization", "Bearer token123")
@@ -109,10 +109,12 @@ func (stubAuthService) VerifyToken(_ context.Context, accessToken string) (auth.
 	}, nil
 }
 
-func testHandler() *Handler {
-	cfg, err := config.ReadRestConfig("rest-config", "yaml", []string{})
+func testHandler(t *testing.T) *Handler {
+	t.Helper()
+
+	cfg, err := config.ReadRestConfig("rest-config", "yaml", []string{"../config"})
 	if err != nil {
-		panic(err)
+		t.Fatalf("read rest config: %v", err)
 	}
 	return NewHandler(*cfg, irods.NewCatalogService(*cfg), stubAuthService{}, stubAuthService{}, auth.NewSessionStore())
 }
