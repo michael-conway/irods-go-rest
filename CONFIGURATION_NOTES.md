@@ -1,126 +1,112 @@
 # Configuration Notes
 
-Use this file as the quick reference for `irods-go-rest` configuration.
+## Runtime configuration
 
-## Config sources
+`irods-go-rest` reads configuration from a YAML file plus `GOREST_*` environment variables.
 
-The service reads configuration in this order:
+The loader supports three configuration layers:
 
-1. `rest-config.yaml`
-2. `GOREST_*` environment variable overrides
-3. Secret files for sensitive values
+1. A YAML configuration file such as `rest-config.yaml`
+2. Environment variable overrides with the `GOREST_` prefix
+3. File-backed secrets for sensitive values
 
-To use one exact config file, set:
+## Using a specific config file
+
+If you want to point the service at one specific config file and skip all search paths, set:
 
 ```bash
 IRODS_REST_CONFIG_FILE=/path/to/rest-config.yaml
 ```
 
-## Main runtime settings
+When `IRODS_REST_CONFIG_FILE` is set, it overrides the default search locations and that exact file is used.
 
-These are the settings you will usually care about:
+If `IRODS_REST_CONFIG_FILE` is not set, the loader searches for `rest-config.yaml` in its configured search paths and
+then applies environment variable overrides on top of the file values.
+
+## YAML configuration
+
+The sample configuration file lives at:
+
+```text
+internal/config/rest-config.yaml
+```
+
+This file is used to configure:
+
+- iRODS connection settings
+- REST service settings such as `PublicURL` and `RestLogLevel`
+- OIDC client settings for Keycloak integration
+
+## Environment variable overrides
+
+Environment variables override file values.
+
+Examples:
 
 ```bash
 GOREST_PUBLIC_URL=http://localhost:8080
-GOREST_REST_LOG_LEVEL=info
-
+GOREST_REST_LOG_LEVEL=debug
 GOREST_IRODS_HOST=irods-provider
 GOREST_IRODS_PORT=1247
 GOREST_IRODS_ZONE=tempZone
 GOREST_IRODS_ADMIN_USER=rods
 GOREST_IRODS_DEFAULT_RESOURCE=demoResc
-GOREST_RESOURCE_AFFINITY=demoResc,edgeResc
-GOREST_REPLICA_TRIM_MIN_COPIES=1
-GOREST_REPLICA_TRIM_MIN_AGE_MINUTES=0
-
-GOREST_OIDC_URL=https://localhost:8443
-GOREST_OIDC_REALM=drs
+GOREST_OIDC_URL=http://keycloak:8080
+GOREST_OIDC_REALM=irods
 GOREST_OIDC_CLIENT_ID=irods-go-rest
 GOREST_OIDC_SCOPE="openid profile email"
-GOREST_OIDC_INSECURE_SKIP_VERIFY=false
 ```
 
-If your local Keycloak uses a self-signed certificate, you can temporarily use:
+Supported secret-bearing environment variables include:
 
 ```bash
-GOREST_OIDC_INSECURE_SKIP_VERIFY=true
+GOREST_IRODS_ADMIN_PASSWORD=...
+GOREST_OIDC_CLIENT_SECRET=...
 ```
 
-Use that only for local development.
+but for production-style deployments, prefer the file-backed secret variants described below.
 
-## Resource affinity
+## File-backed secrets
 
-`ResourceAffinity` is optional and represents iRODS resources that are
-considered proximate to this service instance.
-
-Supported forms:
+The loader supports file-backed secrets for the sensitive values:
 
 ```yaml
-ResourceAffinity:
-  - demoResc
-  - edgeResc
+IrodsAdminPasswordFile: /path/to/irods-admin-password.txt
+OidcClientSecretFile: /path/to/oidc-client-secret.txt
 ```
 
-or environment override:
+and the matching environment variables:
 
 ```bash
-GOREST_RESOURCE_AFFINITY=demoResc,edgeResc
+GOREST_IRODS_ADMIN_PASSWORD_FILE=/path/to/irods-admin-password.txt
+GOREST_OIDC_CLIENT_SECRET_FILE=/path/to/oidc-client-secret.txt
 ```
 
-## Replica trim defaults
+At startup the loader reads those files and trims trailing whitespace.
 
-`ReplicaTrimMinCopies` and `ReplicaTrimMinAgeMinutes` are optional runtime defaults
-used by `PATCH /api/v1/path/replicas` and `DELETE /api/v1/path/replicas` when
-`min_copies` / `min_age_minutes` are not supplied in the request body.
+## Secret precedence
 
-```yaml
-ReplicaTrimMinCopies: 1
-ReplicaTrimMinAgeMinutes: 0
-```
+The effective precedence is:
 
-or environment override:
+1. Explicit secret value from environment or YAML
+2. Secret file path from environment or YAML
+3. Empty value if neither is provided
 
-```bash
-GOREST_REPLICA_TRIM_MIN_COPIES=1
-GOREST_REPLICA_TRIM_MIN_AGE_MINUTES=0
-```
+That means direct secret values still work, but mounted secret files are the preferred operational pattern.
 
-## Secrets
-
-Prefer secret files over inline secrets.
-
-Supported file-backed secret settings:
-
-```yaml
-IrodsAdminPasswordFile: /run/secrets/irods_admin_password
-OidcClientSecretFile: /run/secrets/oidc_client_secret
-```
-
-Environment variable equivalents:
-
-```bash
-GOREST_IRODS_ADMIN_PASSWORD_FILE=/run/secrets/irods_admin_password
-GOREST_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc_client_secret
-```
-
-Secret precedence is:
-
-1. explicit value
-2. secret file
-3. empty
-
-## Recommended pattern
+## Recommended usage
 
 For local development:
 
-- keep normal settings in `rest-config.yaml`
-- use `GOREST_*` for quick overrides
+- keep non-secret settings in `rest-config.yaml`
+- use `GOREST_*` environment variables when you need quick overrides
 
-For containers:
+For containerized or production-style deployments:
 
-- mount the config file
-- mount secrets separately
-- point `IRODS_REST_CONFIG_FILE` at the mounted config file
+- mount `rest-config.yaml` as a read-only config file
+- mount secret files separately
+- set `IRODS_REST_CONFIG_FILE` to the mounted config file path
+- set `GOREST_IRODS_ADMIN_PASSWORD_FILE` and `GOREST_OIDC_CLIENT_SECRET_FILE` to the mounted secret paths
 
 Example:
 
@@ -129,3 +115,5 @@ IRODS_REST_CONFIG_FILE=/config/rest-config.yaml
 GOREST_IRODS_ADMIN_PASSWORD_FILE=/run/secrets/irods_admin_password
 GOREST_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc_client_secret
 ```
+
+This keeps non-secret configuration and secrets separate and makes the deployment model consistent with `irods-go-drs`.
