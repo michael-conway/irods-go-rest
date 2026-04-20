@@ -110,6 +110,9 @@ func (stubAuthService) VerifyToken(_ context.Context, accessToken string) (auth.
 }
 
 func testHandler() *Handler {
-	cfg := config.FromEnv()
-	return NewHandler(cfg, irods.NewCatalogService(cfg), stubAuthService{}, stubAuthService{}, auth.NewSessionStore())
+	cfg, err := config.ReadRestConfig("rest-config", "yaml", []string{})
+	if err != nil {
+		panic(err)
+	}
+	return NewHandler(*cfg, irods.NewCatalogService(*cfg), stubAuthService{}, stubAuthService{}, auth.NewSessionStore())
 }

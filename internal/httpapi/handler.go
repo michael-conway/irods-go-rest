@@ -11,14 +11,14 @@ import (
 )
 
 type Handler struct {
-	cfg        config.Config
+	cfg        config.RestConfig
 	catalog    irods.CatalogService
 	authFlow   auth.AuthFlowService
 	verifier   auth.TokenVerifier
 	webSession *auth.SessionStore
 }
 
-func NewHandler(cfg config.Config, catalog irods.CatalogService, authFlow auth.AuthFlowService, verifier auth.TokenVerifier, webSession *auth.SessionStore) *Handler {
+func NewHandler(cfg config.RestConfig, catalog irods.CatalogService, authFlow auth.AuthFlowService, verifier auth.TokenVerifier, webSession *auth.SessionStore) *Handler {
 	return &Handler{
 		cfg:        cfg,
 		catalog:    catalog,

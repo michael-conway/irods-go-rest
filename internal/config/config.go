@@ -1,46 +1,116 @@
 package config
 
-import "os"
+import (
+	"fmt"
 
-type Config struct {
-	ServerAddr      string
-	ServiceName     string
-	Environment     string
-	Zone            string
-	Host            string
-	Port            string
-	DefaultResource string
-	KeycloakURL     string
-	KeycloakRealm   string
-	KeycloakClient  string
-	KeycloakSecret  string
-	PublicURL       string
-	AuthScopes      string
+	"github.com/cyverse/go-irodsclient/irods/types"
+	"github.com/rs/zerolog"
+	"github.com/spf13/viper"
+)
+
+// RestConfig Provides configuration for drs behaviors
+type RestConfig struct {
+	PublicURL              string
+	RestLogLevel           string //info, debug
+	IrodsHost              string
+	IrodsPort              int
+	IrodsZone              string
+	IrodsAdminUser         string
+	IrodsAdminPassword     string
+	IrodsAuthScheme        string
+	IrodsNegotiationPolicy string
+	IrodsDefaultResource   string
+	OidcUrl                string
+	OidcClientId           string
+	OidcClientSecret       string
+	OidcRealm              string
+	OidcScope              string
 }
 
-func FromEnv() Config {
-	return Config{
-		ServerAddr:      getenv("IRODS_REST_ADDR", ":8080"),
-		ServiceName:     getenv("IRODS_REST_NAME", "iRODS REST API"),
-		Environment:     getenv("IRODS_REST_ENV", "development"),
-		Zone:            getenv("IRODS_ZONE", "tempZone"),
-		Host:            getenv("IRODS_HOST", "localhost"),
-		Port:            getenv("IRODS_PORT", "1247"),
-		DefaultResource: getenv("IRODS_DEFAULT_RESOURCE", "demoResc"),
-		KeycloakURL:     getenv("KEYCLOAK_URL", ""),
-		KeycloakRealm:   getenv("KEYCLOAK_REALM", ""),
-		KeycloakClient:  getenv("KEYCLOAK_CLIENT_ID", ""),
-		KeycloakSecret:  getenv("KEYCLOAK_CLIENT_SECRET", ""),
-		PublicURL:       getenv("IRODS_REST_PUBLIC_URL", "http://localhost:8080"),
-		AuthScopes:      getenv("KEYCLOAK_SCOPES", "openid profile email"),
+func (cfg *RestConfig) ToIrodsAccount() types.IRODSAccount {
+	authScheme := types.GetAuthScheme(cfg.IrodsAuthScheme)
+
+	negotiationPolicy := types.GetCSNegotiationPolicyRequest(cfg.IrodsNegotiationPolicy)
+	negotiation := types.GetCSNegotiation(cfg.IrodsNegotiationPolicy)
+
+	account := types.IRODSAccount{
+		AuthenticationScheme:    authScheme,
+		ClientServerNegotiation: negotiation.IsNegotiationRequired(),
+		CSNegotiationPolicy:     negotiationPolicy,
+		Host:                    cfg.IrodsHost,
+		Port:                    cfg.IrodsPort,
+		ClientUser:              cfg.IrodsAdminUser,
+		ClientZone:              cfg.IrodsZone,
+		ProxyUser:               cfg.IrodsAdminUser,
+		ProxyZone:               cfg.IrodsZone,
+		Password:                cfg.IrodsAdminPassword,
+		DefaultResource:         cfg.IrodsDefaultResource,
 	}
+
+	account.FixAuthConfiguration()
+
+	return account
 }
 
-func getenv(key string, fallback string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
+const DefaultConfigName = "rest-config"
+const DefaultConfigType = "yaml"
+
+// ReadRestConfig reads the configuration for REST behaviors in irods
+// can take a number of paths that will be prefixed in the searh path, or defaults
+// may be accepted, blank params for name and type default to irods-drs.yaml
+func ReadRestConfig(configName string, configType string, configPaths []string) (*RestConfig, error) {
+
+	if configName == "" {
+		viper.SetConfigName(DefaultConfigName) // name of config file (without extension)
+	} else {
+		viper.SetConfigName(configName)
 	}
 
-	return value
+	if configType == "" {
+		viper.SetConfigType(DefaultConfigType) // REQUIRED if the config file does not have the extension in the name
+	} else {
+		viper.SetConfigType(configType)
+	}
+
+	for _, path := range configPaths {
+		viper.AddConfigPath(path)
+	}
+
+	viper.AddConfigPath("/etc/irods-ext/")      // path to look for the config file in
+	viper.AddConfigPath("$HOME/.irods-go-rest") // call multiple times to add many search paths
+	viper.AddConfigPath(".")                    // optionally look for config in the working directory
+
+	// Enable environment variable support with prefix GOREST_
+	viper.SetEnvPrefix("GOREST")
+	viper.AutomaticEnv()
+
+	err := viper.ReadInConfig() // Find and read the config file
+	if err != nil {             // Handle errors reading the config file
+		panic(fmt.Errorf("fatal error config file: %w", err))
+	}
+	var C RestConfig
+
+	err = viper.Unmarshal(&C)
+	if err != nil {
+		panic(fmt.Errorf("unable to decode into struct, %v", err))
+	}
+
+	return &C, nil
+}
+
+func (d *RestConfig) InitializeLogging() {
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	switch d.RestLogLevel {
+	case "debug":
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	case "info":
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	case "warn":
+		zerolog.SetGlobalLevel(zerolog.WarnLevel)
+	case "error":
+		zerolog.SetGlobalLevel(zerolog.ErrorLevel)
+	default:
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+
+	}
 }

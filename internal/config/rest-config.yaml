@@ -3,22 +3,14 @@ IrodsPort:
 IrodsZone:
 IrodsAdminUser:
 IrodsAdminPassword:
-IrodsAdminPasswordFile:
 IrodsAdminLoginType:
 IrodsAuthScheme:
-IrodsNegotiationPolicy: CS_NEG_DONT_CARE
+IrodsNegotiationPolicy: native
 IrodsDefaultResource:
 OidcUrl:
-OidcClientId: irods-go-rest
+OidcClientId:
 OidcClientSecret:
-OidcClientSecretFile:
-OidcInsecureSkipVerify: false
 OidcRealm:
 OidcScope: openid profile email
 PublicUrl: http://localhost:8080
 RestLogLevel: info
-ResourceAffinity:
-  - demoResc
-  - test1-resc
-ReplicaTrimMinCopies: 1
-ReplicaTrimMinAgeMinutes: 0
