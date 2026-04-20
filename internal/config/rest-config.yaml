@@ -1,0 +1,16 @@
+IrodsHost:
+IrodsPort:
+IrodsZone:
+IrodsAdminUser:
+IrodsAdminPassword:
+IrodsAdminLoginType:
+IrodsAuthScheme:
+IrodsNegotiationPolicy: native
+IrodsDefaultResource:
+OidcUrl:
+OidcClientId:
+OidcClientSecret:
+OidcRealm:
+OidcScope: openid profile email
+PublicUrl: http://localhost:8080
+RestLogLevel: info

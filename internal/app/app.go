@@ -17,7 +17,7 @@ type App struct {
 	server *http.Server
 }
 
-func New(cfg config.Config) *App {
+func New(cfg config.RestConfig) *App {
 	catalog := irods.NewCatalogService(cfg)
 	authService := auth.NewKeycloakService(cfg)
 	sessionStore := auth.NewSessionStore()
@@ -25,7 +25,7 @@ func New(cfg config.Config) *App {
 
 	return &App{
 		server: &http.Server{
-			Addr:              cfg.ServerAddr,
+			Addr:              cfg.PublicURL,
 			Handler:           handler.Routes(),
 			ReadHeaderTimeout: 5 * time.Second,
 		},

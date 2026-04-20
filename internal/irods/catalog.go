@@ -17,10 +17,10 @@ type CatalogService interface {
 }
 
 type catalogService struct {
-	cfg config.Config
+	cfg config.RestConfig
 }
 
-func NewCatalogService(cfg config.Config) CatalogService {
+func NewCatalogService(cfg config.RestConfig) CatalogService {
 	return &catalogService{cfg: cfg}
 }
 
@@ -31,11 +31,11 @@ func (s *catalogService) GetObject(_ context.Context, objectID string) (domain.O
 
 	return domain.Object{
 		ID:       objectID,
-		Path:     fmt.Sprintf("/%s/home/rods/%s", s.cfg.Zone, objectID),
+		Path:     fmt.Sprintf("/%s/home/rods/%s", s.cfg.IrodsZone, objectID),
 		Checksum: "sha256:demo",
 		Size:     1024,
-		Zone:     s.cfg.Zone,
-		Resource: s.cfg.DefaultResource,
+		Zone:     s.cfg.IrodsZone,
+		Resource: s.cfg.IrodsDefaultResource,
 		Metadata: map[string]string{
 			"source": "scaffold",
 		},
@@ -49,8 +49,8 @@ func (s *catalogService) GetCollection(_ context.Context, collectionID string) (
 
 	return domain.Collection{
 		ID:         collectionID,
-		Path:       fmt.Sprintf("/%s/home/rods/%s", s.cfg.Zone, collectionID),
-		Zone:       s.cfg.Zone,
+		Path:       fmt.Sprintf("/%s/home/rods/%s", s.cfg.IrodsZone, collectionID),
+		Zone:       s.cfg.IrodsZone,
 		ChildCount: 3,
 		Metadata: map[string]string{
 			"source": "scaffold",

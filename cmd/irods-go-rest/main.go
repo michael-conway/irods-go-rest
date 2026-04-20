@@ -11,9 +11,13 @@ import (
 )
 
 func main() {
-	cfg := config.FromEnv()
+	cfg, err := config.ReadRestConfig("rest-config", "yaml", []string{})
 
-	application := app.New(cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	application := app.New(*cfg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

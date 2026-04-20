@@ -10,8 +10,9 @@ import (
 func (h *Handler) getHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":      "ok",
-		"service":     h.cfg.ServiceName,
-		"environment": h.cfg.Environment,
+		"service":     "irods-go-rest",
+		"version":     "1.0.0",
+		"description": "iRODS REST API service",
 	})
 }
 

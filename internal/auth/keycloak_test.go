@@ -13,12 +13,12 @@ import (
 )
 
 func TestAuthorizationURL(t *testing.T) {
-	service := NewKeycloakService(config.Config{
-		KeycloakURL:    "http://keycloak.local",
-		KeycloakRealm:  "demo",
-		KeycloakClient: "irods-rest",
-		PublicURL:      "http://localhost:8080",
-		AuthScopes:     "openid profile email",
+	service := NewKeycloakService(config.RestConfig{
+		OidcUrl:      "http://keycloak.local",
+		OidcRealm:    "demo",
+		OidcClientId: "irods-rest",
+		PublicURL:    "http://localhost:8080",
+		OidcScope:    "openid profile email",
 	})
 
 	redirectURL, err := service.AuthorizationURL("state123")
@@ -73,12 +73,12 @@ func TestExchangeCodeSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	service := NewKeycloakService(config.Config{
-		KeycloakURL:    server.URL,
-		KeycloakRealm:  "demo",
-		KeycloakClient: "irods-rest",
-		KeycloakSecret: "secret",
-		PublicURL:      "http://localhost:8080",
+	service := NewKeycloakService(config.RestConfig{
+		OidcUrl:      "http://keycloak.local",
+		OidcRealm:    "demo",
+		OidcClientId: "irods-rest",
+		PublicURL:    "http://localhost:8080",
+		OidcScope:    "openid profile email",
 	})
 
 	token, err := service.ExchangeCode(context.Background(), "code123")
@@ -114,12 +114,12 @@ func TestVerifyTokenSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	service := NewKeycloakService(config.Config{
-		KeycloakURL:    server.URL,
-		KeycloakRealm:  "demo",
-		KeycloakClient: "irods-rest",
-		KeycloakSecret: "secret",
-		PublicURL:      "http://localhost:8080",
+	service := NewKeycloakService(config.RestConfig{
+		OidcUrl:      "http://keycloak.local",
+		OidcRealm:    "demo",
+		OidcClientId: "irods-rest",
+		PublicURL:    "http://localhost:8080",
+		OidcScope:    "openid profile email",
 	})
 
 	principal, err := service.VerifyToken(context.Background(), "abc123")
@@ -133,7 +133,13 @@ func TestVerifyTokenSuccess(t *testing.T) {
 }
 
 func TestNewState(t *testing.T) {
-	service := NewKeycloakService(config.Config{})
+	service := NewKeycloakService(config.RestConfig{
+		OidcUrl:      "http://keycloak.local",
+		OidcRealm:    "demo",
+		OidcClientId: "irods-rest",
+		PublicURL:    "http://localhost:8080",
+		OidcScope:    "openid profile email",
+	})
 
 	state, err := service.NewState()
 	if err != nil {

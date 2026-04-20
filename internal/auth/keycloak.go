@@ -61,15 +61,15 @@ type KeycloakService struct {
 	scopes       string
 }
 
-func NewKeycloakService(cfg config.Config) *KeycloakService {
+func NewKeycloakService(cfg config.RestConfig) *KeycloakService {
 	return &KeycloakService{
 		httpClient:   &http.Client{Timeout: 10 * time.Second},
-		baseURL:      strings.TrimRight(cfg.KeycloakURL, "/"),
-		realm:        cfg.KeycloakRealm,
-		clientID:     cfg.KeycloakClient,
-		clientSecret: cfg.KeycloakSecret,
+		baseURL:      strings.TrimRight(cfg.OidcUrl, "/"),
+		realm:        cfg.OidcRealm,
+		clientID:     cfg.OidcClientId,
+		clientSecret: cfg.OidcClientSecret,
 		redirectURL:  strings.TrimRight(cfg.PublicURL, "/") + "/web/callback",
-		scopes:       cfg.AuthScopes,
+		scopes:       cfg.OidcScope,
 	}
 }
 
