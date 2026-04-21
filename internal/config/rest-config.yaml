@@ -12,6 +12,7 @@ OidcUrl:
 OidcClientId: irods-go-rest
 OidcClientSecret:
 OidcClientSecretFile:
+OidcInsecureSkipVerify: false
 OidcRealm:
 OidcScope: openid profile email
 PublicUrl: http://localhost:8080
