@@ -52,6 +52,7 @@ GOREST_IRODS_ZONE=tempZone
 GOREST_IRODS_ADMIN_USER=rods
 GOREST_IRODS_DEFAULT_RESOURCE=demoResc
 GOREST_OIDC_URL=http://keycloak:8080
+GOREST_OIDC_INSECURE_SKIP_VERIFY=false
 GOREST_OIDC_REALM=irods
 GOREST_OIDC_CLIENT_ID=irods-go-rest
 GOREST_OIDC_SCOPE="openid profile email"
@@ -117,3 +118,21 @@ GOREST_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc_client_secret
 ```
 
 This keeps non-secret configuration and secrets separate and makes the deployment model consistent with `irods-go-drs`.
+
+## Self-signed local Keycloak certificates
+
+If your local Keycloak uses a self-signed certificate, you can disable OIDC TLS certificate verification for development only:
+
+```yaml
+OidcUrl: https://localhost:8443
+OidcInsecureSkipVerify: true
+```
+
+or:
+
+```bash
+GOREST_OIDC_URL=https://localhost:8443
+GOREST_OIDC_INSECURE_SKIP_VERIFY=true
+```
+
+This should only be used on a developer machine. It should not be enabled in production.

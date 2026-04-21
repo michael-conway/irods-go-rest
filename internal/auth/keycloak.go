@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -63,8 +64,13 @@ type KeycloakService struct {
 }
 
 func NewKeycloakService(cfg config.RestConfig) *KeycloakService {
+	httpTransport := http.DefaultTransport.(*http.Transport).Clone()
+	httpTransport.TLSClientConfig = &tls.Config{
+		InsecureSkipVerify: cfg.OidcInsecureSkipVerify,
+	}
+
 	return &KeycloakService{
-		httpClient:   &http.Client{Timeout: 10 * time.Second},
+		httpClient:   &http.Client{Timeout: 10 * time.Second, Transport: httpTransport},
 		baseURL:      strings.TrimRight(cfg.OidcUrl, "/"),
 		realm:        cfg.OidcRealm,
 		clientID:     cfg.OidcClientId,

@@ -27,7 +27,9 @@ func (h *Handler) webHome(w http.ResponseWriter, r *http.Request) {
 		username = html.EscapeString(session.Principal.Subject)
 	}
 
-	body := fmt.Sprintf(`<html><body><h1>iRODS REST Web Login</h1><p>Signed in as <strong>%s</strong>.</p><p>This browser session is separate from the bearer-token API.</p><form method="post" action="/web/logout"><button type="submit">Sign out</button></form></body></html>`, username)
+	accessToken := html.EscapeString(session.Token.AccessToken)
+
+	body := fmt.Sprintf(`<html><body><h1>iRODS REST Web Login</h1><p>Signed in as <strong>%s</strong>.</p><p>This browser session is separate from the bearer-token API.</p><h2>Bearer Token</h2><p>Copy this access token for API requests:</p><textarea id="access-token" rows="10" cols="100" readonly>%s</textarea><p><button type="button" onclick="navigator.clipboard.writeText(document.getElementById('access-token').value)">Copy token</button></p><form method="post" action="/web/logout"><button type="submit">Sign out</button></form></body></html>`, username, accessToken)
 	writeHTML(w, http.StatusOK, body)
 }
 
@@ -73,7 +75,20 @@ func (h *Handler) webLogin(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) webCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
+	callbackError := r.URL.Query().Get("error")
+	callbackErrorDescription := r.URL.Query().Get("error_description")
 	state := r.URL.Query().Get("state")
+
+	if callbackError != "" {
+		message := callbackError
+		if callbackErrorDescription != "" {
+			message = fmt.Sprintf("%s: %s", callbackError, callbackErrorDescription)
+		}
+
+		writeError(w, http.StatusBadGateway, "auth_failed", message)
+		return
+	}
+
 	if code == "" || state == "" {
 		writeError(w, http.StatusBadRequest, "invalid_callback", "callback must include code and state")
 		return

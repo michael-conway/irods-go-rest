@@ -27,6 +27,7 @@ type RestConfig struct {
 	OidcClientId           string
 	OidcClientSecret       string
 	OidcClientSecretFile   string
+	OidcInsecureSkipVerify bool
 	OidcRealm              string
 	OidcScope              string
 }
@@ -77,6 +78,7 @@ func bindEnvVars(v *viper.Viper) error {
 		"OidcClientId":           {"GOREST_OIDC_CLIENT_ID", "GOREST_OIDCCLIENTID"},
 		"OidcClientSecret":       {"GOREST_OIDC_CLIENT_SECRET", "GOREST_OIDCCLIENTSECRET"},
 		"OidcClientSecretFile":   {"GOREST_OIDC_CLIENT_SECRET_FILE", "GOREST_OIDCCLIENTSECRETFILE"},
+		"OidcInsecureSkipVerify": {"GOREST_OIDC_INSECURE_SKIP_VERIFY", "GOREST_OIDCINSECURESKIPVERIFY"},
 		"OidcRealm":              {"GOREST_OIDC_REALM", "GOREST_OIDCREALM"},
 		"OidcScope":              {"GOREST_OIDC_SCOPE", "GOREST_OIDCSCOPE"},
 	}
