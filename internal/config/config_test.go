@@ -111,3 +111,32 @@ func TestReadRestConfigConfigFileEnvOverride(t *testing.T) {
 		t.Fatalf("expected IrodsHost from %s override, got %q", ConfigFileEnvVar, cfg.IrodsHost)
 	}
 }
+
+func TestReadRestConfigTrimsWhitespaceFromInputs(t *testing.T) {
+	dir := t.TempDir()
+	configBody := "" +
+		"IrodsHost: trimmed-host\n" +
+		"IrodsPort: 1247\n" +
+		"IrodsZone: tempZone\n" +
+		"IrodsAdminUser: rods\n" +
+		"IrodsAuthScheme: native\n" +
+		"IrodsNegotiationPolicy: native\n" +
+		"PublicURL: http://trimmed.example\n" +
+		"RestLogLevel: info\n"
+	configPath := writeTestFile(t, dir, "custom-rest-config.yaml", configBody)
+
+	t.Setenv(ConfigFileEnvVar, "  "+configPath+"  ")
+
+	cfg, err := ReadRestConfig(" rest-config ", " yaml ", []string{"  " + dir + "  ", "   "})
+	if err != nil {
+		t.Fatalf("error reading config with whitespace-padded inputs: %v", err)
+	}
+
+	if cfg.PublicURL != "http://trimmed.example" {
+		t.Fatalf("expected PublicURL from trimmed %s override, got %q", ConfigFileEnvVar, cfg.PublicURL)
+	}
+
+	if cfg.IrodsHost != "trimmed-host" {
+		t.Fatalf("expected IrodsHost from trimmed %s override, got %q", ConfigFileEnvVar, cfg.IrodsHost)
+	}
+}
