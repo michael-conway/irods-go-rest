@@ -1,13 +1,22 @@
 package domain
 
-type Object struct {
-	ID       string            `json:"id"`
-	Path     string            `json:"path"`
-	Checksum string            `json:"checksum"`
-	Size     int64             `json:"size"`
-	Zone     string            `json:"zone"`
-	Resource string            `json:"resource,omitempty"`
-	Metadata map[string]string `json:"metadata,omitempty"`
+type PathEntry struct {
+	ID          string            `json:"id"`
+	Path        string            `json:"path"`
+	Kind        string            `json:"kind"`
+	Zone        string            `json:"zone"`
+	Parent      *ParentLink       `json:"parent,omitempty"`
+	Checksum    string            `json:"checksum,omitempty"`
+	Size        int64             `json:"size,omitempty"`
+	Resource    string            `json:"resource,omitempty"`
+	HasChildren bool              `json:"hasChildren,omitempty"`
+	ChildCount  int               `json:"childCount,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+}
+
+type ParentLink struct {
+	IRODSPath string `json:"irods_path"`
+	Href      string `json:"href"`
 }
 
 type ObjectContent struct {
@@ -15,12 +24,4 @@ type ObjectContent struct {
 	ContentType string
 	Size        int64
 	Data        []byte
-}
-
-type Collection struct {
-	ID         string            `json:"id"`
-	Path       string            `json:"path"`
-	Zone       string            `json:"zone"`
-	ChildCount int               `json:"childCount"`
-	Metadata   map[string]string `json:"metadata,omitempty"`
 }

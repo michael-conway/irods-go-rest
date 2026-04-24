@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"path"
 	"strconv"
 	"strings"
 
@@ -20,56 +22,14 @@ func (h *Handler) getHealth(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (h *Handler) getObject(w http.ResponseWriter, r *http.Request) {
-	objectID := pathValue(r, "object_id")
-	if objectID == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "object_id is required")
-		return
-	}
-
-	object, err := h.catalog.GetObject(r.Context(), objectID)
-	if err != nil {
-		if errors.Is(err, irods.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", err.Error())
-			return
-		}
-
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, object)
-}
-
-func (h *Handler) getCollection(w http.ResponseWriter, r *http.Request) {
-	collectionID := pathValue(r, "collection_id")
-	if collectionID == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "collection_id is required")
-		return
-	}
-
-	collection, err := h.catalog.GetCollection(r.Context(), collectionID)
-	if err != nil {
-		if errors.Is(err, irods.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", err.Error())
-			return
-		}
-
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, collection)
-}
-
-func (h *Handler) getObjectByPath(w http.ResponseWriter, r *http.Request) {
-	objectPath := queryPath(r)
+func (h *Handler) getPath(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
 	if objectPath == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "path query parameter is required")
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
 		return
 	}
 
-	object, err := h.catalog.GetObjectByPath(r.Context(), objectPath)
+	object, err := h.catalog.GetPath(r.Context(), objectPath)
 	if err != nil {
 		if errors.Is(err, irods.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
@@ -80,21 +40,50 @@ func (h *Handler) getObjectByPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, object)
+	writeJSON(w, http.StatusOK, pathEntryResponse(r, object))
 }
 
-func (h *Handler) headObjectContentByPath(w http.ResponseWriter, r *http.Request) {
-	h.serveObjectContentByPath(w, r, true)
-}
-
-func (h *Handler) getObjectContentByPath(w http.ResponseWriter, r *http.Request) {
-	h.serveObjectContentByPath(w, r, false)
-}
-
-func (h *Handler) serveObjectContentByPath(w http.ResponseWriter, r *http.Request, headOnly bool) {
-	objectPath := queryPath(r)
+func (h *Handler) getPathChildren(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
 	if objectPath == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "path query parameter is required")
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
+		return
+	}
+
+	children, err := h.catalog.GetPathChildren(r.Context(), objectPath)
+	if err != nil {
+		if errors.Is(err, irods.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", err.Error())
+			return
+		}
+
+		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+
+	mappedChildren := make([]domain.PathEntry, 0, len(children))
+	for _, child := range children {
+		mappedChildren = append(mappedChildren, pathEntryResponse(r, child))
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"irods_path": objectPath,
+		"children":   mappedChildren,
+	})
+}
+
+func (h *Handler) headPathContents(w http.ResponseWriter, r *http.Request) {
+	h.servePathContents(w, r, true)
+}
+
+func (h *Handler) getPathContents(w http.ResponseWriter, r *http.Request) {
+	h.servePathContents(w, r, false)
+}
+
+func (h *Handler) servePathContents(w http.ResponseWriter, r *http.Request, headOnly bool) {
+	objectPath := queryIRODSPath(r)
+	if objectPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
 		return
 	}
 
@@ -131,8 +120,35 @@ func (h *Handler) serveObjectContentByPath(w http.ResponseWriter, r *http.Reques
 	_, _ = w.Write(content.Data[start:end])
 }
 
-func queryPath(r *http.Request) string {
-	return strings.TrimSpace(r.URL.Query().Get("path"))
+func queryIRODSPath(r *http.Request) string {
+	return strings.TrimSpace(r.URL.Query().Get("irods_path"))
+}
+
+func pathEntryResponse(r *http.Request, entry domain.PathEntry) domain.PathEntry {
+	entry.Parent = buildParentLink(r, entry.Path)
+	return entry
+}
+
+func buildParentLink(r *http.Request, irodsPath string) *domain.ParentLink {
+	irodsPath = strings.TrimSpace(irodsPath)
+	if irodsPath == "" || irodsPath == "/" {
+		return nil
+	}
+
+	cleaned := path.Clean(irodsPath)
+	if cleaned == "." || cleaned == "/" {
+		return nil
+	}
+
+	parentPath := path.Dir(cleaned)
+	if parentPath == "." || parentPath == "" || parentPath == cleaned {
+		return nil
+	}
+
+	return &domain.ParentLink{
+		IRODSPath: parentPath,
+		Href:      "/api/v1/path?irods_path=" + url.QueryEscape(parentPath),
+	}
 }
 
 func resolveByteRange(rangeHeader string, content domain.ObjectContent) (int, string, int64, int64, error) {

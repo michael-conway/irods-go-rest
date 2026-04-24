@@ -148,7 +148,7 @@ func TestWebCallbackSurfacesOAuthError(t *testing.T) {
 func TestAPIRequiresBearerToken(t *testing.T) {
 	handler := testHandler(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/demo-object", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path?irods_path=/tempZone/home/test1/file.txt", nil)
 	rec := httptest.NewRecorder()
 
 	handler.Routes().ServeHTTP(rec, req)
@@ -161,7 +161,7 @@ func TestAPIRequiresBearerToken(t *testing.T) {
 func TestAPIAcceptsValidBearerToken(t *testing.T) {
 	handler := testHandler(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/demo-object", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path?irods_path=/tempZone/home/test1/file.txt", nil)
 	req.Header.Set("Authorization", "Bearer token123")
 	rec := httptest.NewRecorder()
 
@@ -170,12 +170,20 @@ func TestAPIAcceptsValidBearerToken(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
+
+	if body := rec.Body.String(); !containsAll(body, `"kind":"data_object"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"parent":{"irods_path":"/tempZone/home/test1"`, `"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1"`) {
+		t.Fatalf("expected parent link in response body: %q", body)
+	}
 }
 
 func TestAPIAcceptsBasicAuth(t *testing.T) {
 	handler := testHandler(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/demo-object", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path?irods_path=/tempZone/home/test1/file.txt", nil)
 	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("alice:secret")))
 	rec := httptest.NewRecorder()
 
@@ -186,10 +194,10 @@ func TestAPIAcceptsBasicAuth(t *testing.T) {
 	}
 }
 
-func TestGetObjectByPathRequiresPathQuery(t *testing.T) {
+func TestGetPathRequiresIRODSPathQuery(t *testing.T) {
 	handler := testHandler(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/data-objects/by-path", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path", nil)
 	req.Header.Set("Authorization", "Bearer token123")
 	rec := httptest.NewRecorder()
 
@@ -200,10 +208,10 @@ func TestGetObjectByPathRequiresPathQuery(t *testing.T) {
 	}
 }
 
-func TestGetObjectByPathAcceptsValidBearerToken(t *testing.T) {
+func TestGetPathAcceptsValidBearerToken(t *testing.T) {
 	handler := testHandler(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/data-objects/by-path?path=/tempZone/home/test1/file.txt", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path?irods_path=/tempZone/home/test1/file.txt", nil)
 	req.Header.Set("Authorization", "Bearer token123")
 	rec := httptest.NewRecorder()
 
@@ -218,10 +226,54 @@ func TestGetObjectByPathAcceptsValidBearerToken(t *testing.T) {
 	}
 }
 
-func TestGetObjectContentByPathAcceptsIRODSTicketBearer(t *testing.T) {
+func TestGetPathReturnsCollectionShape(t *testing.T) {
 	handler := testHandler(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/data-objects/content?path=/tempZone/home/test1/file.txt", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path?irods_path=/tempZone/home/test1/project", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"kind":"collection"`, `"childCount":2`) {
+		t.Fatalf("unexpected collection response body: %q", body)
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"parent":{"irods_path":"/tempZone/home/test1"`) {
+		t.Fatalf("expected parent link in collection response body: %q", body)
+	}
+}
+
+func TestGetPathChildrenReturnsCollectionChildren(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/children?irods_path=/tempZone/home/test1/project", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"children"`, `"kind":"data_object"`, `"kind":"collection"`) {
+		t.Fatalf("unexpected children response body: %q", body)
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"parent":{"irods_path":"/tempZone/home/test1/project"`) {
+		t.Fatalf("expected child parent links in response body: %q", body)
+	}
+}
+
+func TestGetPathContentsAcceptsIRODSTicketBearer(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt", nil)
 	req.Header.Set("Authorization", "Bearer irods-ticket:ticket123")
 	rec := httptest.NewRecorder()
 
@@ -240,10 +292,10 @@ func TestGetObjectContentByPathAcceptsIRODSTicketBearer(t *testing.T) {
 	}
 }
 
-func TestGetObjectContentByPathAcceptsBasicAuth(t *testing.T) {
+func TestGetPathContentsAcceptsBasicAuth(t *testing.T) {
 	handler := testHandler(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/data-objects/content?path=/tempZone/home/test1/file.txt", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt", nil)
 	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("alice:secret")))
 	rec := httptest.NewRecorder()
 
@@ -254,10 +306,10 @@ func TestGetObjectContentByPathAcceptsBasicAuth(t *testing.T) {
 	}
 }
 
-func TestGetObjectContentByPathSupportsRangeRequests(t *testing.T) {
+func TestGetPathContentsSupportsRangeRequests(t *testing.T) {
 	handler := testHandler(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/data-objects/content?path=/tempZone/home/test1/file.txt", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt", nil)
 	req.Header.Set("Authorization", "Bearer token123")
 	req.Header.Set("Range", "bytes=5-10")
 	rec := httptest.NewRecorder()
@@ -277,10 +329,10 @@ func TestGetObjectContentByPathSupportsRangeRequests(t *testing.T) {
 	}
 }
 
-func TestHeadObjectContentByPathReturnsHeadersOnly(t *testing.T) {
+func TestHeadPathContentsReturnsHeadersOnly(t *testing.T) {
 	handler := testHandler(t)
 
-	req := httptest.NewRequest(http.MethodHead, "/api/v1/data-objects/content?path=/tempZone/home/test1/file.txt", nil)
+	req := httptest.NewRequest(http.MethodHead, "/api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt", nil)
 	req.Header.Set("Authorization", "Bearer token123")
 	rec := httptest.NewRecorder()
 
