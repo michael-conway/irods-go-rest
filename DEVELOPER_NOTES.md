@@ -30,6 +30,8 @@ Testing and workflow assumptions:
 * package-local unit tests should remain next to the code they validate
 * docker-compose-backed HTTP end-to-end tests belong under `e2e/`
 * `DRS_TEST_BEARER_TOKEN` is intentionally reused as the shared bearer token variable across `irods-go-rest` and `irods-go-drs`
+* when work on `irods-go-rest` exposes missing or awkward functionality in the CyVerse Go client, flag it explicitly and record it in the `Go Client Notes` section of this file
+* keep a running list of desired `go-irodsclient` changes in this file rather than scattering those notes across commit messages or one-off prompts
 
 When changing the API, preserve the `/path` model unless there is a strong reason to introduce a distinct identifier space. Prefer one generic path lookup plus type-specific subresources over separate top-level file-versus-collection lookup endpoints. Favor HATEOAS-style links in responses when they help clients navigate hierarchy or discover next operations without reconstructing URLs manually.
 
@@ -235,3 +237,17 @@ The imported realm config defines two distinct Keycloak clients:
 The browser-login client must allow the callback URL used by the deployed
 service, for example `http://localhost:8080/web/callback`, and the matching web
 origin such as `http://localhost:8080`.
+
+### Go Client Notes
+
+Keep this section as the running backlog of desired changes or missing functionality in the CyVerse Go client (`go-irodsclient`) that become visible while implementing `irods-go-rest`.
+
+Guidance for future AI or developer passes:
+
+* if a `go-irodsclient` API is missing, awkward, or forces handler/service code to absorb client-level complexity, add a short note here
+* prefer recording the concrete missing capability, the `irods-go-rest` feature it blocked or complicated, and the shape of the desired client-side improvement
+* update this section during the same change that exposed the gap, even if no upstream client work is started yet
+
+Current notes:
+
+* none yet
