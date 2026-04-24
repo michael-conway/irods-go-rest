@@ -1,29 +1,69 @@
-# irods-go-rest
+# iRODS Go REST API
 
-OpenAPI-first Go REST API scaffold for iRODS.
+OpenAPI-first Go REST API for iRODS.
 
-## Project layout
+## Overview
 
-```text
-.
-├── api/                     # OpenAPI contract and codegen config
-├── cmd/irods-go-rest/       # Main application entrypoint
-├── internal/app/            # App composition and lifecycle
-├── internal/config/         # Environment-based configuration
-├── internal/domain/         # API-facing domain models
-├── internal/httpapi/        # HTTP routing, handlers, JSON responses
-├── internal/irods/          # iRODS integration boundary
-└── internal/openapi/        # Generated OpenAPI package target
-```
+This project provides a Go-based REST service for iRODS with an OpenAPI-defined HTTP interface, bearer/basic authentication support, browser-based login flow support, and a growing set of endpoints for metadata lookup and byte streaming.
 
-## Why this structure
+It includes:
 
-- Keeps the OpenAPI contract in `api/openapi.yaml` as the source of truth.
-- Separates transport concerns from iRODS access logic.
-- Gives you a stable service interface while the real iRODS adapter is still evolving.
-- Keeps generated code isolated in one package so regeneration stays low-risk.
+* a REST API for iRODS object and collection access
+* OpenAPI source documents and Swagger UI
+* HTTP middleware for bearer token, basic auth, and ticket-oriented download flows
+* iRODS service-layer boundaries for catalog and content operations
+* unit-testable handler, auth, and service scaffolding for further development
 
-## Quick start
+## Project Metadata
+
+| Field | Value |
+| --- | --- |
+| Project Name | `iRODS Go REST API` |
+| Current Version | `TBD` |
+| Status | `Active Development` |
+| Primary Developer | `Mike Conway` |
+| Organization | `NIEHS` |
+| Repository | `https://github.com/michael-conway/irods-go-rest` |
+| Contact | `mike.conway@nih.gov` |
+| Issue Tracker | `https://github.com/michael-conway/irods-go-rest/issues` |
+| License | `TBD` |
+
+## Master Index
+
+* [Configuration Notes](./CONFIGURATION_NOTES.md)
+* [Developer Notes](./DEVELOPER_NOTES.md)
+* [OpenAPI Contract](./api/openapi.yaml)
+
+## Project Structure
+
+The repository follows a conventional Go layout centered around an OpenAPI-described HTTP service, HTTP/auth middleware, and iRODS service boundaries.
+
+| Path | Purpose |
+| --- | --- |
+| `cmd/irods-go-rest/` | Main application entrypoint |
+| `internal/app/` | App composition and service lifecycle |
+| `internal/config/` | Runtime configuration and environment binding |
+| `internal/auth/` | Keycloak-backed auth flow and token verification support |
+| `internal/httpapi/` | HTTP routing, middleware, handlers, and responses |
+| `internal/irods/` | iRODS integration boundary and service scaffolding |
+| `internal/domain/` | API-facing domain models |
+| `api/` | OpenAPI contract and embedding support |
+| `deployments/` | Docker and local development deployment assets |
+
+## Stack and Testing Strategy
+
+The implementation is written in Go and keeps the OpenAPI document in `api/openapi.yaml` as the source of truth for the HTTP contract. The HTTP layer is intentionally separated from the iRODS service layer so routing, auth, and response behavior can evolve without pushing transport concerns into the backend access code.
+
+Testing is currently centered on package-local unit tests, especially in the HTTP layer:
+
+* handler and middleware tests live next to the code they validate
+* HTTP behavior is exercised with `httptest`
+* auth flow and token verification behavior is tested independently from browser login flow support
+* the iRODS adapter remains scaffolded so the contract can evolve before binding fully to go-irodsclient
+
+## Quick Start
+
+Run the service locally:
 
 ```bash
 go run ./cmd/irods-go-rest
@@ -31,11 +71,90 @@ go run ./cmd/irods-go-rest
 
 Then visit:
 
-- `GET /healthz`
-- `GET /web/`
-- `GET /web/login`
-- `GET /api/v1/objects/demo-object`
-- `GET /api/v1/collections/demo-collection`
+* `GET /healthz`
+* `GET /swagger`
+* `GET /openapi.yaml`
+* `GET /web/`
+* `GET /web/login`
+
+## API Documentation
+
+When the service is running locally on the default port, API documentation is available at:
+
+* Swagger UI: `http://localhost:8080/swagger`
+* OpenAPI spec: `http://localhost:8080/openapi.yaml`
+
+## Configuration
+
+The service reads `rest-config.yaml` plus `GOREST_*` environment variables. Environment variables override file values.
+
+Common settings include:
+
+* `GOREST_PUBLIC_URL`
+* `GOREST_REST_LOG_LEVEL`
+* `GOREST_IRODS_ZONE`
+* `GOREST_IRODS_HOST`
+* `GOREST_IRODS_PORT`
+* `GOREST_IRODS_ADMIN_USER`
+* `GOREST_IRODS_ADMIN_PASSWORD`
+* `GOREST_IRODS_ADMIN_PASSWORD_FILE`
+* `GOREST_IRODS_DEFAULT_RESOURCE`
+* `GOREST_OIDC_URL`
+* `GOREST_OIDC_REALM`
+* `GOREST_OIDC_CLIENT_ID`
+* `GOREST_OIDC_CLIENT_SECRET`
+* `GOREST_OIDC_CLIENT_SECRET_FILE`
+* `GOREST_OIDC_SCOPE`
+* `GOREST_OIDC_INSECURE_SKIP_VERIFY`
+
+If you want to point the service at one explicit config file, use:
+
+```bash
+IRODS_REST_CONFIG_FILE=/path/to/rest-config.yaml
+```
+
+See [Configuration Notes](./CONFIGURATION_NOTES.md) for runtime and Docker-oriented configuration details.
+
+## Auth Model
+
+Protected API endpoints currently accept either:
+
+* `Authorization: Bearer <token>`
+* `Authorization: Basic <base64(user:password)>`
+
+Bearer tokens are validated against Keycloak. Basic credentials are accepted by the HTTP middleware as an alternate API auth style and are intended to align with future iRODS-backed validation work.
+
+For download-oriented content endpoints, the service also accepts:
+
+* `Authorization: Bearer irods-ticket:<ticket>`
+
+This keeps the download contract compatible with future DRS-issued ticket flows without changing the endpoint shape later.
+
+The browser login flow remains separate under `/web/*`, which keeps the API contract cleaner and easier to use as a machine-facing service.
+
+## Data Object Metadata and Content
+
+For iRODS data objects whose true identifier is the full iRODS absolute path, the API treats that path as request data rather than embedding it in the URL route.
+
+Current path-based endpoints:
+
+* Metadata by path:
+  `GET /api/v1/data-objects/by-path?path=/tempZone/home/test1/file.txt`
+* Content headers by path:
+  `HEAD /api/v1/data-objects/content?path=/tempZone/home/test1/file.txt`
+* Content bytes by path:
+  `GET /api/v1/data-objects/content?path=/tempZone/home/test1/file.txt`
+
+The content endpoint supports restart/resume through the standard HTTP `Range` header.
+
+Example:
+
+```bash
+curl \
+  -H 'Authorization: Bearer YOUR_ACCESS_TOKEN' \
+  -H 'Range: bytes=1024-' \
+  'http://localhost:8080/api/v1/data-objects/content?path=/tempZone/home/test1/file.txt'
+```
 
 ## Docker
 
@@ -57,82 +176,11 @@ docker run --rm -p 8080:8080 \
   irods-go-rest:local
 ```
 
-If you want to add this service to the `irods-go-drs` compose stack, this service definition should fit the existing `postgres`, `irods-provider`, and `keycloak` services:
+This service can also be added to the `irods-go-drs` docker-compose-based development stack. See [Developer Notes](./DEVELOPER_NOTES.md) for the current compose assumptions and runtime environment expectations.
 
-```yaml
-  irods-go-rest:
-    hostname: irods-go-rest
-    platform: linux/amd64
-    build:
-      context: ../irods-go-rest
-      dockerfile: Dockerfile
-    image: irods-go-rest:local
-    depends_on:
-      irods-provider:
-        condition: service_started
-      keycloak:
-        condition: service_started
-    environment:
-      GOREST_PUBLIC_URL: http://irods-go-rest:8080
-      GOREST_REST_LOG_LEVEL: info
-      GOREST_IRODS_ZONE: tempZone
-      GOREST_IRODS_HOST: irods-provider
-      GOREST_IRODS_PORT: 1247
-      GOREST_IRODS_DEFAULT_RESOURCE: demoResc
-      GOREST_OIDC_URL: http://keycloak:8080
-      GOREST_OIDC_REALM: drs
-      GOREST_OIDC_CLIENT_ID: irods-go-rest
-      GOREST_OIDC_CLIENT_SECRET: ""
-    ports:
-      - "8081:8080"
-```
+## OpenAPI Workflow
 
-Adjust the host port, realm, and client settings to match your Keycloak import and whichever external URL you want browsers to use for `/web/login`.
-
-## Configuration
-
-The service reads `rest-config.yaml` plus `GOREST_*` environment variables. Environment variables override file values.
-
-- `GOREST_PUBLIC_URL` example: `http://localhost:8080`
-- `GOREST_REST_LOG_LEVEL` default: `info`
-- `GOREST_IRODS_ZONE` example: `tempZone`
-- `GOREST_IRODS_HOST` example: `localhost`
-- `GOREST_IRODS_PORT` default: `1247`
-- `GOREST_IRODS_ADMIN_USER` example: `rods`
-- `GOREST_IRODS_ADMIN_PASSWORD` optional, but prefer `GOREST_IRODS_ADMIN_PASSWORD_FILE`
-- `GOREST_IRODS_ADMIN_PASSWORD_FILE` path to a mounted secret file
-- `GOREST_IRODS_DEFAULT_RESOURCE` example: `demoResc`
-- `GOREST_OIDC_URL` example: `http://localhost:8081`
-- `GOREST_OIDC_REALM` example: `irods`
-- `GOREST_OIDC_CLIENT_ID` example: `irods-go-rest`
-- `GOREST_OIDC_CLIENT_SECRET` optional, but prefer `GOREST_OIDC_CLIENT_SECRET_FILE`
-- `GOREST_OIDC_CLIENT_SECRET_FILE` path to a mounted secret file
-- `GOREST_OIDC_SCOPE` default: `openid profile email`
-
-## Browser login flow
-
-```bash
-open http://localhost:8080/web/login
-```
-
-The companion web flow redirects the browser to Keycloak's authorization endpoint. After sign-in, Keycloak returns to `/web/callback`, where the service exchanges the code, verifies the token with Keycloak, and creates an HTTP-only browser session for the web companion flow.
-
-## API auth model
-
-The REST API is a resource server. It expects an `Authorization: Bearer ...` token on protected endpoints and validates that token against Keycloak before serving the request.
-
-```bash
-curl http://localhost:8080/api/v1/objects/demo-object \
-  -H 'Authorization: Bearer YOUR_ACCESS_TOKEN'
-```
-
-This keeps the browser login flow separate from the API contract, which is a better fit for a DRS-adjacent service.
-
-## OpenAPI workflow
-
-The generated server/models package is intended to live under `internal/openapi`.
-
-If you want to wire in `oapi-codegen`, this scaffold is ready for it:
+If you want to regenerate code from the OpenAPI contract, the repository is already structured for it:
 
 ```bash
 go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest \
@@ -140,4 +188,15 @@ go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest \
   api/openapi.yaml
 ```
 
-That command is not required for the starter project to compile today, but the spec and config are already in place so you can move to generated types/handlers cleanly.
+The service does not require regeneration to compile today, but the contract and layout are set up so generated code can be introduced cleanly.
+
+## References
+
+* OpenAPI Specification: https://github.com/OAI/OpenAPI-Specification
+* oapi-codegen: https://github.com/oapi-codegen/oapi-codegen
+* go-irodsclient: https://github.com/cyverse/go-irodsclient
+* Keycloak: https://www.keycloak.org/documentation
+* Go standard `net/http`: https://pkg.go.dev/net/http
+* Go standard `httptest`: https://pkg.go.dev/net/http/httptest
+* Viper: https://github.com/spf13/viper
+* Zerolog: https://github.com/rs/zerolog

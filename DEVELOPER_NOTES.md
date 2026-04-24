@@ -12,6 +12,9 @@ Right now it exposes:
 GET /healthz
 GET /api/v1/objects/{object_id}
 GET /api/v1/collections/{collection_id}
+GET /api/v1/data-objects/by-path?path=...
+HEAD /api/v1/data-objects/content?path=...
+GET /api/v1/data-objects/content?path=...
 I kept the current iRODS layer as a stubbed service so the structure is solid before we bind in go-irodsclient. Verification passed with gofmt and go test ./....
 
 ### Auth notes
@@ -23,6 +26,18 @@ The companion web login flow moved under /web: /web/login starts the redirect, /
 Verification passed with gofmt and go test ./....
 
 One note: token validation is currently done through Keycloak introspection, which is a solid server-side choice and easy to reason about. If you want, the next improvement would be local JWT validation against Keycloak JWKS for lower latency and less Keycloak round-tripping.
+
+### Download path and restart design
+
+For data-object download work, the API now treats the full iRODS absolute path as request data rather than embedding it in the URL path. That avoids router ambiguity for `/`, spaces, and other path characters.
+
+Current shape:
+
+- metadata: `GET /api/v1/data-objects/by-path?path=...`
+- content headers: `HEAD /api/v1/data-objects/content?path=...`
+- content bytes: `GET /api/v1/data-objects/content?path=...`
+
+The content endpoint supports single-range byte restart via the standard `Range: bytes=start-end` header and can authenticate either a normal OAuth bearer token or a scaffolded bearer token of the form `irods-ticket:<ticket>`.
 
 ### Docker test framework
 
