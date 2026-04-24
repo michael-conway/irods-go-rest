@@ -29,7 +29,7 @@ func (h *Handler) getPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	object, err := h.catalog.GetPath(r.Context(), objectPath)
+	object, err := h.paths.GetPath(r.Context(), objectPath)
 	if err != nil {
 		if errors.Is(err, irods.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
@@ -50,7 +50,7 @@ func (h *Handler) getPathChildren(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	children, err := h.catalog.GetPathChildren(r.Context(), objectPath)
+	children, err := h.paths.GetPathChildren(r.Context(), objectPath)
 	if err != nil {
 		if errors.Is(err, irods.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
@@ -87,7 +87,7 @@ func (h *Handler) servePathContents(w http.ResponseWriter, r *http.Request, head
 		return
 	}
 
-	content, err := h.catalog.GetObjectContentByPath(r.Context(), objectPath)
+	content, err := h.paths.GetObjectContentByPath(r.Context(), objectPath)
 	if err != nil {
 		if errors.Is(err, irods.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())

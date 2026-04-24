@@ -12,6 +12,7 @@ import (
 	"github.com/michael-conway/irods-go-rest/internal/auth"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 	"github.com/michael-conway/irods-go-rest/internal/irods"
+	"github.com/michael-conway/irods-go-rest/internal/restservice"
 )
 
 func TestHealthz(t *testing.T) {
@@ -389,7 +390,7 @@ func testHandler(t *testing.T) *Handler {
 	if err != nil {
 		t.Fatalf("read rest config: %v", err)
 	}
-	return NewHandler(*cfg, irods.NewCatalogService(*cfg), stubAuthService{}, stubAuthService{}, auth.NewSessionStore())
+	return NewHandler(*cfg, restservice.NewPathService(irods.NewCatalogService(*cfg)), stubAuthService{}, stubAuthService{}, auth.NewSessionStore())
 }
 
 func containsAll(s string, parts ...string) bool {

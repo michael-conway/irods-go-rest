@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -12,10 +11,6 @@ import (
 )
 
 const irodsTicketBearerPrefix = "irods-ticket:"
-
-type ticketContextKey struct{}
-
-type basicPasswordContextKey struct{}
 
 func (h *Handler) requireBearer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -28,13 +23,13 @@ func (h *Handler) requireBearer(next http.Handler) http.Handler {
 
 		switch authz.Scheme {
 		case "basic":
-			ctx := withPrincipal(r.Context(), auth.Principal{
+			ctx := auth.WithPrincipal(r.Context(), auth.Principal{
 				Subject:  authz.Username,
 				Username: authz.Username,
 				Scope:    []string{"basic"},
 				Active:   true,
 			})
-			ctx = withBasicPassword(ctx, authz.Password)
+			ctx = auth.WithBasicPassword(ctx, authz.Password)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		case "bearer":
@@ -55,7 +50,7 @@ func (h *Handler) requireBearer(next http.Handler) http.Handler {
 				writeError(w, status, errorCode, err.Error())
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(withPrincipal(r.Context(), principal)))
+			next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
 			return
 		default:
 			w.Header().Set("WWW-Authenticate", `Bearer realm="irods-go-rest", Basic realm="irods-go-rest"`)
@@ -63,24 +58,6 @@ func (h *Handler) requireBearer(next http.Handler) http.Handler {
 			return
 		}
 	})
-}
-
-func withTicket(ctx context.Context, ticket string) context.Context {
-	return context.WithValue(ctx, ticketContextKey{}, ticket)
-}
-
-func ticketFromContext(ctx context.Context) (string, bool) {
-	ticket, ok := ctx.Value(ticketContextKey{}).(string)
-	return ticket, ok
-}
-
-func withBasicPassword(ctx context.Context, password string) context.Context {
-	return context.WithValue(ctx, basicPasswordContextKey{}, password)
-}
-
-func basicPasswordFromContext(ctx context.Context) (string, bool) {
-	password, ok := ctx.Value(basicPasswordContextKey{}).(string)
-	return password, ok
 }
 
 func (h *Handler) requireDownloadBearer(next http.Handler) http.Handler {
@@ -94,18 +71,18 @@ func (h *Handler) requireDownloadBearer(next http.Handler) http.Handler {
 
 		switch authz.Scheme {
 		case "basic":
-			ctx := withPrincipal(r.Context(), auth.Principal{
+			ctx := auth.WithPrincipal(r.Context(), auth.Principal{
 				Subject:  authz.Username,
 				Username: authz.Username,
 				Scope:    []string{"basic"},
 				Active:   true,
 			})
-			ctx = withBasicPassword(ctx, authz.Password)
+			ctx = auth.WithBasicPassword(ctx, authz.Password)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		case "bearer-ticket":
 			ticket := authz.Token
-			next.ServeHTTP(w, r.WithContext(withTicket(r.Context(), ticket)))
+			next.ServeHTTP(w, r.WithContext(auth.WithTicket(r.Context(), ticket)))
 			return
 		case "bearer":
 			principal, err := h.verifier.VerifyToken(r.Context(), authz.Token)
@@ -126,7 +103,7 @@ func (h *Handler) requireDownloadBearer(next http.Handler) http.Handler {
 				return
 			}
 
-			next.ServeHTTP(w, r.WithContext(withPrincipal(r.Context(), principal)))
+			next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
 			return
 		default:
 			w.Header().Set("WWW-Authenticate", `Bearer realm="irods-go-rest", Basic realm="irods-go-rest"`)
