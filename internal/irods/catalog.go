@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"mime"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -15,10 +16,9 @@ import (
 var ErrNotFound = errors.New("resource not found")
 
 type CatalogService interface {
-	GetObject(ctx context.Context, objectID string) (domain.Object, error)
-	GetObjectByPath(ctx context.Context, absolutePath string) (domain.Object, error)
+	GetPath(ctx context.Context, absolutePath string) (domain.PathEntry, error)
+	GetPathChildren(ctx context.Context, absolutePath string) ([]domain.PathEntry, error)
 	GetObjectContentByPath(ctx context.Context, absolutePath string) (domain.ObjectContent, error)
-	GetCollection(ctx context.Context, collectionID string) (domain.Collection, error)
 }
 
 type catalogService struct {
@@ -29,16 +29,32 @@ func NewCatalogService(cfg config.RestConfig) CatalogService {
 	return &catalogService{cfg: cfg}
 }
 
-func (s *catalogService) GetObject(_ context.Context, objectID string) (domain.Object, error) {
-	if objectID == "missing" {
-		return domain.Object{}, fmt.Errorf("%w: object %q", ErrNotFound, objectID)
+func (s *catalogService) GetPath(_ context.Context, absolutePath string) (domain.PathEntry, error) {
+	absolutePath = strings.TrimSpace(absolutePath)
+	if absolutePath == "" || absolutePath == "missing" {
+		return domain.PathEntry{}, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
 	}
 
-	return domain.Object{
-		ID:       objectID,
-		Path:     fmt.Sprintf("/%s/home/rods/%s", s.cfg.IrodsZone, objectID),
+	if looksLikeCollection(absolutePath) {
+		return domain.PathEntry{
+			ID:          absolutePath,
+			Path:        absolutePath,
+			Kind:        "collection",
+			Zone:        s.cfg.IrodsZone,
+			HasChildren: true,
+			ChildCount:  2,
+			Metadata: map[string]string{
+				"source": "scaffold",
+			},
+		}, nil
+	}
+
+	return domain.PathEntry{
+		ID:       absolutePath,
+		Path:     absolutePath,
+		Kind:     "data_object",
 		Checksum: "sha256:demo",
-		Size:     1024,
+		Size:     int64(len([]byte("demo content for " + absolutePath))),
 		Zone:     s.cfg.IrodsZone,
 		Resource: s.cfg.IrodsDefaultResource,
 		Metadata: map[string]string{
@@ -47,21 +63,31 @@ func (s *catalogService) GetObject(_ context.Context, objectID string) (domain.O
 	}, nil
 }
 
-func (s *catalogService) GetObjectByPath(_ context.Context, absolutePath string) (domain.Object, error) {
+func (s *catalogService) GetPathChildren(_ context.Context, absolutePath string) ([]domain.PathEntry, error) {
 	absolutePath = strings.TrimSpace(absolutePath)
 	if absolutePath == "" || absolutePath == "missing" {
-		return domain.Object{}, fmt.Errorf("%w: object %q", ErrNotFound, absolutePath)
+		return nil, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
 	}
 
-	return domain.Object{
-		ID:       absolutePath,
-		Path:     absolutePath,
-		Checksum: "sha256:demo",
-		Size:     int64(len([]byte("demo content for " + absolutePath))),
-		Zone:     s.cfg.IrodsZone,
-		Resource: s.cfg.IrodsDefaultResource,
-		Metadata: map[string]string{
-			"source": "scaffold",
+	if !looksLikeCollection(absolutePath) {
+		return nil, fmt.Errorf("%w: path %q is not a collection", ErrNotFound, absolutePath)
+	}
+
+	return []domain.PathEntry{
+		{
+			ID:   absolutePath + "/child.txt",
+			Path: absolutePath + "/child.txt",
+			Kind: "data_object",
+			Zone: s.cfg.IrodsZone,
+			Size: 128,
+		},
+		{
+			ID:          absolutePath + "/nested",
+			Path:        absolutePath + "/nested",
+			Kind:        "collection",
+			Zone:        s.cfg.IrodsZone,
+			HasChildren: true,
+			ChildCount:  1,
 		},
 	}, nil
 }
@@ -86,18 +112,7 @@ func (s *catalogService) GetObjectContentByPath(_ context.Context, absolutePath 
 	}, nil
 }
 
-func (s *catalogService) GetCollection(_ context.Context, collectionID string) (domain.Collection, error) {
-	if collectionID == "missing" {
-		return domain.Collection{}, fmt.Errorf("%w: collection %q", ErrNotFound, collectionID)
-	}
-
-	return domain.Collection{
-		ID:         collectionID,
-		Path:       fmt.Sprintf("/%s/home/rods/%s", s.cfg.IrodsZone, collectionID),
-		Zone:       s.cfg.IrodsZone,
-		ChildCount: 3,
-		Metadata: map[string]string{
-			"source": "scaffold",
-		},
-	}, nil
+func looksLikeCollection(absolutePath string) bool {
+	name := path.Base(strings.TrimRight(absolutePath, "/"))
+	return !strings.Contains(name, ".")
 }

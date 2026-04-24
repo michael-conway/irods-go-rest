@@ -1,3 +1,38 @@
+## AI Summary
+
+This block is intended as a short operational summary for Codex or another AI assistant working in this repository.
+
+`irods-go-rest` is an OpenAPI-first REST service for iRODS. The core design assumption is that logical iRODS paths are the canonical identifiers for path-oriented operations, so the service uses `/path` as the resource namespace and `irods_path` as a required query parameter rather than embedding full iRODS paths in URL path segments. This is an intentional REST compromise to avoid brittle routing and encoding behavior with `/`, spaces, and other path characters. Within those constraints, the API should remain as RESTful as possible.
+
+Primary API model:
+
+* `GET /api/v1/path?irods_path=...` resolves either a data object or a collection
+* the response includes a `kind` discriminator such as `data_object` or `collection`
+* collection-specific behavior lives in subresources like `/api/v1/path/children`
+* data-object byte streaming lives in `/api/v1/path/contents`
+* HATEOAS is a core design principle: responses should expose navigable REST links where practical, starting with `parent` links for path traversal and expanding to sibling/subresource links as the API grows
+
+Architectural assumptions:
+
+* keep HTTP routing, auth, and response mapping in `internal/httpapi/`
+* keep iRODS lookup and content retrieval logic behind the `internal/irods` service boundary
+* avoid pushing REST URL-building or handler concerns down into the iRODS service layer
+* the OpenAPI file in `api/openapi.yaml` is the contract source of truth
+
+Auth assumptions:
+
+* protected endpoints currently accept Bearer and Basic auth
+* content endpoints also accept `Bearer irods-ticket:<ticket>` as a scaffold for DRS-style ticket-backed download flows
+* browser login remains separate under `/web/*`
+
+Testing and workflow assumptions:
+
+* package-local unit tests should remain next to the code they validate
+* docker-compose-backed HTTP end-to-end tests belong under `e2e/`
+* `DRS_TEST_BEARER_TOKEN` is intentionally reused as the shared bearer token variable across `irods-go-rest` and `irods-go-drs`
+
+When changing the API, preserve the `/path` model unless there is a strong reason to introduce a distinct identifier space. Prefer one generic path lookup plus type-specific subresources over separate top-level file-versus-collection lookup endpoints. Favor HATEOAS-style links in responses when they help clients navigate hierarchy or discover next operations without reconstructing URLs manually.
+
 I scaffolded irods-go-rest into a clean OpenAPI-first Go service that already builds as a starter API.
 
 The main shape is in place:
@@ -10,11 +45,10 @@ Project guidance in README.md (line 1)
 Right now it exposes:
 
 GET /healthz
-GET /api/v1/objects/{object_id}
-GET /api/v1/collections/{collection_id}
-GET /api/v1/data-objects/by-path?path=...
-HEAD /api/v1/data-objects/content?path=...
-GET /api/v1/data-objects/content?path=...
+GET /api/v1/path?irods_path=...
+GET /api/v1/path/children?irods_path=...
+HEAD /api/v1/path/contents?irods_path=...
+GET /api/v1/path/contents?irods_path=...
 I kept the current iRODS layer as a stubbed service so the structure is solid before we bind in go-irodsclient. Verification passed with gofmt and go test ./....
 
 ### Auth notes
@@ -27,15 +61,27 @@ Verification passed with gofmt and go test ./....
 
 One note: token validation is currently done through Keycloak introspection, which is a solid server-side choice and easy to reason about. If you want, the next improvement would be local JWT validation against Keycloak JWKS for lower latency and less Keycloak round-tripping.
 
-### Download path and restart design
+### Path and restart design
 
-For data-object download work, the API now treats the full iRODS absolute path as request data rather than embedding it in the URL path. That avoids router ambiguity for `/`, spaces, and other path characters.
+For logical-path-oriented API work, the service now treats the full iRODS path as request data rather than embedding it in the URL path. That avoids router ambiguity for `/`, spaces, and other path characters.
+
+This is an intentional REST compromise. In a pure route-parameter design the full resource identity would sit entirely in the URL path, but iRODS logical paths are not route-safe identifiers because they contain `/` semantics and may contain spaces or other characters that require escaping. Using `/path` as the resource namespace and `irods_path` as the required query parameter keeps the API readable, keeps resource operations grouped cleanly, and avoids brittle router or proxy behavior that can occur when full iRODS paths are embedded directly in the route. Given that compromise, the remaining design goal is to keep the API as RESTful as possible through stable resource namespaces, typed subresources, and navigable links in responses.
+
+The design choice is also to treat `path` as the primary REST model for both files and collections. In iRODS, a logical path may resolve to either kind of resource, and clients should not have to know the type before lookup. `/path` therefore returns a generic path representation with a type discriminator, while divergent operations are expressed as subresources:
+
+* `/path/contents` for byte streaming from data objects
+* `/path/children` for listing child entries of a collection
+
+This keeps the identifier model uniform while still allowing type-specific behavior where it actually diverges.
+
+To support upward navigation, `/path` responses also expose a lightweight HATEOAS-style `parent` link whenever the resolved path has a parent. The response includes both the parent iRODS path and the REST endpoint for that parent so clients can navigate the hierarchy without reconstructing URLs themselves.
 
 Current shape:
 
-- metadata: `GET /api/v1/data-objects/by-path?path=...`
-- content headers: `HEAD /api/v1/data-objects/content?path=...`
-- content bytes: `GET /api/v1/data-objects/content?path=...`
+- metadata: `GET /api/v1/path?irods_path=...`
+- collection children: `GET /api/v1/path/children?irods_path=...`
+- content headers: `HEAD /api/v1/path/contents?irods_path=...`
+- content bytes: `GET /api/v1/path/contents?irods_path=...`
 
 The content endpoint supports single-range byte restart via the standard `Range: bytes=start-end` header and can authenticate either a normal OAuth bearer token or a scaffolded bearer token of the form `irods-ticket:<ticket>`.
 
@@ -140,6 +186,34 @@ GOREST_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc_client_secret
 
 This keeps non-secret configuration and secrets separate and matches the
 intended compose deployment pattern.
+
+### Testing taxonomy
+
+`irods-go-rest` follows the same broad test layering now used in `irods-go-drs`:
+
+* package-local unit tests stay next to the code they validate and run with the normal `go test ./...` flow
+* docker-compose-backed HTTP system tests belong under `e2e/`
+
+End-to-end tests should use the `e2e` build tag:
+
+```go
+//go:build e2e
+// +build e2e
+```
+
+Run them explicitly:
+
+```bash
+go test -tags=e2e ./e2e/...
+```
+
+Current E2E environment conventions:
+
+* `GOREST_E2E_BASE_URL`
+* `DRS_TEST_BEARER_TOKEN`
+* `GOREST_E2E_SKIP_TLS_VERIFY`
+
+The shared bearer token variable intentionally matches the convention already used across `irods-go-drs` integration and e2e tests so the two services can be exercised in one local test environment without introducing another token variable name.
 
 ### Keycloak env file expectations
 

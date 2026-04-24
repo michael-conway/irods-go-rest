@@ -8,9 +8,7 @@ servers:
   - url: http://localhost:8080
 tags:
   - name: health
-  - name: objects
-  - name: data-objects
-  - name: collections
+  - name: path
 paths:
   /healthz:
     get:
@@ -24,63 +22,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
-  /api/v1/objects/{object_id}:
+  /api/v1/path:
     get:
-      operationId: getObject
-      tags: [objects]
-      summary: Fetch object metadata from iRODS
-      security:
-        - BearerAuth: []
-        - BasicAuth: []
-      parameters:
-        - in: path
-          name: object_id
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Object metadata
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Object"
-        "404":
-          description: Object not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: Missing or invalid bearer token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /api/v1/data-objects/by-path:
-    get:
-      operationId: getObjectByPath
-      tags: [data-objects]
-      summary: Fetch data object metadata from an iRODS absolute path
+      operationId: getPath
+      tags: [path]
+      summary: Fetch metadata for an iRODS logical path
       security:
         - BearerAuth: []
         - BasicAuth: []
       parameters:
         - in: query
-          name: path
+          name: irods_path
           required: true
           schema:
             type: string
-          description: Full iRODS absolute path to the data object.
+          description: Full iRODS absolute logical path to a file or collection.
       responses:
         "200":
-          description: Object metadata
+          description: Metadata for a file or collection path
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Object"
+                $ref: "#/components/schemas/PathEntry"
         "400":
-          description: Missing path query parameter
+          description: Missing irods_path query parameter
           content:
             application/json:
               schema:
@@ -97,21 +62,61 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
-  /api/v1/data-objects/content:
-    head:
-      operationId: headObjectContentByPath
-      tags: [data-objects]
-      summary: Inspect content headers for an iRODS data object
+  /api/v1/path/children:
+    get:
+      operationId: getPathChildren
+      tags: [path]
+      summary: List direct children for a collection path
       security:
         - BearerAuth: []
         - BasicAuth: []
       parameters:
         - in: query
-          name: path
+          name: irods_path
           required: true
           schema:
             type: string
-          description: Full iRODS absolute path to the data object.
+          description: Full iRODS absolute logical path to a collection.
+      responses:
+        "200":
+          description: Collection children
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathChildrenResponse"
+        "400":
+          description: Missing irods_path query parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Path not found or not a collection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/path/contents:
+    head:
+      operationId: headPathContents
+      tags: [path]
+      summary: Inspect content headers for bytes at an iRODS logical path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a file.
         - in: header
           name: Range
           required: false
@@ -124,7 +129,7 @@ paths:
         "206":
           description: Content headers for a byte range
         "400":
-          description: Missing path query parameter
+          description: Missing irods_path query parameter
           content:
             application/json:
               schema:
@@ -142,9 +147,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
     get:
-      operationId: getObjectContentByPath
-      tags: [data-objects]
-      summary: Stream bytes for an iRODS data object
+      operationId: getPathContents
+      tags: [path]
+      summary: Stream bytes for an iRODS logical path
       description: |
         Accepts Basic auth, an OAuth bearer token, or a bearer token prefixed as `irods-ticket:<ticket>`.
         Supports single-range byte restarts via the `Range` header.
@@ -153,11 +158,11 @@ paths:
         - BasicAuth: []
       parameters:
         - in: query
-          name: path
+          name: irods_path
           required: true
           schema:
             type: string
-          description: Full iRODS absolute path to the data object.
+          description: Full iRODS absolute logical path to a file.
         - in: header
           name: Range
           required: false
@@ -180,7 +185,7 @@ paths:
                 type: string
                 format: binary
         "400":
-          description: Missing path query parameter
+          description: Missing irods_path query parameter
           content:
             application/json:
               schema:
@@ -199,39 +204,6 @@ paths:
                 $ref: "#/components/schemas/Error"
         "416":
           description: Invalid byte range
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /api/v1/collections/{collection_id}:
-    get:
-      operationId: getCollection
-      tags: [collections]
-      summary: Fetch collection metadata from iRODS
-      security:
-        - BearerAuth: []
-        - BasicAuth: []
-      parameters:
-        - in: path
-          name: collection_id
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Collection metadata
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Collection"
-        "404":
-          description: Collection not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: Missing or invalid bearer token
           content:
             application/json:
               schema:
@@ -259,14 +231,24 @@ components:
         environment:
           type: string
           example: development
-    Object:
+    PathEntry:
       type: object
-      required: [id, path, checksum, size, zone]
+      required: [id, path, kind, zone]
       properties:
         id:
           type: string
         path:
           type: string
+        kind:
+          type: string
+          enum: [data_object, collection]
+        parent:
+          $ref: "#/components/schemas/ParentLink"
+        hasChildren:
+          type: boolean
+        childCount:
+          type: integer
+          format: int32
         checksum:
           type: string
         size:
@@ -280,23 +262,24 @@ components:
           type: object
           additionalProperties:
             type: string
-    Collection:
+    ParentLink:
       type: object
-      required: [id, path, zone]
+      required: [irods_path, href]
       properties:
-        id:
+        irods_path:
           type: string
-        path:
+        href:
           type: string
-        zone:
+    PathChildrenResponse:
+      type: object
+      required: [irods_path, children]
+      properties:
+        irods_path:
           type: string
-        childCount:
-          type: integer
-          format: int32
-        metadata:
-          type: object
-          additionalProperties:
-            type: string
+        children:
+          type: array
+          items:
+            $ref: "#/components/schemas/PathEntry"
     Error:
       type: object
       required: [code, message]

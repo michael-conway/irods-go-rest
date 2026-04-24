@@ -1,14 +1,14 @@
 # iRODS Go REST API
 
-OpenAPI-first Go REST API for iRODS.
+OpenAPI Go REST API for iRODS.
 
 ## Overview
 
-This project provides a Go-based REST service for iRODS with an OpenAPI-defined HTTP interface, bearer/basic authentication support, browser-based login flow support, and a growing set of endpoints for metadata lookup and byte streaming.
+This project provides a Go-based REST service for iRODS with an OpenAPI-defined HTTP interface, bearer/basic authentication support, browser-based login flow support, and a growing set of endpoints for logical-path lookup, child listing, and byte streaming.
 
 It includes:
 
-* a REST API for iRODS object and collection access
+* a REST API for iRODS logical-path-oriented access
 * OpenAPI source documents and Swagger UI
 * HTTP middleware for bearer token, basic auth, and ticket-oriented download flows
 * iRODS service-layer boundaries for catalog and content operations
@@ -48,6 +48,7 @@ The repository follows a conventional Go layout centered around an OpenAPI-descr
 | `internal/irods/` | iRODS integration boundary and service scaffolding |
 | `internal/domain/` | API-facing domain models |
 | `api/` | OpenAPI contract and embedding support |
+| `e2e/` | Docker-compose-backed end-to-end HTTP tests |
 | `deployments/` | Docker and local development deployment assets |
 
 ## Stack and Testing Strategy
@@ -60,6 +61,8 @@ Testing is currently centered on package-local unit tests, especially in the HTT
 * HTTP behavior is exercised with `httptest`
 * auth flow and token verification behavior is tested independently from browser login flow support
 * the iRODS adapter remains scaffolded so the contract can evolve before binding fully to go-irodsclient
+
+For docker-compose-backed HTTP system testing, `irods-go-rest` now also reserves `e2e/` for explicit end-to-end tests using the `e2e` build tag.
 
 ## Quick Start
 
@@ -132,18 +135,31 @@ This keeps the download contract compatible with future DRS-issued ticket flows 
 
 The browser login flow remains separate under `/web/*`, which keeps the API contract cleaner and easier to use as a machine-facing service.
 
-## Data Object Metadata and Content
+## Path Model
 
-For iRODS data objects whose true identifier is the full iRODS absolute path, the API treats that path as request data rather than embedding it in the URL route.
+For iRODS resources whose true identifier is the full iRODS logical path, the API treats that path as request data rather than embedding it in the URL route.
 
 Current path-based endpoints:
 
-* Metadata by path:
-  `GET /api/v1/data-objects/by-path?path=/tempZone/home/test1/file.txt`
-* Content headers by path:
-  `HEAD /api/v1/data-objects/content?path=/tempZone/home/test1/file.txt`
-* Content bytes by path:
-  `GET /api/v1/data-objects/content?path=/tempZone/home/test1/file.txt`
+* Path metadata:
+  `GET /api/v1/path?irods_path=/tempZone/home/test1/file.txt`
+* Collection children:
+  `GET /api/v1/path/children?irods_path=/tempZone/home/test1/project`
+* Content headers:
+  `HEAD /api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt`
+* Content bytes:
+  `GET /api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt`
+
+`/path` is the primary lookup model for both data objects and collections. The response identifies what the path resolves to using a discriminator such as `kind: data_object` or `kind: collection`.
+
+Path responses also include a `parent` field when a parent exists. This follows a lightweight HATEOAS pattern by exposing the parent iRODS path along with the REST link that can be followed to retrieve that parent:
+
+* `parent.irods_path`
+* `parent.href`
+
+Collection-specific behavior is expressed through subresources such as `/path/children`. Data-object-specific behavior is expressed through subresources such as `/path/contents`.
+
+This establishes `/path` as the generic REST pattern for logical-path-oriented operations. Additional routes such as `/path/metadata` and `/path/acl` can be added later without changing the core addressing model.
 
 The content endpoint supports restart/resume through the standard HTTP `Range` header.
 
@@ -153,7 +169,7 @@ Example:
 curl \
   -H 'Authorization: Bearer YOUR_ACCESS_TOKEN' \
   -H 'Range: bytes=1024-' \
-  'http://localhost:8080/api/v1/data-objects/content?path=/tempZone/home/test1/file.txt'
+  'http://localhost:8080/api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt'
 ```
 
 ## Docker
