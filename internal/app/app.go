@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
+	"github.com/michael-conway/irods-go-rest/internal/auth"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 	"github.com/michael-conway/irods-go-rest/internal/httpapi"
 	"github.com/michael-conway/irods-go-rest/internal/irods"
@@ -16,13 +18,28 @@ type App struct {
 	server *http.Server
 }
 
-func New(cfg config.Config) *App {
+func listenAddr(publicURL string) string {
+	if publicURL == "" {
+		return ""
+	}
+
+	parsedURL, err := url.Parse(publicURL)
+	if err == nil && parsedURL.Host != "" {
+		return parsedURL.Host
+	}
+
+	return publicURL
+}
+
+func New(cfg config.RestConfig) *App {
 	catalog := irods.NewCatalogService(cfg)
-	handler := httpapi.NewHandler(cfg, catalog)
+	authService := auth.NewKeycloakService(cfg)
+	sessionStore := auth.NewSessionStore()
+	handler := httpapi.NewHandler(cfg, catalog, authService, authService, sessionStore)
 
 	return &App{
 		server: &http.Server{
-			Addr:              cfg.ServerAddr,
+			Addr:              listenAddr(cfg.PublicURL),
 			Handler:           handler.Routes(),
 			ReadHeaderTimeout: 5 * time.Second,
 		},

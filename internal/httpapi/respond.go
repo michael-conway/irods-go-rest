@@ -23,3 +23,9 @@ func writeError(w http.ResponseWriter, status int, code string, message string) 
 		Message: message,
 	})
 }
+
+func writeHTML(w http.ResponseWriter, status int, body string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write([]byte(body))
+}
