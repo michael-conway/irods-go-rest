@@ -10,6 +10,13 @@ type Object struct {
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
+type ObjectContent struct {
+	Path        string
+	ContentType string
+	Size        int64
+	Data        []byte
+}
+
 type Collection struct {
 	ID         string            `json:"id"`
 	Path       string            `json:"path"`

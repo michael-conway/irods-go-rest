@@ -61,6 +61,9 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /web/logout", h.webLogout)
 	mux.Handle("GET /api/v1/objects/{object_id}", h.requireBearer(http.HandlerFunc(h.getObject)))
 	mux.Handle("GET /api/v1/collections/{collection_id}", h.requireBearer(http.HandlerFunc(h.getCollection)))
+	mux.Handle("GET /api/v1/data-objects/by-path", h.requireBearer(http.HandlerFunc(h.getObjectByPath)))
+	mux.Handle("HEAD /api/v1/data-objects/content", h.requireDownloadBearer(http.HandlerFunc(h.headObjectContentByPath)))
+	mux.Handle("GET /api/v1/data-objects/content", h.requireDownloadBearer(http.HandlerFunc(h.getObjectContentByPath)))
 
 	return requestLogger(mux)
 }

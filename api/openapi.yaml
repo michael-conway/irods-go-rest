@@ -9,6 +9,7 @@ servers:
 tags:
   - name: health
   - name: objects
+  - name: data-objects
   - name: collections
 paths:
   /healthz:
@@ -30,6 +31,7 @@ paths:
       summary: Fetch object metadata from iRODS
       security:
         - BearerAuth: []
+        - BasicAuth: []
       parameters:
         - in: path
           name: object_id
@@ -55,6 +57,152 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/data-objects/by-path:
+    get:
+      operationId: getObjectByPath
+      tags: [data-objects]
+      summary: Fetch data object metadata from an iRODS absolute path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute path to the data object.
+      responses:
+        "200":
+          description: Object metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Object"
+        "400":
+          description: Missing path query parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Object not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/data-objects/content:
+    head:
+      operationId: headObjectContentByPath
+      tags: [data-objects]
+      summary: Inspect content headers for an iRODS data object
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute path to the data object.
+        - in: header
+          name: Range
+          required: false
+          schema:
+            type: string
+          description: Optional byte range request in RFC 9110 format, currently single-range only.
+      responses:
+        "200":
+          description: Content headers for the full object
+        "206":
+          description: Content headers for a byte range
+        "400":
+          description: Missing path query parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "416":
+          description: Invalid byte range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      operationId: getObjectContentByPath
+      tags: [data-objects]
+      summary: Stream bytes for an iRODS data object
+      description: |
+        Accepts Basic auth, an OAuth bearer token, or a bearer token prefixed as `irods-ticket:<ticket>`.
+        Supports single-range byte restarts via the `Range` header.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute path to the data object.
+        - in: header
+          name: Range
+          required: false
+          schema:
+            type: string
+          description: Optional byte range request in RFC 9110 format, currently single-range only.
+      responses:
+        "200":
+          description: Full object bytes
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Partial object bytes
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Missing path query parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Object not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "416":
+          description: Invalid byte range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/collections/{collection_id}:
     get:
       operationId: getCollection
@@ -62,6 +210,7 @@ paths:
       summary: Fetch collection metadata from iRODS
       security:
         - BearerAuth: []
+        - BasicAuth: []
       parameters:
         - in: path
           name: collection_id
@@ -93,6 +242,9 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    BasicAuth:
+      type: http
+      scheme: basic
   schemas:
     HealthResponse:
       type: object

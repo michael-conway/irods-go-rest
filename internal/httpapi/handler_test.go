@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -168,6 +169,133 @@ func TestAPIAcceptsValidBearerToken(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestAPIAcceptsBasicAuth(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/demo-object", nil)
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("alice:secret")))
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestGetObjectByPathRequiresPathQuery(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/data-objects/by-path", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestGetObjectByPathAcceptsValidBearerToken(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/data-objects/by-path?path=/tempZone/home/test1/file.txt", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"/tempZone/home/test1/file.txt"`, `"source":"scaffold"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestGetObjectContentByPathAcceptsIRODSTicketBearer(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/data-objects/content?path=/tempZone/home/test1/file.txt", nil)
+	req.Header.Set("Authorization", "Bearer irods-ticket:ticket123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if got := rec.Header().Get("Accept-Ranges"); got != "bytes" {
+		t.Fatalf("expected Accept-Ranges header, got %q", got)
+	}
+
+	if body := rec.Body.String(); body != "demo content for /tempZone/home/test1/file.txt" {
+		t.Fatalf("unexpected content body %q", body)
+	}
+}
+
+func TestGetObjectContentByPathAcceptsBasicAuth(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/data-objects/content?path=/tempZone/home/test1/file.txt", nil)
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("alice:secret")))
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestGetObjectContentByPathSupportsRangeRequests(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/data-objects/content?path=/tempZone/home/test1/file.txt", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Range", "bytes=5-10")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusPartialContent {
+		t.Fatalf("expected 206, got %d", rec.Code)
+	}
+
+	if got := rec.Header().Get("Content-Range"); got == "" {
+		t.Fatal("expected Content-Range header")
+	}
+
+	if body := rec.Body.String(); body != "conten" {
+		t.Fatalf("unexpected ranged content body %q", body)
+	}
+}
+
+func TestHeadObjectContentByPathReturnsHeadersOnly(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodHead, "/api/v1/data-objects/content?path=/tempZone/home/test1/file.txt", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if rec.Body.Len() != 0 {
+		t.Fatalf("expected empty body for HEAD, got %q", rec.Body.String())
+	}
+
+	if got := rec.Header().Get("Content-Length"); got == "" {
+		t.Fatal("expected Content-Length header")
 	}
 }
 
