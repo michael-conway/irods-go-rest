@@ -208,6 +208,85 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+    post:
+      operationId: postPathContents
+      tags: [path]
+      summary: Upload a data object into a collection path
+      description: |
+        Uploads a complete object using `multipart/form-data`.
+
+        The client specifies the target parent collection and child file name as
+        separate form fields. The server resolves the canonical iRODS object path
+        as `parent_path + "/" + file_name`.
+
+        Initial contract scope is whole-object upload only. Resumable upload and
+        chunk restart behavior are intentionally deferred to a future upload-session
+        design rather than overloading this operation with partial-write semantics.
+
+        Future server implementations may apply per-user saved defaults from the
+        user's iRODS home configuration, but explicit request values must take
+        precedence over saved defaults.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/PathContentsUploadRequest"
+            encoding:
+              content:
+                contentType: application/octet-stream
+      responses:
+        "201":
+          description: Object created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathContentsUploadResponse"
+        "200":
+          description: Existing object replaced because overwrite was enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathContentsUploadResponse"
+        "400":
+          description: Missing multipart fields or invalid parameter values
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Parent collection not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Target object already exists and overwrite is not enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          description: Request must use multipart/form-data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Unexpected server-side failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
   securitySchemes:
     BearerAuth:
@@ -280,6 +359,99 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PathEntry"
+    PathContentsUploadRequest:
+      type: object
+      required: [parent_path, file_name, content]
+      properties:
+        parent_path:
+          type: string
+          description: Absolute iRODS collection path that will contain the uploaded object.
+          example: /tempZone/home/alice/project
+        file_name:
+          type: string
+          description: Target data object name within `parent_path`.
+          example: sample.fastq.gz
+        content:
+          type: string
+          format: binary
+          description: Complete binary payload for the uploaded object.
+        checksum:
+          type: boolean
+          default: false
+          description: |
+            When true, request checksum calculation or verification during upload.
+            Future implementations may apply per-user saved defaults when this field
+            is omitted, but explicit request values override saved defaults.
+        overwrite:
+          type: boolean
+          default: false
+          description: |
+            When true, allow replacement of an existing object at the resolved path.
+            Future implementations may apply per-user saved defaults when this field
+            is omitted, but explicit request values override saved defaults.
+    PathContentsUploadResponse:
+      type: object
+      required: [path, parent_path, file_name, action, size, links]
+      properties:
+        path:
+          type: string
+          description: Resolved canonical iRODS object path.
+          example: /tempZone/home/alice/project/sample.fastq.gz
+        parent_path:
+          type: string
+          description: Canonical parent collection path that received the uploaded object.
+          example: /tempZone/home/alice/project
+        file_name:
+          type: string
+          description: Uploaded data object name.
+          example: sample.fastq.gz
+        action:
+          type: string
+          enum: [created, replaced]
+          description: Indicates whether the upload created a new object or replaced an existing object.
+        size:
+          type: integer
+          format: int64
+          description: Uploaded object size in bytes.
+        checksum:
+          $ref: "#/components/schemas/UploadChecksumInfo"
+        links:
+          $ref: "#/components/schemas/PathContentsUploadLinks"
+    UploadChecksumInfo:
+      type: object
+      required: [requested, verified]
+      properties:
+        requested:
+          type: boolean
+          description: True when the request explicitly asked for checksum handling.
+        verified:
+          type: boolean
+          description: True when checksum processing was completed by the server.
+        algorithm:
+          type: string
+          description: Checksum algorithm used by the server when checksum processing was completed.
+          example: sha2
+        value:
+          type: string
+          description: Calculated or verified checksum value.
+          example: 9d4e1e23bd5b727046a9e3b4b7db57bd8d6ee684
+    PathContentsUploadLinks:
+      type: object
+      required: [path, contents, parent]
+      properties:
+        path:
+          $ref: "#/components/schemas/ResourceLink"
+        contents:
+          $ref: "#/components/schemas/ResourceLink"
+        parent:
+          $ref: "#/components/schemas/ResourceLink"
+    ResourceLink:
+      type: object
+      required: [href]
+      properties:
+        href:
+          type: string
+          description: Relative REST link for the related resource.
     Error:
       type: object
       required: [code, message]

@@ -1,14 +1,13 @@
 package httpapi
 
 import (
-	"context"
 	"net/http"
 	"strings"
 
 	api "github.com/michael-conway/irods-go-rest/api"
 	"github.com/michael-conway/irods-go-rest/internal/auth"
 	"github.com/michael-conway/irods-go-rest/internal/config"
-	"github.com/michael-conway/irods-go-rest/internal/irods"
+	"github.com/michael-conway/irods-go-rest/internal/restservice"
 )
 
 const swaggerUIHTML = `<!DOCTYPE html>
@@ -34,16 +33,16 @@ const swaggerUIHTML = `<!DOCTYPE html>
 
 type Handler struct {
 	cfg        config.RestConfig
-	catalog    irods.CatalogService
+	paths      restservice.PathService
 	authFlow   auth.AuthFlowService
 	verifier   auth.TokenVerifier
 	webSession *auth.SessionStore
 }
 
-func NewHandler(cfg config.RestConfig, catalog irods.CatalogService, authFlow auth.AuthFlowService, verifier auth.TokenVerifier, webSession *auth.SessionStore) *Handler {
+func NewHandler(cfg config.RestConfig, paths restservice.PathService, authFlow auth.AuthFlowService, verifier auth.TokenVerifier, webSession *auth.SessionStore) *Handler {
 	return &Handler{
 		cfg:        cfg,
-		catalog:    catalog,
+		paths:      paths,
 		authFlow:   authFlow,
 		verifier:   verifier,
 		webSession: webSession,
@@ -69,17 +68,6 @@ func (h *Handler) Routes() http.Handler {
 
 func pathValue(r *http.Request, key string) string {
 	return strings.TrimSpace(r.PathValue(key))
-}
-
-type principalContextKey struct{}
-
-func withPrincipal(ctx context.Context, principal auth.Principal) context.Context {
-	return context.WithValue(ctx, principalContextKey{}, principal)
-}
-
-func principalFromContext(ctx context.Context) (auth.Principal, bool) {
-	principal, ok := ctx.Value(principalContextKey{}).(auth.Principal)
-	return principal, ok
 }
 
 func (h *Handler) getOpenAPISpec(w http.ResponseWriter, _ *http.Request) {
