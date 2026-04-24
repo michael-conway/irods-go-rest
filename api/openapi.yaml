@@ -56,6 +56,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           description: Missing or invalid bearer token
           content:
@@ -92,6 +98,12 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           description: Path not found or not a collection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested collection
           content:
             application/json:
               schema:
@@ -136,6 +148,12 @@ paths:
                 $ref: "#/components/schemas/Error"
         "401":
           description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested object
           content:
             application/json:
               schema:
@@ -198,6 +216,12 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           description: Object not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested object
           content:
             application/json:
               schema:
@@ -312,7 +336,7 @@ components:
           example: development
     PathEntry:
       type: object
-      required: [id, path, kind, zone]
+      required: [id, path, kind, zone, path_segments]
       properties:
         id:
           type: string
@@ -323,6 +347,11 @@ components:
           enum: [data_object, collection]
         parent:
           $ref: "#/components/schemas/ParentLink"
+        path_segments:
+          type: array
+          description: Ordered collection path segments for the path resource, each with a display name and HATEOAS link.
+          items:
+            $ref: "#/components/schemas/PathSegmentLink"
         hasChildren:
           type: boolean
         childCount:

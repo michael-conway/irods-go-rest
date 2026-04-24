@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -35,6 +36,10 @@ func (h *Handler) getPath(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
 			return
 		}
+		if errors.Is(err, irods.ErrPermissionDenied) {
+			writeError(w, http.StatusForbidden, "permission_denied", err.Error())
+			return
+		}
 
 		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
@@ -56,6 +61,10 @@ func (h *Handler) getPathChildren(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
 			return
 		}
+		if errors.Is(err, irods.ErrPermissionDenied) {
+			writeError(w, http.StatusForbidden, "permission_denied", err.Error())
+			return
+		}
 
 		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
@@ -67,9 +76,9 @@ func (h *Handler) getPathChildren(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"irods_path":     objectPath,
+		"irods_path":    objectPath,
 		"path_segments": buildPathSegments(objectPath),
-		"children":       mappedChildren,
+		"children":      mappedChildren,
 	})
 }
 
@@ -94,10 +103,19 @@ func (h *Handler) servePathContents(w http.ResponseWriter, r *http.Request, head
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
 			return
 		}
+		if errors.Is(err, irods.ErrPermissionDenied) {
+			writeError(w, http.StatusForbidden, "permission_denied", err.Error())
+			return
+		}
 
 		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
+	defer func() {
+		if content.Reader != nil {
+			_ = content.Reader.Close()
+		}
+	}()
 
 	status, contentRange, start, end, err := resolveByteRange(r.Header.Get("Range"), content)
 	if err != nil {
@@ -118,7 +136,15 @@ func (h *Handler) servePathContents(w http.ResponseWriter, r *http.Request, head
 		return
 	}
 
-	_, _ = w.Write(content.Data[start:end])
+	if content.Reader == nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "missing object reader")
+		return
+	}
+
+	reader := io.NewSectionReader(content.Reader, start, end-start)
+	if _, err := io.CopyN(w, reader, end-start); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+	}
 }
 
 func queryIRODSPath(r *http.Request) string {
@@ -127,6 +153,7 @@ func queryIRODSPath(r *http.Request) string {
 
 func pathEntryResponse(r *http.Request, entry domain.PathEntry) domain.PathEntry {
 	entry.Parent = buildParentLink(r, entry.Path)
+	entry.PathSegments = buildPathSegments(entry.Path)
 	return entry
 }
 
@@ -152,7 +179,7 @@ func buildParentLink(r *http.Request, irodsPath string) *domain.ParentLink {
 	}
 }
 
-func buildPathSegments(irodsPath string) []map[string]string {
+func buildPathSegments(irodsPath string) []domain.PathSegmentLink {
 	irodsPath = strings.TrimSpace(irodsPath)
 	if irodsPath == "" {
 		return nil
@@ -164,15 +191,15 @@ func buildPathSegments(irodsPath string) []map[string]string {
 	}
 
 	if cleaned == "/" {
-		return []map[string]string{{
-			"display_name": "/",
-			"irods_path":   "/",
-			"href":         "/api/v1/path?irods_path=%2F",
+		return []domain.PathSegmentLink{{
+			DisplayName: "/",
+			IRODSPath:   "/",
+			Href:        "/api/v1/path?irods_path=%2F",
 		}}
 	}
 
 	parts := strings.Split(strings.TrimPrefix(cleaned, "/"), "/")
-	segments := make([]map[string]string, 0, len(parts))
+	segments := make([]domain.PathSegmentLink, 0, len(parts))
 	currentPath := ""
 
 	for _, part := range parts {
@@ -182,10 +209,10 @@ func buildPathSegments(irodsPath string) []map[string]string {
 		}
 
 		currentPath += "/" + part
-		segments = append(segments, map[string]string{
-			"display_name": part,
-			"irods_path":   currentPath,
-			"href":         "/api/v1/path?irods_path=" + url.QueryEscape(currentPath),
+		segments = append(segments, domain.PathSegmentLink{
+			DisplayName: part,
+			IRODSPath:   currentPath,
+			Href:        "/api/v1/path?irods_path=" + url.QueryEscape(currentPath),
 		})
 	}
 
