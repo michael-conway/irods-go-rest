@@ -67,8 +67,9 @@ func (h *Handler) getPathChildren(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"irods_path": objectPath,
-		"children":   mappedChildren,
+		"irods_path":     objectPath,
+		"path_segments": buildPathSegments(objectPath),
+		"children":       mappedChildren,
 	})
 }
 
@@ -149,6 +150,46 @@ func buildParentLink(r *http.Request, irodsPath string) *domain.ParentLink {
 		IRODSPath: parentPath,
 		Href:      "/api/v1/path?irods_path=" + url.QueryEscape(parentPath),
 	}
+}
+
+func buildPathSegments(irodsPath string) []map[string]string {
+	irodsPath = strings.TrimSpace(irodsPath)
+	if irodsPath == "" {
+		return nil
+	}
+
+	cleaned := path.Clean(irodsPath)
+	if cleaned == "." {
+		return nil
+	}
+
+	if cleaned == "/" {
+		return []map[string]string{{
+			"display_name": "/",
+			"irods_path":   "/",
+			"href":         "/api/v1/path?irods_path=%2F",
+		}}
+	}
+
+	parts := strings.Split(strings.TrimPrefix(cleaned, "/"), "/")
+	segments := make([]map[string]string, 0, len(parts))
+	currentPath := ""
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		currentPath += "/" + part
+		segments = append(segments, map[string]string{
+			"display_name": part,
+			"irods_path":   currentPath,
+			"href":         "/api/v1/path?irods_path=" + url.QueryEscape(currentPath),
+		})
+	}
+
+	return segments
 }
 
 func resolveByteRange(rangeHeader string, content domain.ObjectContent) (int, string, int64, int64, error) {

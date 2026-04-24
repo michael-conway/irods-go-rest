@@ -266,6 +266,16 @@ func TestGetPathChildrenReturnsCollectionChildren(t *testing.T) {
 		t.Fatalf("unexpected children response body: %q", body)
 	}
 
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"path_segments"`,
+		`"display_name":"tempZone"`,
+		`"irods_path":"/tempZone/home/test1/project"`,
+		`"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject"`,
+	) {
+		t.Fatalf("expected path segments in response body: %q", body)
+	}
+
 	if body := rec.Body.String(); !containsAll(body, `"parent":{"irods_path":"/tempZone/home/test1/project"`) {
 		t.Fatalf("expected child parent links in response body: %q", body)
 	}

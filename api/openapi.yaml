@@ -351,14 +351,32 @@ components:
           type: string
     PathChildrenResponse:
       type: object
-      required: [irods_path, children]
+      required: [irods_path, path_segments, children]
       properties:
         irods_path:
           type: string
+        path_segments:
+          type: array
+          description: Ordered collection path segments for the requested collection, each with a display name and HATEOAS link.
+          items:
+            $ref: "#/components/schemas/PathSegmentLink"
         children:
           type: array
           items:
             $ref: "#/components/schemas/PathEntry"
+    PathSegmentLink:
+      type: object
+      required: [display_name, irods_path, href]
+      properties:
+        display_name:
+          type: string
+          description: Human-readable segment name for one level of the collection path.
+        irods_path:
+          type: string
+          description: Canonical iRODS path up to this segment.
+        href:
+          type: string
+          description: Relative REST link for displaying this collection level.
     PathContentsUploadRequest:
       type: object
       required: [parent_path, file_name, content]
