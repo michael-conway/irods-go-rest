@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -113,8 +114,108 @@ func (h *Handler) getPathAVUs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"irods_path":    objectPath,
 		"path_segments": buildPathSegments(objectPath),
-		"avus":          metadata,
+		"avus":          avuMetadataResponseList(r, objectPath, metadata),
 	})
+}
+
+func (h *Handler) postPathAVU(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
+	if objectPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
+		return
+	}
+
+	var request struct {
+		Attrib string `json:"attrib"`
+		Value  string `json:"value"`
+		Unit   string `json:"unit"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
+		return
+	}
+
+	created, err := h.paths.AddPathMetadata(r.Context(), objectPath, request.Attrib, request.Value, request.Unit)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "attrib and value are required") {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		writePathError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"irods_path":    objectPath,
+		"path_segments": buildPathSegments(objectPath),
+		"avu":           avuMetadataResponse(r, objectPath, created),
+	})
+}
+
+func (h *Handler) putPathAVU(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
+	if objectPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
+		return
+	}
+
+	avuID := pathValue(r, "avu_id")
+	if avuID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "avu_id path parameter is required")
+		return
+	}
+
+	var request struct {
+		Attrib string `json:"attrib"`
+		Value  string `json:"value"`
+		Unit   string `json:"unit"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
+		return
+	}
+
+	updated, err := h.paths.UpdatePathMetadata(r.Context(), objectPath, avuID, request.Attrib, request.Value, request.Unit)
+	if err != nil {
+		lowerErr := strings.ToLower(err.Error())
+		if strings.Contains(lowerErr, "attrib and value are required") || strings.Contains(lowerErr, "invalid avu id") {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		writePathError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"irods_path":    objectPath,
+		"path_segments": buildPathSegments(objectPath),
+		"avu":           avuMetadataResponse(r, objectPath, updated),
+	})
+}
+
+func (h *Handler) deletePathAVU(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
+	if objectPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
+		return
+	}
+
+	avuID := pathValue(r, "avu_id")
+	if avuID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "avu_id path parameter is required")
+		return
+	}
+
+	if err := h.paths.DeletePathMetadata(r.Context(), objectPath, avuID); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "invalid avu id") {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		writePathError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) getPathChecksum(w http.ResponseWriter, r *http.Request) {
@@ -194,6 +295,16 @@ func (h *Handler) servePathContents(w http.ResponseWriter, r *http.Request, head
 	w.Header().Set("Content-Type", content.ContentType)
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Content-Length", strconv.FormatInt(end-start, 10))
+	if content.FileName != "" {
+		w.Header().Set("Content-Disposition", contentDispositionHeader(content.FileName))
+	}
+	if content.UpdatedAt != nil {
+		w.Header().Set("Last-Modified", content.UpdatedAt.UTC().Format(http.TimeFormat))
+	}
+	if content.Checksum != nil && strings.TrimSpace(content.Checksum.Checksum) != "" {
+		w.Header().Set("ETag", strconv.Quote(content.Checksum.Checksum))
+	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if contentRange != "" {
 		w.Header().Set("Content-Range", contentRange)
 	}
@@ -250,9 +361,27 @@ func queryVerboseLevel(r *http.Request) (int, error) {
 }
 
 func pathEntryResponse(r *http.Request, entry domain.PathEntry) domain.PathEntry {
+	entry.Links = pathLinksForEntry(entry.Path)
 	entry.Parent = buildParentLink(r, entry.Path)
 	entry.PathSegments = buildPathSegments(entry.Path)
 	return entry
+}
+
+func avuMetadataResponseList(r *http.Request, irodsPath string, metadata []domain.AVUMetadata) []domain.AVUMetadata {
+	if len(metadata) == 0 {
+		return nil
+	}
+
+	mapped := make([]domain.AVUMetadata, 0, len(metadata))
+	for _, avu := range metadata {
+		mapped = append(mapped, avuMetadataResponse(r, irodsPath, avu))
+	}
+	return mapped
+}
+
+func avuMetadataResponse(r *http.Request, irodsPath string, avu domain.AVUMetadata) domain.AVUMetadata {
+	avu.Links = avuLinksForEntry(irodsPath, avu.ID)
+	return avu
 }
 
 func pathChecksumResponse(irodsPath string, checksum domain.PathChecksum) map[string]any {
@@ -283,6 +412,40 @@ func buildParentLink(r *http.Request, irodsPath string) *domain.ParentLink {
 	return &domain.ParentLink{
 		IRODSPath: parentPath,
 		Href:      "/api/v1/path?irods_path=" + url.QueryEscape(parentPath),
+	}
+}
+
+func pathLinksForEntry(irodsPath string) *domain.PathLinks {
+	irodsPath = strings.TrimSpace(irodsPath)
+	if irodsPath == "" {
+		return nil
+	}
+
+	return &domain.PathLinks{
+		AVUs: &domain.ActionLink{
+			Href:   "/api/v1/path/avu?irods_path=" + url.QueryEscape(irodsPath),
+			Method: http.MethodGet,
+		},
+	}
+}
+
+func avuLinksForEntry(irodsPath string, avuID string) *domain.AVULinks {
+	irodsPath = strings.TrimSpace(irodsPath)
+	avuID = strings.TrimSpace(avuID)
+	if irodsPath == "" || avuID == "" {
+		return nil
+	}
+
+	pathWithID := "/api/v1/path/avu/" + url.PathEscape(avuID) + "?irods_path=" + url.QueryEscape(irodsPath)
+	return &domain.AVULinks{
+		Update: &domain.ActionLink{
+			Href:   pathWithID,
+			Method: http.MethodPut,
+		},
+		Delete: &domain.ActionLink{
+			Href:   pathWithID,
+			Method: http.MethodDelete,
+		},
 	}
 }
 
@@ -372,4 +535,14 @@ func resolveByteRange(rangeHeader string, content domain.ObjectContent) (int, st
 	}
 
 	return http.StatusPartialContent, fmt.Sprintf("bytes %d-%d/%d", start, endExclusive-1, size), start, endExclusive, nil
+}
+
+func contentDispositionHeader(fileName string) string {
+	fileName = strings.TrimSpace(fileName)
+	if fileName == "" {
+		return `attachment`
+	}
+
+	safeName := strings.NewReplacer("\\", "_", "\"", "_", "\r", "_", "\n", "_").Replace(fileName)
+	return fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, safeName, url.QueryEscape(fileName))
 }

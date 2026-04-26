@@ -11,6 +11,9 @@ type PathService interface {
 	GetPath(ctx context.Context, absolutePath string, options irods.PathLookupOptions) (domain.PathEntry, error)
 	GetPathChildren(ctx context.Context, absolutePath string) ([]domain.PathEntry, error)
 	GetPathMetadata(ctx context.Context, absolutePath string) ([]domain.AVUMetadata, error)
+	AddPathMetadata(ctx context.Context, absolutePath string, attrib string, value string, unit string) (domain.AVUMetadata, error)
+	UpdatePathMetadata(ctx context.Context, absolutePath string, avuID string, attrib string, value string, unit string) (domain.AVUMetadata, error)
+	DeletePathMetadata(ctx context.Context, absolutePath string, avuID string) error
 	GetPathChecksum(ctx context.Context, absolutePath string) (domain.PathChecksum, error)
 	ComputePathChecksum(ctx context.Context, absolutePath string) (domain.PathChecksum, error)
 	GetObjectContentByPath(ctx context.Context, absolutePath string) (domain.ObjectContent, error)
@@ -49,6 +52,33 @@ func (s *pathService) GetPathMetadata(ctx context.Context, absolutePath string) 
 	}
 
 	return s.catalog.GetPathMetadata(ctx, irodsRequestContext(requestContext), absolutePath)
+}
+
+func (s *pathService) AddPathMetadata(ctx context.Context, absolutePath string, attrib string, value string, unit string) (domain.AVUMetadata, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return domain.AVUMetadata{}, err
+	}
+
+	return s.catalog.AddPathMetadata(ctx, irodsRequestContext(requestContext), absolutePath, attrib, value, unit)
+}
+
+func (s *pathService) UpdatePathMetadata(ctx context.Context, absolutePath string, avuID string, attrib string, value string, unit string) (domain.AVUMetadata, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return domain.AVUMetadata{}, err
+	}
+
+	return s.catalog.UpdatePathMetadata(ctx, irodsRequestContext(requestContext), absolutePath, avuID, attrib, value, unit)
+}
+
+func (s *pathService) DeletePathMetadata(ctx context.Context, absolutePath string, avuID string) error {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.catalog.DeletePathMetadata(ctx, irodsRequestContext(requestContext), absolutePath, avuID)
 }
 
 func (s *pathService) GetPathChecksum(ctx context.Context, absolutePath string) (domain.PathChecksum, error) {

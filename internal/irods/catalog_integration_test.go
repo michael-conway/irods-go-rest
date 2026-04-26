@@ -146,6 +146,67 @@ func TestCatalogGetPathChildrenIntegration(t *testing.T) {
 	}
 }
 
+func TestCatalogPathMetadataAddDeleteIntegration(t *testing.T) {
+	service := newIntegrationCatalogService(t)
+	fixture := newCatalogIntegrationFixture(t)
+
+	created, err := service.AddPathMetadata(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath, "catalog.integration.added", "present", "test")
+	if err != nil {
+		t.Fatalf("AddPathMetadata returned error: %v", err)
+	}
+	if created.ID == "" {
+		t.Fatal("expected created AVU id to be populated")
+	}
+
+	metadata, err := service.GetPathMetadata(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath)
+	if err != nil {
+		t.Fatalf("GetPathMetadata returned error: %v", err)
+	}
+
+	found := false
+	for _, avu := range metadata {
+		if avu.ID == created.ID && avu.Attrib == "catalog.integration.added" && avu.Value == "present" && avu.Unit == "test" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected created AVU %q in metadata list", created.ID)
+	}
+
+	if err := service.DeletePathMetadata(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath, created.ID); err != nil {
+		t.Fatalf("DeletePathMetadata returned error: %v", err)
+	}
+
+	metadata, err = service.GetPathMetadata(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath)
+	if err != nil {
+		t.Fatalf("GetPathMetadata after delete returned error: %v", err)
+	}
+	for _, avu := range metadata {
+		if avu.ID == created.ID {
+			t.Fatalf("expected AVU %q to be removed", created.ID)
+		}
+	}
+}
+
+func TestCatalogPathMetadataUpdateIntegration(t *testing.T) {
+	service := newIntegrationCatalogService(t)
+	fixture := newCatalogIntegrationFixture(t)
+
+	created, err := service.AddPathMetadata(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath, "catalog.integration.update", "before", "test")
+	if err != nil {
+		t.Fatalf("AddPathMetadata returned error: %v", err)
+	}
+
+	updated, err := service.UpdatePathMetadata(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath, created.ID, "catalog.integration.update", "after", "test")
+	if err != nil {
+		t.Fatalf("UpdatePathMetadata returned error: %v", err)
+	}
+	if updated.Value != "after" {
+		t.Fatalf("expected updated AVU value, got %+v", updated)
+	}
+}
+
 func TestCatalogGetObjectContentByPathIntegration(t *testing.T) {
 	service := newIntegrationCatalogService(t)
 	fixture := newCatalogIntegrationFixture(t)
@@ -168,6 +229,15 @@ func TestCatalogGetObjectContentByPathIntegration(t *testing.T) {
 	}
 	if content.ContentType != "text/plain; charset=utf-8" {
 		t.Fatalf("expected content type %q, got %q", "text/plain; charset=utf-8", content.ContentType)
+	}
+	if content.FileName == "" {
+		t.Fatal("expected file name to be populated")
+	}
+	if content.Checksum != nil {
+		t.Fatalf("expected checksum to be absent before explicit compute, got %+v", content.Checksum)
+	}
+	if content.UpdatedAt == nil {
+		t.Fatal("expected updated timestamp to be populated")
 	}
 
 	buffer := make([]byte, len(fixture.objectContent))

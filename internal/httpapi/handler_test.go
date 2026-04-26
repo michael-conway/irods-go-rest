@@ -244,6 +244,9 @@ func TestGetPathAcceptsValidBearerToken(t *testing.T) {
 	if body := rec.Body.String(); !containsAll(body, `"display_size":"128 B"`, `"mime_type":"text/plain; charset=utf-8"`, `"created_at":"2023-11-14T22:13:20Z"`, `"updated_at":"2023-11-14T22:13:20Z"`) {
 		t.Fatalf("expected display size and timestamps in response body: %q", body)
 	}
+	if body := rec.Body.String(); !containsAll(body, `"links":{"avus":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"}}`) {
+		t.Fatalf("expected AVU HATEOAS link in response body: %q", body)
+	}
 }
 
 func TestGetPathVerboseReturnsReplicaLongFormat(t *testing.T) {
@@ -401,12 +404,86 @@ func TestGetPathAVUsReturnsAVUList(t *testing.T) {
 		`"attrib":"source"`,
 		`"value":"test"`,
 		`"unit":"fixture"`,
+		`"update":{"href":"/api/v1/path/avu/701?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"PUT"}`,
+		`"delete":{"href":"/api/v1/path/avu/701?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"DELETE"}`,
 		`"created_at":"2023-11-14T22:13:20Z"`,
 		`"updated_at":"2023-11-14T22:13:20Z"`,
 		`"path_segments"`,
 		`"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt"`,
 	) {
 		t.Fatalf("unexpected metadata response body: %q", body)
+	}
+}
+
+func TestPostPathAVUCreatesAVU(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/avu?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(`{"attrib":"new-attr","value":"new-value","unit":"new-unit"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", rec.Code)
+	}
+
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"avu"`,
+		`"attrib":"new-attr"`,
+		`"value":"new-value"`,
+		`"unit":"new-unit"`,
+		`"update":{"href":"/api/v1/path/avu/702?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"PUT"}`,
+		`"delete":{"href":"/api/v1/path/avu/702?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"DELETE"}`,
+	) {
+		t.Fatalf("unexpected create AVU response body: %q", body)
+	}
+}
+
+func TestPutPathAVUUpdatesAVU(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/path/avu/701?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(`{"attrib":"source","value":"updated","unit":"fixture"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"attrib":"source"`, `"value":"updated"`, `"unit":"fixture"`) {
+		t.Fatalf("unexpected update AVU response body: %q", body)
+	}
+}
+
+func TestDeletePathAVURemovesAVU(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/path/avu/701?irods_path=/tempZone/home/test1/file.txt", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/path/avu?irods_path=/tempZone/home/test1/file.txt", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec = httptest.NewRecorder()
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 from AVU list after delete, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); strings.Contains(body, `"id":"701"`) {
+		t.Fatalf("expected AVU 701 to be removed, got %q", body)
 	}
 }
 
@@ -500,6 +577,18 @@ func TestGetPathContentsAcceptsIRODSTicketBearer(t *testing.T) {
 	if got := rec.Header().Get("Accept-Ranges"); got != "bytes" {
 		t.Fatalf("expected Accept-Ranges header, got %q", got)
 	}
+	if got := rec.Header().Get("Content-Disposition"); !containsAll(got, `attachment`, `filename="file.txt"`) {
+		t.Fatalf("expected download Content-Disposition header, got %q", got)
+	}
+	if got := rec.Header().Get("ETag"); got != `"sha2:YWJjMTIz"` {
+		t.Fatalf("expected ETag header, got %q", got)
+	}
+	if got := rec.Header().Get("Last-Modified"); got == "" {
+		t.Fatal("expected Last-Modified header")
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("expected X-Content-Type-Options nosniff, got %q", got)
+	}
 
 	if body := rec.Body.String(); body != "hello content payload" {
 		t.Fatalf("unexpected content body %q", body)
@@ -562,6 +651,33 @@ func TestHeadPathContentsReturnsHeadersOnly(t *testing.T) {
 
 	if got := rec.Header().Get("Content-Length"); got == "" {
 		t.Fatal("expected Content-Length header")
+	}
+	if got := rec.Header().Get("Content-Disposition"); !containsAll(got, `attachment`, `filename="file.txt"`) {
+		t.Fatalf("expected Content-Disposition header, got %q", got)
+	}
+	if got := rec.Header().Get("ETag"); got != `"sha2:YWJjMTIz"` {
+		t.Fatalf("expected ETag header, got %q", got)
+	}
+}
+
+func TestGetPathContentsRejectsInvalidRange(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Range", "bytes=999-1000")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestedRangeNotSatisfiable {
+		t.Fatalf("expected 416, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Range"); got != "bytes */128" {
+		t.Fatalf("expected unsatisfied Content-Range header, got %q", got)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"code":"invalid_range"`) {
+		t.Fatalf("unexpected invalid range response body: %q", body)
 	}
 }
 
@@ -742,6 +858,48 @@ func (f *testCatalogFileSystem) List(irodsPath string) ([]*irodsfs.Entry, error)
 
 func (f *testCatalogFileSystem) ListMetadata(irodsPath string) ([]*irodstypes.IRODSMeta, error) {
 	return f.metadataByPath[irodsPath], nil
+}
+
+func (f *testCatalogFileSystem) AddMetadata(irodsPath string, attName string, attValue string, attUnits string) error {
+	if _, ok := f.entriesByPath[irodsPath]; !ok {
+		return errors.New("not found")
+	}
+
+	nextID := int64(1)
+	for _, meta := range f.metadataByPath[irodsPath] {
+		if meta != nil && meta.AVUID >= nextID {
+			nextID = meta.AVUID + 1
+		}
+	}
+
+	now := time.Unix(1_700_000_001, 0)
+	f.metadataByPath[irodsPath] = append(f.metadataByPath[irodsPath], &irodstypes.IRODSMeta{
+		AVUID:      nextID,
+		Name:       attName,
+		Value:      attValue,
+		Units:      attUnits,
+		CreateTime: now,
+		ModifyTime: now,
+	})
+	return nil
+}
+
+func (f *testCatalogFileSystem) DeleteMetadata(irodsPath string, avuID int64) error {
+	metas := f.metadataByPath[irodsPath]
+	filtered := metas[:0]
+	found := false
+	for _, meta := range metas {
+		if meta != nil && meta.AVUID == avuID {
+			found = true
+			continue
+		}
+		filtered = append(filtered, meta)
+	}
+	if !found {
+		return errors.New("not found")
+	}
+	f.metadataByPath[irodsPath] = filtered
+	return nil
 }
 
 func (f *testCatalogFileSystem) ComputeChecksum(irodsPath string, _ string) (*irodstypes.IRODSChecksum, error) {

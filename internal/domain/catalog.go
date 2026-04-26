@@ -10,6 +10,7 @@ type PathEntry struct {
 	Path         string            `json:"path"`
 	Kind         string            `json:"kind"`
 	Zone         string            `json:"zone"`
+	Links        *PathLinks        `json:"links,omitempty"`
 	Parent       *ParentLink       `json:"parent,omitempty"`
 	PathSegments []PathSegmentLink `json:"path_segments,omitempty"`
 	Checksum     *PathChecksum     `json:"checksum,omitempty"`
@@ -53,6 +54,21 @@ type AVUMetadata struct {
 	Unit      string     `json:"unit,omitempty"`
 	CreatedAt *time.Time `json:"created_at,omitempty"`
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	Links     *AVULinks  `json:"links,omitempty"`
+}
+
+type PathLinks struct {
+	AVUs *ActionLink `json:"avus,omitempty"`
+}
+
+type AVULinks struct {
+	Update *ActionLink `json:"update,omitempty"`
+	Delete *ActionLink `json:"delete,omitempty"`
+}
+
+type ActionLink struct {
+	Href   string `json:"href"`
+	Method string `json:"method,omitempty"`
 }
 
 type ParentLink struct {
@@ -68,8 +84,11 @@ type PathSegmentLink struct {
 
 type ObjectContent struct {
 	Path        string
+	FileName    string
 	ContentType string
 	Size        int64
+	Checksum    *PathChecksum
+	UpdatedAt   *time.Time
 	Reader      RangeReadCloser
 }
 
