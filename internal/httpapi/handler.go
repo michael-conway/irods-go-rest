@@ -60,6 +60,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /web/logout", h.webLogout)
 	mux.Handle("GET /api/v1/path", h.requireBearer(http.HandlerFunc(h.getPath)))
 	mux.Handle("GET /api/v1/path/children", h.requireBearer(http.HandlerFunc(h.getPathChildren)))
+	mux.Handle("GET /api/v1/path/avu", h.requireBearer(http.HandlerFunc(h.getPathAVUs)))
 	mux.Handle("HEAD /api/v1/path/contents", h.requireDownloadBearer(http.HandlerFunc(h.headPathContents)))
 	mux.Handle("GET /api/v1/path/contents", h.requireDownloadBearer(http.HandlerFunc(h.getPathContents)))
 

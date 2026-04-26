@@ -37,6 +37,15 @@ paths:
           schema:
             type: string
           description: Full iRODS absolute logical path to a file or collection.
+        - in: query
+          name: verbose
+          required: false
+          schema:
+            type: string
+          description: |
+            Optional verbosity level for replica details on data objects.
+            `1`, `true`, or `long` includes `ils -l` style replica information.
+            `2` or `very_long` includes `ils -L` style checksum, data type, and physical path details.
       responses:
         "200":
           description: Metadata for a file or collection path
@@ -104,6 +113,52 @@ paths:
                 $ref: "#/components/schemas/Error"
         "403":
           description: Access denied for the requested collection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/path/avu:
+    get:
+      operationId: getPathAVUs
+      tags: [path]
+      summary: List AVUs for an iRODS logical path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a file or collection.
+      responses:
+        "200":
+          description: AVUs for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathAVUResponse"
+        "400":
+          description: Missing irods_path query parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Object not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
           content:
             application/json:
               schema:
@@ -375,10 +430,50 @@ components:
         updated_at:
           type: string
           format: date-time
+        replicas:
+          type: array
+          items:
+            $ref: "#/components/schemas/PathReplica"
         metadata:
           type: object
           additionalProperties:
             type: string
+    PathReplica:
+      type: object
+      required: [number]
+      properties:
+        number:
+          type: integer
+          format: int64
+        owner:
+          type: string
+        resource_name:
+          type: string
+        resource_hierarchy:
+          type: string
+        size:
+          type: integer
+          format: int64
+        display_size:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          description: Raw iRODS replica status value.
+        status_symbol:
+          type: string
+          description: ils-style replica status indicator such as `&`, `X`, or `?`.
+        status_description:
+          type: string
+          description: Human-readable interpretation of the replica status.
+        checksum:
+          type: string
+        data_type:
+          type: string
+        physical_path:
+          type: string
     ParentLink:
       type: object
       required: [irods_path, href]
@@ -402,6 +497,43 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PathEntry"
+    PathAVUResponse:
+      type: object
+      required: [irods_path, path_segments, avus]
+      properties:
+        irods_path:
+          type: string
+        path_segments:
+          type: array
+          description: Ordered collection path segments for the requested path, each with a display name and HATEOAS link.
+          items:
+            $ref: "#/components/schemas/PathSegmentLink"
+        avus:
+          type: array
+          items:
+            $ref: "#/components/schemas/AVUMetadata"
+    AVUMetadata:
+      type: object
+      required: [id, attrib, value]
+      properties:
+        id:
+          type: string
+          description: Generic identifier for the AVU row as returned by iRODS.
+        attrib:
+          type: string
+          description: AVU attribute name.
+        value:
+          type: string
+          description: AVU value.
+        unit:
+          type: string
+          description: Optional AVU units value.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
     PathSegmentLink:
       type: object
       required: [display_name, irods_path, href]

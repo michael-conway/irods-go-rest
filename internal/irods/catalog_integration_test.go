@@ -17,7 +17,7 @@ func TestCatalogGetPathCollectionIntegration(t *testing.T) {
 	service := newIntegrationCatalogService(t)
 	fixture := newCatalogIntegrationFixture(t)
 
-	entry, err := service.GetPath(context.Background(), integrationCatalogRequestContext(t), fixture.rootPath)
+	entry, err := service.GetPath(context.Background(), integrationCatalogRequestContext(t), fixture.rootPath, PathLookupOptions{})
 	if err != nil {
 		t.Fatalf("GetPath returned error: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestCatalogGetPathDataObjectIntegration(t *testing.T) {
 	service := newIntegrationCatalogService(t)
 	fixture := newCatalogIntegrationFixture(t)
 
-	entry, err := service.GetPath(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath)
+	entry, err := service.GetPath(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath, PathLookupOptions{})
 	if err != nil {
 		t.Fatalf("GetPath returned error: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestCatalogGetObjectContentByPathIntegration(t *testing.T) {
 func TestCatalogGetPathNormalizesNotFoundIntegration(t *testing.T) {
 	service := newIntegrationCatalogService(t)
 
-	_, err := service.GetPath(context.Background(), integrationCatalogRequestContext(t), integrationMissingPath(t))
+	_, err := service.GetPath(context.Background(), integrationCatalogRequestContext(t), integrationMissingPath(t), PathLookupOptions{})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
@@ -145,7 +145,7 @@ func TestCatalogGetPathProxyIntegration(t *testing.T) {
 	service := newIntegrationCatalogService(t)
 	fixture := newCatalogIntegrationFixture(t)
 
-	entry, err := service.GetPath(context.Background(), integrationBearerRequestContext(t), fixture.objectPath)
+	entry, err := service.GetPath(context.Background(), integrationBearerRequestContext(t), fixture.objectPath, PathLookupOptions{})
 	if err != nil {
 		t.Fatalf("GetPath with bearer proxy context returned error: %v", err)
 	}

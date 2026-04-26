@@ -361,7 +361,7 @@ func resolveE2EConfigPath(configFile string) (string, error) {
 		return configFile, nil
 	}
 
-	_, filename, _, ok := runtime.Caller(0)
+	_, _, _, ok := runtime.Caller(0)
 	if !ok {
 		return "", fmt.Errorf("resolve relative %s path %q: runtime caller unavailable", config.ConfigFileEnvVar, configFile)
 	}

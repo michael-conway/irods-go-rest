@@ -246,6 +246,71 @@ func TestGetPathAcceptsValidBearerToken(t *testing.T) {
 	}
 }
 
+func TestGetPathVerboseReturnsReplicaLongFormat(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path?irods_path=/tempZone/home/test1/file.txt&verbose=1", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"replicas":[`,
+		`"number":0`,
+		`"owner":"rods"`,
+		`"resource_name":"demoResc"`,
+		`"resource_hierarchy":"demoResc"`,
+		`"status":"1"`,
+		`"status_symbol":"\u0026"`,
+		`"status_description":"good"`,
+	) {
+		t.Fatalf("expected ils -l style replica information in response body: %q", body)
+	}
+}
+
+func TestGetPathVerboseReturnsReplicaVeryLongFormat(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path?irods_path=/tempZone/home/test1/file.txt&verbose=2", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"checksum":"sha2:YWJjMTIz"`,
+		`"data_type":"generic"`,
+		`"physical_path":"/var/lib/irods/Vault/home/test1/file.txt"`,
+	) {
+		t.Fatalf("expected ils -L style replica information in response body: %q", body)
+	}
+}
+
+func TestGetPathRejectsInvalidVerboseValue(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path?irods_path=/tempZone/home/test1/file.txt&verbose=banana", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
 func TestGetPathReturnsCollectionShape(t *testing.T) {
 	handler := testHandler(t)
 
@@ -313,6 +378,35 @@ func TestGetPathChildrenReturnsCollectionChildren(t *testing.T) {
 
 	if body := rec.Body.String(); !containsAll(body, `"parent":{"irods_path":"/tempZone/home/test1/project"`) {
 		t.Fatalf("expected child parent links in response body: %q", body)
+	}
+}
+
+func TestGetPathAVUsReturnsAVUList(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/avu?irods_path=/tempZone/home/test1/file.txt", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"avus"`,
+		`"id":"701"`,
+		`"attrib":"source"`,
+		`"value":"test"`,
+		`"unit":"fixture"`,
+		`"created_at":"2023-11-14T22:13:20Z"`,
+		`"updated_at":"2023-11-14T22:13:20Z"`,
+		`"path_segments"`,
+		`"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt"`,
+	) {
+		t.Fatalf("unexpected metadata response body: %q", body)
 	}
 }
 
@@ -482,12 +576,24 @@ func newTestCatalogFileSystem() *testCatalogFileSystem {
 		ID:                101,
 		Type:              irodsfs.FileEntry,
 		Name:              "file.txt",
+		Owner:             "rods",
 		Path:              "/tempZone/home/test1/file.txt",
 		Size:              128,
+		DataType:          "generic",
 		CheckSumAlgorithm: irodstypes.ChecksumAlgorithmSHA256,
 		CheckSum:          []byte("abc123"),
 		IRODSReplicas: []irodstypes.IRODSReplica{{
-			ResourceName: "demoResc",
+			Number:            0,
+			Owner:             "rods",
+			Status:            "1",
+			ResourceName:      "demoResc",
+			ResourceHierarchy: "demoResc",
+			Path:              "/var/lib/irods/Vault/home/test1/file.txt",
+			Checksum: &irodstypes.IRODSChecksum{
+				Algorithm:           irodstypes.ChecksumAlgorithmSHA256,
+				IRODSChecksumString: "sha2:YWJjMTIz",
+			},
+			ModifyTime: now,
 		}},
 		CreateTime: now,
 		ModifyTime: now,
@@ -496,12 +602,23 @@ func newTestCatalogFileSystem() *testCatalogFileSystem {
 		ID:                102,
 		Type:              irodsfs.FileEntry,
 		Name:              "child.txt",
+		Owner:             "alice",
 		Path:              "/tempZone/home/test1/project/child.txt",
 		Size:              64,
+		DataType:          "generic",
 		CheckSumAlgorithm: irodstypes.ChecksumAlgorithmSHA256,
 		CheckSum:          []byte("childsum"),
-		CreateTime:        now,
-		ModifyTime:        now,
+		IRODSReplicas: []irodstypes.IRODSReplica{{
+			Number:            2,
+			Owner:             "alice",
+			Status:            "2",
+			ResourceName:      "repl1",
+			ResourceHierarchy: "repl1;child1",
+			Path:              "/var/lib/irods/child1vault/public/foo",
+			ModifyTime:        now,
+		}},
+		CreateTime: now,
+		ModifyTime: now,
 	}
 	nested := &irodsfs.Entry{
 		ID:         103,
@@ -524,12 +641,20 @@ func newTestCatalogFileSystem() *testCatalogFileSystem {
 		},
 		metadataByPath: map[string][]*irodstypes.IRODSMeta{
 			project.Path: {{
-				Name:  "source",
-				Value: "test",
+				AVUID:      700,
+				Name:       "source",
+				Value:      "test",
+				Units:      "folder",
+				CreateTime: now,
+				ModifyTime: now,
 			}},
 			file.Path: {{
-				Name:  "source",
-				Value: "test",
+				AVUID:      701,
+				Name:       "source",
+				Value:      "test",
+				Units:      "fixture",
+				CreateTime: now,
+				ModifyTime: now,
 			}},
 		},
 		contentByPath: map[string][]byte{
