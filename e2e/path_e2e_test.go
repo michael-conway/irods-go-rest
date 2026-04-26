@@ -65,13 +65,19 @@ func TestGetCollectionPathBasicAuthE2E(t *testing.T) {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
 
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	bodyText := string(bodyBytes)
+
 	var payload struct {
 		Path        string `json:"path"`
 		Kind        string `json:"kind"`
 		HasChildren bool   `json:"hasChildren"`
 		ChildCount  int    `json:"childCount"`
 	}
-	decodeJSON(t, resp.Body, &payload)
+	decodeJSON(t, strings.NewReader(bodyText), &payload)
 
 	if payload.Path != fixture.collectionPath {
 		t.Fatalf("expected path %q, got %q", fixture.collectionPath, payload.Path)
@@ -84,6 +90,9 @@ func TestGetCollectionPathBasicAuthE2E(t *testing.T) {
 	}
 	if payload.ChildCount < 1 {
 		t.Fatalf("expected childCount >= 1, got %d", payload.ChildCount)
+	}
+	if !strings.Contains(bodyText, `"avus":{"href":"/api/v1/path/avu?irods_path=`) {
+		t.Fatalf("expected AVU HATEOAS link in path response, got %q", bodyText)
 	}
 }
 
@@ -296,10 +305,20 @@ func TestGetPathAVUsBasicAuthE2E(t *testing.T) {
 	var payload struct {
 		IRODSPath string `json:"irods_path"`
 		AVUs      []struct {
-			ID        string `json:"id"`
-			Attrib    string `json:"attrib"`
-			Value     string `json:"value"`
-			Unit      string `json:"unit"`
+			ID     string `json:"id"`
+			Attrib string `json:"attrib"`
+			Value  string `json:"value"`
+			Unit   string `json:"unit"`
+			Links  struct {
+				Update struct {
+					Href   string `json:"href"`
+					Method string `json:"method"`
+				} `json:"update"`
+				Delete struct {
+					Href   string `json:"href"`
+					Method string `json:"method"`
+				} `json:"delete"`
+			} `json:"links"`
 			CreatedAt string `json:"created_at"`
 			UpdatedAt string `json:"updated_at"`
 		} `json:"avus"`
@@ -320,6 +339,9 @@ func TestGetPathAVUsBasicAuthE2E(t *testing.T) {
 			if strings.TrimSpace(avu.ID) == "" {
 				t.Fatal("expected AVU id to be populated")
 			}
+			if strings.TrimSpace(avu.Links.Update.Href) == "" || strings.TrimSpace(avu.Links.Delete.Href) == "" {
+				t.Fatal("expected AVU update/delete links to be populated")
+			}
 			if strings.TrimSpace(avu.CreatedAt) == "" || strings.TrimSpace(avu.UpdatedAt) == "" {
 				t.Fatal("expected AVU timestamps to be populated")
 			}
@@ -329,6 +351,137 @@ func TestGetPathAVUsBasicAuthE2E(t *testing.T) {
 
 	if !foundExpectedAVU {
 		t.Fatalf("expected AVU %q=%q [%q] in response", fixture.objectAVU.Attrib, fixture.objectAVU.Value, fixture.objectAVU.Unit)
+	}
+}
+
+func TestPostAndDeletePathAVUBasicAuthE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	fixture := requireE2EFixture(t)
+	client := newE2EHTTPClient()
+
+	req := newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path/avu", fixture.objectPath), strings.NewReader(`{"attrib":"e2e.added.avu","value":"present","unit":"test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	setBasicAuth(req)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("perform create request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+
+	var created struct {
+		AVU struct {
+			ID     string `json:"id"`
+			Attrib string `json:"attrib"`
+			Value  string `json:"value"`
+			Unit   string `json:"unit"`
+		} `json:"avu"`
+	}
+	decodeJSON(t, resp.Body, &created)
+
+	if strings.TrimSpace(created.AVU.ID) == "" {
+		t.Fatal("expected created AVU id to be populated")
+	}
+	if created.AVU.Attrib != "e2e.added.avu" || created.AVU.Value != "present" || created.AVU.Unit != "test" {
+		t.Fatalf("unexpected created AVU payload %+v", created.AVU)
+	}
+
+	req = newE2ERequest(t, http.MethodDelete, strings.TrimRight(baseURL, "/")+"/api/v1/path/avu/"+url.PathEscape(created.AVU.ID)+"?irods_path="+url.QueryEscape(fixture.objectPath), nil)
+	setBasicAuth(req)
+
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("perform delete request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+
+	req = newE2ERequest(t, http.MethodGet, pathURL(baseURL, "/api/v1/path/avu", fixture.objectPath), nil)
+	setBasicAuth(req)
+
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("perform list request after delete: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var payload struct {
+		AVUs []struct {
+			ID string `json:"id"`
+		} `json:"avus"`
+	}
+	decodeJSON(t, resp.Body, &payload)
+
+	for _, avu := range payload.AVUs {
+		if avu.ID == created.AVU.ID {
+			t.Fatalf("expected AVU %q to be removed", created.AVU.ID)
+		}
+	}
+}
+
+func TestPutPathAVUBasicAuthE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	fixture := requireE2EFixture(t)
+	client := newE2EHTTPClient()
+
+	req := newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path/avu", fixture.objectPath), strings.NewReader(`{"attrib":"e2e.update.avu","value":"before","unit":"test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	setBasicAuth(req)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("perform create request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+
+	var created struct {
+		AVU struct {
+			ID string `json:"id"`
+		} `json:"avu"`
+	}
+	decodeJSON(t, resp.Body, &created)
+
+	req = newE2ERequest(t, http.MethodPut, strings.TrimRight(baseURL, "/")+"/api/v1/path/avu/"+url.PathEscape(created.AVU.ID)+"?irods_path="+url.QueryEscape(fixture.objectPath), strings.NewReader(`{"attrib":"e2e.update.avu","value":"after","unit":"test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	setBasicAuth(req)
+
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("perform update request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var updated struct {
+		AVU struct {
+			ID     string `json:"id"`
+			Attrib string `json:"attrib"`
+			Value  string `json:"value"`
+			Unit   string `json:"unit"`
+		} `json:"avu"`
+	}
+	decodeJSON(t, resp.Body, &updated)
+
+	if updated.AVU.Attrib != "e2e.update.avu" || updated.AVU.Value != "after" || updated.AVU.Unit != "test" {
+		t.Fatalf("unexpected updated AVU %+v", updated.AVU)
 	}
 }
 
@@ -459,6 +612,15 @@ func TestGetPathContentsRangeBasicAuthE2E(t *testing.T) {
 	if got := resp.Header.Get("Accept-Ranges"); got != "bytes" {
 		t.Fatalf("expected Accept-Ranges bytes, got %q", got)
 	}
+	if got := resp.Header.Get("Content-Disposition"); !strings.Contains(got, `attachment;`) {
+		t.Fatalf("expected Content-Disposition attachment header, got %q", got)
+	}
+	if got := resp.Header.Get("Last-Modified"); got == "" {
+		t.Fatal("expected Last-Modified header")
+	}
+	if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("expected nosniff header, got %q", got)
+	}
 	if got := resp.Header.Get("Content-Range"); !strings.HasPrefix(got, "bytes 0-15/") {
 		t.Fatalf("expected Content-Range prefix %q, got %q", "bytes 0-15/", got)
 	}
@@ -469,6 +631,62 @@ func TestGetPathContentsRangeBasicAuthE2E(t *testing.T) {
 	}
 	if len(body) != 16 {
 		t.Fatalf("expected 16 bytes, got %d", len(body))
+	}
+}
+
+func TestHeadPathContentsBasicAuthE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	fixture := requireE2EFixture(t)
+	client := newE2EHTTPClient()
+
+	req := newE2ERequest(t, http.MethodHead, pathURL(baseURL, "/api/v1/path/contents", fixture.objectPath), nil)
+	setBasicAuth(req)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("perform request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Length"); got == "" {
+		t.Fatal("expected Content-Length header")
+	}
+	if got := resp.Header.Get("Content-Disposition"); !strings.Contains(got, `attachment;`) {
+		t.Fatalf("expected Content-Disposition attachment header, got %q", got)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if len(body) != 0 {
+		t.Fatalf("expected empty HEAD body, got %d bytes", len(body))
+	}
+}
+
+func TestGetPathContentsInvalidRangeBasicAuthE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	fixture := requireE2EFixture(t)
+	client := newE2EHTTPClient()
+
+	req := newE2ERequest(t, http.MethodGet, pathURL(baseURL, "/api/v1/path/contents", fixture.objectPath), nil)
+	req.Header.Set("Range", "bytes=999999-1000000")
+	setBasicAuth(req)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("perform request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
+		t.Fatalf("expected 416, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Range"); !strings.HasPrefix(got, "bytes */") {
+		t.Fatalf("expected unsatisfied Content-Range header, got %q", got)
 	}
 }
 

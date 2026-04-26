@@ -182,6 +182,58 @@ func TestCatalogGetPathMetadataMapsAVUs(t *testing.T) {
 	}
 }
 
+func TestCatalogAddPathMetadataReturnsCreatedAVU(t *testing.T) {
+	service := newTestCatalogService(t, newCatalogTestFileSystem())
+
+	created, err := service.AddPathMetadata(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt", "new-attr", "new-value", "new-unit")
+	if err != nil {
+		t.Fatalf("AddPathMetadata returned error: %v", err)
+	}
+
+	if created.Attrib != "new-attr" || created.Value != "new-value" || created.Unit != "new-unit" {
+		t.Fatalf("unexpected created avu %+v", created)
+	}
+	if created.ID == "" {
+		t.Fatal("expected created AVU id to be populated")
+	}
+}
+
+func TestCatalogDeletePathMetadataRemovesAVU(t *testing.T) {
+	service := newTestCatalogService(t, newCatalogTestFileSystem())
+
+	if err := service.DeletePathMetadata(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt", "501"); err != nil {
+		t.Fatalf("DeletePathMetadata returned error: %v", err)
+	}
+
+	metadata, err := service.GetPathMetadata(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt")
+	if err != nil {
+		t.Fatalf("GetPathMetadata returned error: %v", err)
+	}
+	if len(metadata) != 0 {
+		t.Fatalf("expected AVU to be removed, got %d rows", len(metadata))
+	}
+}
+
+func TestCatalogUpdatePathMetadataReplacesAVU(t *testing.T) {
+	service := newTestCatalogService(t, newCatalogTestFileSystem())
+
+	updated, err := service.UpdatePathMetadata(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt", "501", "source", "updated", "system")
+	if err != nil {
+		t.Fatalf("UpdatePathMetadata returned error: %v", err)
+	}
+	if updated.Value != "updated" {
+		t.Fatalf("expected updated AVU value, got %+v", updated)
+	}
+
+	metadata, err := service.GetPathMetadata(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt")
+	if err != nil {
+		t.Fatalf("GetPathMetadata returned error: %v", err)
+	}
+	if len(metadata) != 1 || metadata[0].Value != "updated" {
+		t.Fatalf("expected updated metadata row, got %+v", metadata)
+	}
+}
+
 func TestCatalogGetPathChecksumReturnsTypedChecksum(t *testing.T) {
 	service := newTestCatalogService(t, newCatalogTestFileSystem())
 
@@ -278,6 +330,15 @@ func TestCatalogGetObjectContentByPathReturnsReader(t *testing.T) {
 	}
 	if got := string(buffer[:n]); got != "conte" {
 		t.Fatalf("expected ranged content %q, got %q", "conte", got)
+	}
+	if content.FileName != "file.txt" {
+		t.Fatalf("expected file name file.txt, got %q", content.FileName)
+	}
+	if content.Checksum == nil || content.Checksum.Checksum == "" {
+		t.Fatalf("expected checksum in object content, got %+v", content.Checksum)
+	}
+	if content.UpdatedAt == nil {
+		t.Fatal("expected updated timestamp in object content")
 	}
 
 	if err := content.Reader.Close(); err != nil {
@@ -456,6 +517,54 @@ func (f *catalogTestFileSystem) ListMetadata(irodsPath string) ([]*irodstypes.IR
 	}
 
 	return f.metadataByPath[irodsPath], nil
+}
+
+func (f *catalogTestFileSystem) AddMetadata(irodsPath string, attName string, attValue string, attUnits string) error {
+	if irodsPath == "/tempZone/home/alice/forbidden" {
+		return irodstypes.NewIRODSError(irodscommon.CAT_NO_ACCESS_PERMISSION)
+	}
+	if _, ok := f.entriesByPath[irodsPath]; !ok {
+		return irodstypes.NewFileNotFoundError(irodsPath)
+	}
+
+	nextID := int64(1)
+	for _, meta := range f.metadataByPath[irodsPath] {
+		if meta != nil && meta.AVUID >= nextID {
+			nextID = meta.AVUID + 1
+		}
+	}
+
+	now := time.Unix(1_700_000_001, 0)
+	f.metadataByPath[irodsPath] = append(f.metadataByPath[irodsPath], &irodstypes.IRODSMeta{
+		AVUID:      nextID,
+		Name:       attName,
+		Value:      attValue,
+		Units:      attUnits,
+		CreateTime: now,
+		ModifyTime: now,
+	})
+	return nil
+}
+
+func (f *catalogTestFileSystem) DeleteMetadata(irodsPath string, avuID int64) error {
+	if irodsPath == "/tempZone/home/alice/forbidden" {
+		return irodstypes.NewIRODSError(irodscommon.CAT_NO_ACCESS_PERMISSION)
+	}
+	metas := f.metadataByPath[irodsPath]
+	filtered := metas[:0]
+	found := false
+	for _, meta := range metas {
+		if meta != nil && meta.AVUID == avuID {
+			found = true
+			continue
+		}
+		filtered = append(filtered, meta)
+	}
+	if !found {
+		return irodstypes.NewFileNotFoundError(irodsPath)
+	}
+	f.metadataByPath[irodsPath] = filtered
+	return nil
 }
 
 func (f *catalogTestFileSystem) ComputeChecksum(irodsPath string, _ string) (*irodstypes.IRODSChecksum, error) {

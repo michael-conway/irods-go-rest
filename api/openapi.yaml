@@ -169,6 +169,162 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+    post:
+      operationId: postPathAVU
+      tags: [path]
+      summary: Add a single AVU to an iRODS logical path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a file or collection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PathAVUCreateRequest"
+      responses:
+        "201":
+          description: AVU created for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathAVUSingleResponse"
+        "400":
+          description: Missing irods_path query parameter or invalid JSON body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Object not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/path/avu/{avu_id}:
+    put:
+      operationId: putPathAVU
+      tags: [path]
+      summary: Update a single AVU on an iRODS logical path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: avu_id
+          required: true
+          schema:
+            type: string
+          description: AVU identifier returned by the AVU listing endpoint.
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a file or collection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PathAVUCreateRequest"
+      responses:
+        "200":
+          description: AVU updated for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathAVUSingleResponse"
+        "400":
+          description: Missing irods_path query parameter, invalid AVU identifier, or invalid JSON body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Object or AVU not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deletePathAVU
+      tags: [path]
+      summary: Delete a single AVU from an iRODS logical path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: avu_id
+          required: true
+          schema:
+            type: string
+          description: AVU identifier returned by the AVU listing endpoint.
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a file or collection.
+      responses:
+        "204":
+          description: AVU deleted
+        "400":
+          description: Missing irods_path query parameter or invalid AVU identifier
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Object or AVU not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/path/checksum:
     get:
       operationId: getPathChecksum
@@ -317,6 +473,9 @@ paths:
       description: |
         Accepts Basic auth, an OAuth bearer token, or a bearer token prefixed as `irods-ticket:<ticket>`.
         Supports single-range byte restarts via the `Range` header.
+        Responses include download-oriented headers such as `Content-Disposition`,
+        `Last-Modified`, `ETag` when a checksum is already stored, and
+        `X-Content-Type-Options: nosniff`.
       security:
         - BearerAuth: []
         - BasicAuth: []
@@ -491,6 +650,8 @@ components:
         kind:
           type: string
           enum: [data_object, collection]
+        links:
+          $ref: "#/components/schemas/PathLinks"
         parent:
           $ref: "#/components/schemas/ParentLink"
         path_segments:
@@ -568,6 +729,11 @@ components:
           type: string
         physical_path:
           type: string
+    PathLinks:
+      type: object
+      properties:
+        avus:
+          $ref: "#/components/schemas/ActionLink"
     ParentLink:
       type: object
       required: [irods_path, href]
@@ -606,6 +772,29 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AVUMetadata"
+    PathAVUSingleResponse:
+      type: object
+      required: [irods_path, path_segments, avu]
+      properties:
+        irods_path:
+          type: string
+        path_segments:
+          type: array
+          description: Ordered collection path segments for the requested path, each with a display name and HATEOAS link.
+          items:
+            $ref: "#/components/schemas/PathSegmentLink"
+        avu:
+          $ref: "#/components/schemas/AVUMetadata"
+    PathAVUCreateRequest:
+      type: object
+      required: [attrib, value]
+      properties:
+        attrib:
+          type: string
+        value:
+          type: string
+        unit:
+          type: string
     PathChecksum:
       type: object
       properties:
@@ -652,6 +841,23 @@ components:
         updated_at:
           type: string
           format: date-time
+        links:
+          $ref: "#/components/schemas/AVULinks"
+    AVULinks:
+      type: object
+      properties:
+        update:
+          $ref: "#/components/schemas/ActionLink"
+        delete:
+          $ref: "#/components/schemas/ActionLink"
+    ActionLink:
+      type: object
+      required: [href]
+      properties:
+        href:
+          type: string
+        method:
+          type: string
     PathSegmentLink:
       type: object
       required: [display_name, irods_path, href]

@@ -9,6 +9,7 @@ import (
 	"math"
 	"mime"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,6 +40,9 @@ type CatalogService interface {
 	GetPath(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathLookupOptions) (domain.PathEntry, error)
 	GetPathChildren(ctx context.Context, requestContext *RequestContext, absolutePath string) ([]domain.PathEntry, error)
 	GetPathMetadata(ctx context.Context, requestContext *RequestContext, absolutePath string) ([]domain.AVUMetadata, error)
+	AddPathMetadata(ctx context.Context, requestContext *RequestContext, absolutePath string, attrib string, value string, unit string) (domain.AVUMetadata, error)
+	UpdatePathMetadata(ctx context.Context, requestContext *RequestContext, absolutePath string, avuID string, attrib string, value string, unit string) (domain.AVUMetadata, error)
+	DeletePathMetadata(ctx context.Context, requestContext *RequestContext, absolutePath string, avuID string) error
 	GetPathChecksum(ctx context.Context, requestContext *RequestContext, absolutePath string) (domain.PathChecksum, error)
 	ComputePathChecksum(ctx context.Context, requestContext *RequestContext, absolutePath string) (domain.PathChecksum, error)
 	GetObjectContentByPath(ctx context.Context, requestContext *RequestContext, absolutePath string) (domain.ObjectContent, error)
@@ -48,6 +52,8 @@ type CatalogFileSystem interface {
 	Stat(irodsPath string) (*irodsfs.Entry, error)
 	List(irodsPath string) ([]*irodsfs.Entry, error)
 	ListMetadata(irodsPath string) ([]*irodstypes.IRODSMeta, error)
+	AddMetadata(irodsPath string, attName string, attValue string, attUnits string) error
+	DeleteMetadata(irodsPath string, avuID int64) error
 	ComputeChecksum(irodsPath string, resource string) (*irodstypes.IRODSChecksum, error)
 	OpenFile(irodsPath string, resource string, mode string) (CatalogFileHandle, error)
 	Release()
@@ -200,6 +206,163 @@ func (s *catalogService) GetPathMetadata(_ context.Context, requestContext *Requ
 	return avuMetadataList(metadata), nil
 }
 
+func (s *catalogService) AddPathMetadata(_ context.Context, requestContext *RequestContext, absolutePath string, attrib string, value string, unit string) (domain.AVUMetadata, error) {
+	absolutePath = strings.TrimSpace(absolutePath)
+	attrib = strings.TrimSpace(attrib)
+	value = strings.TrimSpace(value)
+	unit = strings.TrimSpace(unit)
+	if absolutePath == "" {
+		return domain.AVUMetadata{}, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
+	}
+	if attrib == "" || value == "" {
+		return domain.AVUMetadata{}, fmt.Errorf("attrib and value are required")
+	}
+
+	slog.Debug("catalog AddPathMetadata start", "path", absolutePath, "attrib", attrib, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-add-path-metadata")
+	if err != nil {
+		logIRODSError("catalog AddPathMetadata filesystem setup failed", err, "path", absolutePath, "attrib", attrib, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.AVUMetadata{}, err
+	}
+	defer filesystem.Release()
+
+	if _, err := filesystem.Stat(absolutePath); err != nil {
+		logIRODSError("catalog AddPathMetadata stat failed", err, "path", absolutePath, "attrib", attrib, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.AVUMetadata{}, normalizePathAccessError("stat path", absolutePath, err)
+	}
+
+	if err := filesystem.AddMetadata(absolutePath, attrib, value, unit); err != nil {
+		logIRODSError("catalog AddPathMetadata add failed", err, "path", absolutePath, "attrib", attrib, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.AVUMetadata{}, normalizePathAccessError("add metadata", absolutePath, err)
+	}
+
+	metadata, err := filesystem.ListMetadata(absolutePath)
+	if err != nil {
+		logIRODSError("catalog AddPathMetadata list metadata failed", err, "path", absolutePath, "attrib", attrib, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.AVUMetadata{}, normalizePathAccessError("list metadata", absolutePath, err)
+	}
+
+	created, ok := findLatestAVUMetadata(metadata, attrib, value, unit)
+	if !ok {
+		return domain.AVUMetadata{}, fmt.Errorf("metadata add completed but created AVU was not found for path %q", absolutePath)
+	}
+
+	return created, nil
+}
+
+func (s *catalogService) UpdatePathMetadata(_ context.Context, requestContext *RequestContext, absolutePath string, avuID string, attrib string, value string, unit string) (domain.AVUMetadata, error) {
+	absolutePath = strings.TrimSpace(absolutePath)
+	avuID = strings.TrimSpace(avuID)
+	attrib = strings.TrimSpace(attrib)
+	value = strings.TrimSpace(value)
+	unit = strings.TrimSpace(unit)
+	if absolutePath == "" {
+		return domain.AVUMetadata{}, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
+	}
+	if avuID == "" {
+		return domain.AVUMetadata{}, fmt.Errorf("avu_id is required")
+	}
+	if attrib == "" || value == "" {
+		return domain.AVUMetadata{}, fmt.Errorf("attrib and value are required")
+	}
+	avuIDInt, err := strconv.ParseInt(avuID, 10, 64)
+	if err != nil || avuIDInt <= 0 {
+		return domain.AVUMetadata{}, fmt.Errorf("invalid avu id %q", avuID)
+	}
+
+	slog.Debug("catalog UpdatePathMetadata start", "path", absolutePath, "avu_id", avuID, "attrib", attrib, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-update-path-metadata")
+	if err != nil {
+		logIRODSError("catalog UpdatePathMetadata filesystem setup failed", err, "path", absolutePath, "avu_id", avuID, "attrib", attrib, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.AVUMetadata{}, err
+	}
+	defer filesystem.Release()
+
+	if _, err := filesystem.Stat(absolutePath); err != nil {
+		logIRODSError("catalog UpdatePathMetadata stat failed", err, "path", absolutePath, "avu_id", avuID, "attrib", attrib, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.AVUMetadata{}, normalizePathAccessError("stat path", absolutePath, err)
+	}
+
+	metadata, err := filesystem.ListMetadata(absolutePath)
+	if err != nil {
+		logIRODSError("catalog UpdatePathMetadata list metadata failed", err, "path", absolutePath, "avu_id", avuID, "attrib", attrib, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.AVUMetadata{}, normalizePathAccessError("list metadata", absolutePath, err)
+	}
+	if _, ok := findAVUMetadataByID(metadata, avuID); !ok {
+		return domain.AVUMetadata{}, fmt.Errorf("%w: avu %q on path %q", ErrNotFound, avuID, absolutePath)
+	}
+
+	if err := filesystem.DeleteMetadata(absolutePath, avuIDInt); err != nil {
+		logIRODSError("catalog UpdatePathMetadata delete existing failed", err, "path", absolutePath, "avu_id", avuID, "attrib", attrib, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.AVUMetadata{}, normalizePathAccessError("delete metadata", absolutePath, err)
+	}
+	if err := filesystem.AddMetadata(absolutePath, attrib, value, unit); err != nil {
+		logIRODSError("catalog UpdatePathMetadata add replacement failed", err, "path", absolutePath, "avu_id", avuID, "attrib", attrib, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.AVUMetadata{}, normalizePathAccessError("add metadata", absolutePath, err)
+	}
+
+	metadata, err = filesystem.ListMetadata(absolutePath)
+	if err != nil {
+		logIRODSError("catalog UpdatePathMetadata list metadata after update failed", err, "path", absolutePath, "avu_id", avuID, "attrib", attrib, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.AVUMetadata{}, normalizePathAccessError("list metadata", absolutePath, err)
+	}
+
+	updated, ok := findLatestAVUMetadata(metadata, attrib, value, unit)
+	if !ok {
+		return domain.AVUMetadata{}, fmt.Errorf("metadata update completed but updated AVU was not found for path %q", absolutePath)
+	}
+
+	return updated, nil
+}
+
+func (s *catalogService) DeletePathMetadata(_ context.Context, requestContext *RequestContext, absolutePath string, avuID string) error {
+	absolutePath = strings.TrimSpace(absolutePath)
+	avuID = strings.TrimSpace(avuID)
+	if absolutePath == "" {
+		return fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
+	}
+	if avuID == "" {
+		return fmt.Errorf("avu_id is required")
+	}
+
+	avuIDInt, err := strconv.ParseInt(avuID, 10, 64)
+	if err != nil || avuIDInt <= 0 {
+		return fmt.Errorf("invalid avu id %q", avuID)
+	}
+
+	slog.Debug("catalog DeletePathMetadata start", "path", absolutePath, "avu_id", avuID, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-delete-path-metadata")
+	if err != nil {
+		logIRODSError("catalog DeletePathMetadata filesystem setup failed", err, "path", absolutePath, "avu_id", avuID, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return err
+	}
+	defer filesystem.Release()
+
+	if _, err := filesystem.Stat(absolutePath); err != nil {
+		logIRODSError("catalog DeletePathMetadata stat failed", err, "path", absolutePath, "avu_id", avuID, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return normalizePathAccessError("stat path", absolutePath, err)
+	}
+
+	metadata, err := filesystem.ListMetadata(absolutePath)
+	if err != nil {
+		logIRODSError("catalog DeletePathMetadata list metadata failed", err, "path", absolutePath, "avu_id", avuID, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return normalizePathAccessError("list metadata", absolutePath, err)
+	}
+	if _, ok := findAVUMetadataByID(metadata, avuID); !ok {
+		return fmt.Errorf("%w: avu %q on path %q", ErrNotFound, avuID, absolutePath)
+	}
+
+	if err := filesystem.DeleteMetadata(absolutePath, avuIDInt); err != nil {
+		logIRODSError("catalog DeletePathMetadata delete failed", err, "path", absolutePath, "avu_id", avuID, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return normalizePathAccessError("delete metadata", absolutePath, err)
+	}
+
+	return nil
+}
+
 func (s *catalogService) GetPathChecksum(_ context.Context, requestContext *RequestContext, absolutePath string) (domain.PathChecksum, error) {
 	absolutePath = strings.TrimSpace(absolutePath)
 	if absolutePath == "" {
@@ -297,8 +460,11 @@ func (s *catalogService) GetObjectContentByPath(_ context.Context, requestContex
 
 	return domain.ObjectContent{
 		Path:        absolutePath,
+		FileName:    filepath.Base(absolutePath),
 		ContentType: inferredMimeType(entry),
 		Size:        entry.Size,
+		Checksum:    pathChecksumPointerFromEntry(entry),
+		UpdatedAt:   timePointer(entry.ModifyTime),
 		Reader: &catalogObjectReader{
 			handle:     handle,
 			filesystem: filesystem,
@@ -459,6 +625,14 @@ func (a *catalogFileSystemAdapter) ListMetadata(irodsPath string) ([]*irodstypes
 	return a.filesystem.ListMetadata(irodsPath)
 }
 
+func (a *catalogFileSystemAdapter) AddMetadata(irodsPath string, attName string, attValue string, attUnits string) error {
+	return a.filesystem.AddMetadata(irodsPath, attName, attValue, attUnits)
+}
+
+func (a *catalogFileSystemAdapter) DeleteMetadata(irodsPath string, avuID int64) error {
+	return a.filesystem.DeleteMetadata(irodsPath, avuID)
+}
+
 func (a *catalogFileSystemAdapter) ComputeChecksum(irodsPath string, resource string) (*irodstypes.IRODSChecksum, error) {
 	conn, err := a.filesystem.GetMetadataConnection(false)
 	if err != nil {
@@ -581,6 +755,52 @@ func avuMetadataList(metas []*irodstypes.IRODSMeta) []domain.AVUMetadata {
 	}
 
 	return result
+}
+
+func avuMetadataEntry(meta *irodstypes.IRODSMeta) domain.AVUMetadata {
+	if meta == nil {
+		return domain.AVUMetadata{}
+	}
+
+	return domain.AVUMetadata{
+		ID:        fmt.Sprintf("%d", meta.AVUID),
+		Attrib:    strings.TrimSpace(meta.Name),
+		Value:     strings.TrimSpace(meta.Value),
+		Unit:      strings.TrimSpace(meta.Units),
+		CreatedAt: timePointer(meta.CreateTime),
+		UpdatedAt: timePointer(meta.ModifyTime),
+	}
+}
+
+func findLatestAVUMetadata(metas []*irodstypes.IRODSMeta, attrib string, value string, unit string) (domain.AVUMetadata, bool) {
+	var selected *irodstypes.IRODSMeta
+	for _, meta := range metas {
+		if meta == nil {
+			continue
+		}
+		if strings.TrimSpace(meta.Name) != attrib || strings.TrimSpace(meta.Value) != value || strings.TrimSpace(meta.Units) != unit {
+			continue
+		}
+		if selected == nil || meta.AVUID > selected.AVUID {
+			selected = meta
+		}
+	}
+	if selected == nil {
+		return domain.AVUMetadata{}, false
+	}
+	return avuMetadataEntry(selected), true
+}
+
+func findAVUMetadataByID(metas []*irodstypes.IRODSMeta, avuID string) (domain.AVUMetadata, bool) {
+	for _, meta := range metas {
+		if meta == nil {
+			continue
+		}
+		if fmt.Sprintf("%d", meta.AVUID) == avuID {
+			return avuMetadataEntry(meta), true
+		}
+	}
+	return domain.AVUMetadata{}, false
 }
 
 func checksumString(entry *irodsfs.Entry) string {
