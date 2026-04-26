@@ -125,6 +125,99 @@ func TestGetObjectPathBasicAuthE2E(t *testing.T) {
 	}
 }
 
+func TestGetObjectPathVerboseLongBasicAuthE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	fixture := requireE2EFixture(t)
+	client := newE2EHTTPClient()
+
+	req := newE2ERequest(t, http.MethodGet, pathURLWithQuery(baseURL, "/api/v1/path", fixture.objectPath, "verbose=1"), nil)
+	setBasicAuth(req)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("perform request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var payload struct {
+		Path     string `json:"path"`
+		Replicas []struct {
+			Number            int64  `json:"number"`
+			ResourceName      string `json:"resource_name"`
+			ResourceHierarchy string `json:"resource_hierarchy"`
+			Status            string `json:"status"`
+			StatusSymbol      string `json:"status_symbol"`
+			StatusDescription string `json:"status_description"`
+		} `json:"replicas"`
+	}
+	decodeJSON(t, resp.Body, &payload)
+
+	if payload.Path != fixture.objectPath {
+		t.Fatalf("expected path %q, got %q", fixture.objectPath, payload.Path)
+	}
+	if len(payload.Replicas) < 1 {
+		t.Fatal("expected at least one replica in verbose=1 response")
+	}
+	if strings.TrimSpace(payload.Replicas[0].ResourceName) == "" {
+		t.Fatal("expected resource_name in verbose=1 response")
+	}
+	if strings.TrimSpace(payload.Replicas[0].ResourceHierarchy) == "" {
+		t.Fatal("expected resource_hierarchy in verbose=1 response")
+	}
+	if strings.TrimSpace(payload.Replicas[0].Status) == "" || strings.TrimSpace(payload.Replicas[0].StatusSymbol) == "" {
+		t.Fatal("expected replica status fields in verbose=1 response")
+	}
+}
+
+func TestGetObjectPathVerboseVeryLongBasicAuthE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	fixture := requireE2EFixture(t)
+	client := newE2EHTTPClient()
+
+	req := newE2ERequest(t, http.MethodGet, pathURLWithQuery(baseURL, "/api/v1/path", fixture.objectPath, "verbose=2"), nil)
+	setBasicAuth(req)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("perform request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var payload struct {
+		Path     string `json:"path"`
+		Replicas []struct {
+			Checksum     string `json:"checksum"`
+			DataType     string `json:"data_type"`
+			PhysicalPath string `json:"physical_path"`
+		} `json:"replicas"`
+	}
+	decodeJSON(t, resp.Body, &payload)
+
+	if payload.Path != fixture.objectPath {
+		t.Fatalf("expected path %q, got %q", fixture.objectPath, payload.Path)
+	}
+	if len(payload.Replicas) < 1 {
+		t.Fatal("expected at least one replica in verbose=2 response")
+	}
+	if strings.TrimSpace(payload.Replicas[0].Checksum) == "" {
+		t.Fatal("expected checksum in verbose=2 response")
+	}
+	if strings.TrimSpace(payload.Replicas[0].DataType) == "" {
+		t.Fatal("expected data_type in verbose=2 response")
+	}
+	if strings.TrimSpace(payload.Replicas[0].PhysicalPath) == "" {
+		t.Fatal("expected physical_path in verbose=2 response")
+	}
+}
+
 func TestGetPathChildrenBasicAuthE2E(t *testing.T) {
 	baseURL := requireE2EBaseURL(t)
 	fixture := requireE2EFixture(t)
@@ -169,6 +262,63 @@ func TestGetPathChildrenBasicAuthE2E(t *testing.T) {
 
 	if !foundExpectedCollection {
 		t.Fatalf("expected child collection %q in response", fixture.childCollectionPath)
+	}
+}
+
+func TestGetPathAVUsBasicAuthE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	fixture := requireE2EFixture(t)
+	client := newE2EHTTPClient()
+
+	req := newE2ERequest(t, http.MethodGet, pathURL(baseURL, "/api/v1/path/avu", fixture.objectPath), nil)
+	setBasicAuth(req)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("perform request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var payload struct {
+		IRODSPath string `json:"irods_path"`
+		AVUs      []struct {
+			ID        string `json:"id"`
+			Attrib    string `json:"attrib"`
+			Value     string `json:"value"`
+			Unit      string `json:"unit"`
+			CreatedAt string `json:"created_at"`
+			UpdatedAt string `json:"updated_at"`
+		} `json:"avus"`
+	}
+	decodeJSON(t, resp.Body, &payload)
+
+	if payload.IRODSPath != fixture.objectPath {
+		t.Fatalf("expected irods_path %q, got %q", fixture.objectPath, payload.IRODSPath)
+	}
+	if len(payload.AVUs) < 1 {
+		t.Fatal("expected at least one AVU in response")
+	}
+
+	foundExpectedAVU := false
+	for _, avu := range payload.AVUs {
+		if avu.Attrib == fixture.objectAVU.Attrib && avu.Value == fixture.objectAVU.Value && avu.Unit == fixture.objectAVU.Unit {
+			foundExpectedAVU = true
+			if strings.TrimSpace(avu.ID) == "" {
+				t.Fatal("expected AVU id to be populated")
+			}
+			if strings.TrimSpace(avu.CreatedAt) == "" || strings.TrimSpace(avu.UpdatedAt) == "" {
+				t.Fatal("expected AVU timestamps to be populated")
+			}
+			break
+		}
+	}
+
+	if !foundExpectedAVU {
+		t.Fatalf("expected AVU %q=%q [%q] in response", fixture.objectAVU.Attrib, fixture.objectAVU.Value, fixture.objectAVU.Unit)
 	}
 }
 
@@ -247,6 +397,15 @@ func TestGetPathWithBearerTokenE2E(t *testing.T) {
 
 func pathURL(baseURL string, route string, irodsPath string) string {
 	return strings.TrimRight(baseURL, "/") + route + "?irods_path=" + url.QueryEscape(irodsPath)
+}
+
+func pathURLWithQuery(baseURL string, route string, irodsPath string, extraQuery string) string {
+	url := pathURL(baseURL, route, irodsPath)
+	if strings.TrimSpace(extraQuery) == "" {
+		return url
+	}
+
+	return url + "&" + extraQuery
 }
 
 func decodeJSON(t *testing.T, body io.Reader, target any) {

@@ -27,6 +27,14 @@ type e2eFixture struct {
 	objectPath          string
 	childCollectionPath string
 	missingPath         string
+	objectAVU           e2eFixtureAVU
+	collectionAVU       e2eFixtureAVU
+}
+
+type e2eFixtureAVU struct {
+	Attrib string
+	Value  string
+	Unit   string
 }
 
 type generatedTreeManifest struct {
@@ -92,13 +100,35 @@ func buildE2EFixture(t *testing.T) (*e2eFixture, error) {
 		return nil, err
 	}
 
+	objectPath := irodsJoin(irodsRootPath, manifest.objectRelPath)
+	collectionPath := irodsRootPath
+	objectAVU := e2eFixtureAVU{
+		Attrib: "e2e.object.avu",
+		Value:  "present",
+		Unit:   "fixture",
+	}
+	collectionAVU := e2eFixtureAVU{
+		Attrib: "e2e.collection.avu",
+		Value:  "root",
+		Unit:   "fixture",
+	}
+
+	if err := filesystem.AddMetadata(objectPath, objectAVU.Attrib, objectAVU.Value, objectAVU.Unit); err != nil {
+		return nil, fmt.Errorf("add object AVU to %q: %w", objectPath, err)
+	}
+	if err := filesystem.AddMetadata(collectionPath, collectionAVU.Attrib, collectionAVU.Value, collectionAVU.Unit); err != nil {
+		return nil, fmt.Errorf("add collection AVU to %q: %w", collectionPath, err)
+	}
+
 	return &e2eFixture{
 		localRootPath:       localRootPath,
 		irodsRootPath:       irodsRootPath,
-		collectionPath:      irodsRootPath,
-		objectPath:          irodsJoin(irodsRootPath, manifest.objectRelPath),
+		collectionPath:      collectionPath,
+		objectPath:          objectPath,
 		childCollectionPath: irodsJoin(irodsRootPath, manifest.childCollectionRelPath),
 		missingPath:         irodsJoin(irodsRootPath, "missing-"+randomToken(rng, 6)+".txt"),
+		objectAVU:           objectAVU,
+		collectionAVU:       collectionAVU,
 	}, nil
 }
 

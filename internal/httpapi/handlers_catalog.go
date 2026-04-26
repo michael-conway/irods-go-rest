@@ -30,7 +30,13 @@ func (h *Handler) getPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	object, err := h.paths.GetPath(r.Context(), objectPath)
+	verboseLevel, err := queryVerboseLevel(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	object, err := h.paths.GetPath(r.Context(), objectPath, irods.PathLookupOptions{VerboseLevel: verboseLevel})
 	if err != nil {
 		if errors.Is(err, irods.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
@@ -79,6 +85,35 @@ func (h *Handler) getPathChildren(w http.ResponseWriter, r *http.Request) {
 		"irods_path":    objectPath,
 		"path_segments": buildPathSegments(objectPath),
 		"children":      mappedChildren,
+	})
+}
+
+func (h *Handler) getPathAVUs(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
+	if objectPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
+		return
+	}
+
+	metadata, err := h.paths.GetPathMetadata(r.Context(), objectPath)
+	if err != nil {
+		if errors.Is(err, irods.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", err.Error())
+			return
+		}
+		if errors.Is(err, irods.ErrPermissionDenied) {
+			writeError(w, http.StatusForbidden, "permission_denied", err.Error())
+			return
+		}
+
+		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"irods_path":    objectPath,
+		"path_segments": buildPathSegments(objectPath),
+		"avus":          metadata,
 	})
 }
 
@@ -149,6 +184,24 @@ func (h *Handler) servePathContents(w http.ResponseWriter, r *http.Request, head
 
 func queryIRODSPath(r *http.Request) string {
 	return strings.TrimSpace(r.URL.Query().Get("irods_path"))
+}
+
+func queryVerboseLevel(r *http.Request) (int, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get("verbose"))
+	if raw == "" {
+		return 0, nil
+	}
+
+	switch strings.ToLower(raw) {
+	case "0", "false", "off", "none":
+		return 0, nil
+	case "1", "true", "on", "l", "long":
+		return 1, nil
+	case "2", "ll", "l2", "very_long", "very-long", "full":
+		return 2, nil
+	default:
+		return 0, fmt.Errorf("verbose query parameter must be one of 0, 1, 2, true, false, long, or very_long")
+	}
 }
 
 func pathEntryResponse(r *http.Request, entry domain.PathEntry) domain.PathEntry {

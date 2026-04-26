@@ -17,7 +17,7 @@ import (
 func TestCatalogGetPathCollectionMapsFilesystemEntry(t *testing.T) {
 	service := newTestCatalogService(t, newCatalogTestFileSystem())
 
-	entry, err := service.GetPath(context.Background(), bearerRequestContext(), "/tempZone/home/alice/project")
+	entry, err := service.GetPath(context.Background(), bearerRequestContext(), "/tempZone/home/alice/project", PathLookupOptions{})
 	if err != nil {
 		t.Fatalf("GetPath returned error: %v", err)
 	}
@@ -37,12 +37,15 @@ func TestCatalogGetPathCollectionMapsFilesystemEntry(t *testing.T) {
 	if entry.CreatedAt == nil || entry.UpdatedAt == nil {
 		t.Fatal("expected collection timestamps to be populated")
 	}
+	if len(entry.Replicas) != 0 {
+		t.Fatalf("expected replicas to be omitted without verbose flag, got %d", len(entry.Replicas))
+	}
 }
 
 func TestCatalogGetPathDataObjectMapsFilesystemEntry(t *testing.T) {
 	service := newTestCatalogService(t, newCatalogTestFileSystem())
 
-	entry, err := service.GetPath(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt")
+	entry, err := service.GetPath(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt", PathLookupOptions{})
 	if err != nil {
 		t.Fatalf("GetPath returned error: %v", err)
 	}
@@ -67,6 +70,53 @@ func TestCatalogGetPathDataObjectMapsFilesystemEntry(t *testing.T) {
 	}
 	if entry.CreatedAt == nil || entry.UpdatedAt == nil {
 		t.Fatal("expected data object timestamps to be populated")
+	}
+	if len(entry.Replicas) != 0 {
+		t.Fatalf("expected replicas to be omitted without verbose flag, got %d", len(entry.Replicas))
+	}
+}
+
+func TestCatalogGetPathVerboseMapsReplicaLongFields(t *testing.T) {
+	service := newTestCatalogService(t, newCatalogTestFileSystem())
+
+	entry, err := service.GetPath(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt", PathLookupOptions{VerboseLevel: 1})
+	if err != nil {
+		t.Fatalf("GetPath returned error: %v", err)
+	}
+
+	if len(entry.Replicas) != 1 {
+		t.Fatalf("expected 1 replica, got %d", len(entry.Replicas))
+	}
+
+	replica := entry.Replicas[0]
+	if replica.Owner != "alice" || replica.ResourceHierarchy != "demoResc" {
+		t.Fatalf("unexpected replica mapping: %+v", replica)
+	}
+	if replica.StatusSymbol != "&" || replica.StatusDescription != "good" {
+		t.Fatalf("expected good replica status mapping, got %+v", replica)
+	}
+	if replica.Checksum != "" || replica.PhysicalPath != "" || replica.DataType != "" {
+		t.Fatalf("expected very-long fields to be omitted at verbose=1, got %+v", replica)
+	}
+}
+
+func TestCatalogGetPathVerboseMapsReplicaVeryLongFields(t *testing.T) {
+	service := newTestCatalogService(t, newCatalogTestFileSystem())
+
+	entry, err := service.GetPath(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt", PathLookupOptions{VerboseLevel: 2})
+	if err != nil {
+		t.Fatalf("GetPath returned error: %v", err)
+	}
+
+	replica := entry.Replicas[0]
+	if replica.Checksum != "sha2:YWJjMTIz" {
+		t.Fatalf("expected replica checksum, got %q", replica.Checksum)
+	}
+	if replica.DataType != "generic" {
+		t.Fatalf("expected replica data type generic, got %q", replica.DataType)
+	}
+	if replica.PhysicalPath != "/var/lib/irods/Vault/home/alice/file.txt" {
+		t.Fatalf("expected replica physical path, got %q", replica.PhysicalPath)
 	}
 }
 
@@ -98,6 +148,34 @@ func TestCatalogGetPathChildrenMapsChildEntries(t *testing.T) {
 	}
 }
 
+func TestCatalogGetPathMetadataMapsAVUs(t *testing.T) {
+	service := newTestCatalogService(t, newCatalogTestFileSystem())
+
+	metadata, err := service.GetPathMetadata(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt")
+	if err != nil {
+		t.Fatalf("GetPathMetadata returned error: %v", err)
+	}
+
+	if len(metadata) != 1 {
+		t.Fatalf("expected 1 AVU row, got %d", len(metadata))
+	}
+	if metadata[0].ID != "501" {
+		t.Fatalf("expected AVU id 501, got %q", metadata[0].ID)
+	}
+	if metadata[0].Attrib != "source" {
+		t.Fatalf("expected attrib source, got %q", metadata[0].Attrib)
+	}
+	if metadata[0].Value != "unit-test" {
+		t.Fatalf("expected value unit-test, got %q", metadata[0].Value)
+	}
+	if metadata[0].Unit != "system" {
+		t.Fatalf("expected unit system, got %q", metadata[0].Unit)
+	}
+	if metadata[0].CreatedAt == nil || metadata[0].UpdatedAt == nil {
+		t.Fatal("expected AVU timestamps to be populated")
+	}
+}
+
 func TestHumanReadableSize(t *testing.T) {
 	for _, tc := range []struct {
 		size     int64
@@ -119,7 +197,7 @@ func TestHumanReadableSize(t *testing.T) {
 func TestCatalogGetPathNormalizesNotFound(t *testing.T) {
 	service := newTestCatalogService(t, newCatalogTestFileSystem())
 
-	_, err := service.GetPath(context.Background(), bearerRequestContext(), "/tempZone/home/alice/missing")
+	_, err := service.GetPath(context.Background(), bearerRequestContext(), "/tempZone/home/alice/missing", PathLookupOptions{})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
@@ -128,7 +206,7 @@ func TestCatalogGetPathNormalizesNotFound(t *testing.T) {
 func TestCatalogGetPathNormalizesPermissionDenied(t *testing.T) {
 	service := newTestCatalogService(t, newCatalogTestFileSystem())
 
-	_, err := service.GetPath(context.Background(), bearerRequestContext(), "/tempZone/home/alice/forbidden")
+	_, err := service.GetPath(context.Background(), bearerRequestContext(), "/tempZone/home/alice/forbidden", PathLookupOptions{})
 	if !errors.Is(err, ErrPermissionDenied) {
 		t.Fatalf("expected ErrPermissionDenied, got %v", err)
 	}
@@ -217,22 +295,45 @@ func newCatalogTestFileSystem() *catalogTestFileSystem {
 		ID:                101,
 		Type:              irodsfs.FileEntry,
 		Name:              "file.txt",
+		Owner:             "alice",
 		Path:              "/tempZone/home/alice/file.txt",
 		Size:              21,
+		DataType:          "generic",
 		CheckSumAlgorithm: irodstypes.ChecksumAlgorithmSHA256,
 		CheckSum:          []byte("abc123"),
 		IRODSReplicas: []irodstypes.IRODSReplica{{
-			ResourceName: "demoResc",
+			Number:            0,
+			Owner:             "alice",
+			Status:            "1",
+			ResourceName:      "demoResc",
+			ResourceHierarchy: "demoResc",
+			Path:              "/var/lib/irods/Vault/home/alice/file.txt",
+			Checksum: &irodstypes.IRODSChecksum{
+				Algorithm:           irodstypes.ChecksumAlgorithmSHA256,
+				IRODSChecksumString: "sha2:YWJjMTIz",
+			},
+			ModifyTime: now,
 		}},
 		CreateTime: now,
 		ModifyTime: now,
 	}
 	child := &irodsfs.Entry{
-		ID:         102,
-		Type:       irodsfs.FileEntry,
-		Name:       "child.txt",
-		Path:       "/tempZone/home/alice/project/child.txt",
-		Size:       10,
+		ID:       102,
+		Type:     irodsfs.FileEntry,
+		Name:     "child.txt",
+		Owner:    "alice",
+		Path:     "/tempZone/home/alice/project/child.txt",
+		Size:     10,
+		DataType: "generic",
+		IRODSReplicas: []irodstypes.IRODSReplica{{
+			Number:            2,
+			Owner:             "alice",
+			Status:            "2",
+			ResourceName:      "repl1",
+			ResourceHierarchy: "repl1;child1",
+			Path:              "/var/lib/irods/child1vault/public/foo",
+			ModifyTime:        now,
+		}},
 		CreateTime: now,
 		ModifyTime: now,
 	}
@@ -257,12 +358,20 @@ func newCatalogTestFileSystem() *catalogTestFileSystem {
 		},
 		metadataByPath: map[string][]*irodstypes.IRODSMeta{
 			project.Path: {{
-				Name:  "project",
-				Value: "demo",
+				AVUID:      500,
+				Name:       "project",
+				Value:      "demo",
+				Units:      "folder",
+				CreateTime: now,
+				ModifyTime: now,
 			}},
 			file.Path: {{
-				Name:  "source",
-				Value: "unit-test",
+				AVUID:      501,
+				Name:       "source",
+				Value:      "unit-test",
+				Units:      "system",
+				CreateTime: now,
+				ModifyTime: now,
 			}},
 		},
 		contentByPath: map[string][]byte{

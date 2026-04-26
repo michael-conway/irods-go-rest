@@ -14,6 +14,7 @@ import (
 
 	irodsfs "github.com/cyverse/go-irodsclient/fs"
 	irodscommon "github.com/cyverse/go-irodsclient/irods/common"
+	irodslibfs "github.com/cyverse/go-irodsclient/irods/fs"
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 	"github.com/michael-conway/irods-go-rest/internal/domain"
@@ -30,9 +31,16 @@ type RequestContext struct {
 	Ticket        string
 }
 
+type PathLookupOptions struct {
+	VerboseLevel int
+}
+
 type CatalogService interface {
-	GetPath(ctx context.Context, requestContext *RequestContext, absolutePath string) (domain.PathEntry, error)
+	GetPath(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathLookupOptions) (domain.PathEntry, error)
 	GetPathChildren(ctx context.Context, requestContext *RequestContext, absolutePath string) ([]domain.PathEntry, error)
+	GetPathMetadata(ctx context.Context, requestContext *RequestContext, absolutePath string) ([]domain.AVUMetadata, error)
+	GetPathChecksum(ctx context.Context, requestContext *RequestContext, absolutePath string) (domain.PathChecksum, error)
+	ComputePathChecksum(ctx context.Context, requestContext *RequestContext, absolutePath string) (domain.PathChecksum, error)
 	GetObjectContentByPath(ctx context.Context, requestContext *RequestContext, absolutePath string) (domain.ObjectContent, error)
 }
 
@@ -40,6 +48,7 @@ type CatalogFileSystem interface {
 	Stat(irodsPath string) (*irodsfs.Entry, error)
 	List(irodsPath string) ([]*irodsfs.Entry, error)
 	ListMetadata(irodsPath string) ([]*irodstypes.IRODSMeta, error)
+	ComputeChecksum(irodsPath string, resource string) (*irodstypes.IRODSChecksum, error)
 	OpenFile(irodsPath string, resource string, mode string) (CatalogFileHandle, error)
 	Release()
 }
@@ -74,7 +83,7 @@ func NewCatalogServiceWithFactory(cfg config.RestConfig, factory CatalogFileSyst
 	}
 }
 
-func (s *catalogService) GetPath(_ context.Context, requestContext *RequestContext, absolutePath string) (domain.PathEntry, error) {
+func (s *catalogService) GetPath(_ context.Context, requestContext *RequestContext, absolutePath string, options PathLookupOptions) (domain.PathEntry, error) {
 	absolutePath = strings.TrimSpace(absolutePath)
 	if absolutePath == "" {
 		return domain.PathEntry{}, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
@@ -108,10 +117,10 @@ func (s *catalogService) GetPath(_ context.Context, requestContext *RequestConte
 			return domain.PathEntry{}, normalizePathAccessError("list children", absolutePath, err)
 		}
 
-		return collectionPathEntry(s.cfg.IrodsZone, entry, metadata, len(children)), nil
+		return collectionPathEntry(s.cfg.IrodsZone, entry, metadata, len(children), options), nil
 	}
 
-	return dataObjectPathEntry(s.cfg.IrodsZone, entry, metadata), nil
+	return dataObjectPathEntry(s.cfg.IrodsZone, entry, metadata, options), nil
 }
 
 func (s *catalogService) GetPathChildren(_ context.Context, requestContext *RequestContext, absolutePath string) ([]domain.PathEntry, error) {
@@ -152,14 +161,105 @@ func (s *catalogService) GetPathChildren(_ context.Context, requestContext *Requ
 		}
 
 		if child.IsDir() {
-			results = append(results, collectionPathEntry(s.cfg.IrodsZone, child, nil, 0))
+			results = append(results, collectionPathEntry(s.cfg.IrodsZone, child, nil, 0, PathLookupOptions{}))
 			continue
 		}
 
-		results = append(results, dataObjectPathEntry(s.cfg.IrodsZone, child, nil))
+		results = append(results, dataObjectPathEntry(s.cfg.IrodsZone, child, nil, PathLookupOptions{}))
 	}
 
 	return results, nil
+}
+
+func (s *catalogService) GetPathMetadata(_ context.Context, requestContext *RequestContext, absolutePath string) ([]domain.AVUMetadata, error) {
+	absolutePath = strings.TrimSpace(absolutePath)
+	if absolutePath == "" {
+		return nil, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
+	}
+
+	slog.Debug("catalog GetPathMetadata start", "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-get-path-metadata")
+	if err != nil {
+		logIRODSError("catalog GetPathMetadata filesystem setup failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return nil, err
+	}
+	defer filesystem.Release()
+
+	if _, err := filesystem.Stat(absolutePath); err != nil {
+		logIRODSError("catalog GetPathMetadata stat failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return nil, normalizePathAccessError("stat path", absolutePath, err)
+	}
+
+	metadata, err := filesystem.ListMetadata(absolutePath)
+	if err != nil {
+		logIRODSError("catalog GetPathMetadata list metadata failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return nil, normalizePathAccessError("list metadata", absolutePath, err)
+	}
+
+	return avuMetadataList(metadata), nil
+}
+
+func (s *catalogService) GetPathChecksum(_ context.Context, requestContext *RequestContext, absolutePath string) (domain.PathChecksum, error) {
+	absolutePath = strings.TrimSpace(absolutePath)
+	if absolutePath == "" {
+		return domain.PathChecksum{}, fmt.Errorf("%w: object %q", ErrNotFound, absolutePath)
+	}
+
+	slog.Debug("catalog GetPathChecksum start", "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-get-path-checksum")
+	if err != nil {
+		logIRODSError("catalog GetPathChecksum filesystem setup failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathChecksum{}, err
+	}
+	defer filesystem.Release()
+
+	entry, err := filesystem.Stat(absolutePath)
+	if err != nil {
+		logIRODSError("catalog GetPathChecksum stat failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathChecksum{}, normalizePathAccessError("stat path", absolutePath, err)
+	}
+
+	if entry.IsDir() {
+		return domain.PathChecksum{}, fmt.Errorf("%w: path %q is not a data object", ErrNotFound, absolutePath)
+	}
+
+	return pathChecksumFromEntry(entry), nil
+}
+
+func (s *catalogService) ComputePathChecksum(_ context.Context, requestContext *RequestContext, absolutePath string) (domain.PathChecksum, error) {
+	absolutePath = strings.TrimSpace(absolutePath)
+	if absolutePath == "" {
+		return domain.PathChecksum{}, fmt.Errorf("%w: object %q", ErrNotFound, absolutePath)
+	}
+
+	slog.Debug("catalog ComputePathChecksum start", "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-compute-path-checksum")
+	if err != nil {
+		logIRODSError("catalog ComputePathChecksum filesystem setup failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathChecksum{}, err
+	}
+	defer filesystem.Release()
+
+	entry, err := filesystem.Stat(absolutePath)
+	if err != nil {
+		logIRODSError("catalog ComputePathChecksum stat failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathChecksum{}, normalizePathAccessError("stat path", absolutePath, err)
+	}
+
+	if entry.IsDir() {
+		return domain.PathChecksum{}, fmt.Errorf("%w: path %q is not a data object", ErrNotFound, absolutePath)
+	}
+
+	checksum, err := filesystem.ComputeChecksum(absolutePath, "")
+	if err != nil {
+		logIRODSError("catalog ComputePathChecksum compute failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathChecksum{}, normalizePathAccessError("compute checksum", absolutePath, err)
+	}
+
+	return pathChecksumFromIRODSChecksum(checksum), nil
 }
 
 func (s *catalogService) GetObjectContentByPath(_ context.Context, requestContext *RequestContext, absolutePath string) (domain.ObjectContent, error) {
@@ -195,14 +295,9 @@ func (s *catalogService) GetObjectContentByPath(_ context.Context, requestContex
 		return domain.ObjectContent{}, normalizePathAccessError("open object", absolutePath, err)
 	}
 
-	contentType := mime.TypeByExtension(filepath.Ext(absolutePath))
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-
 	return domain.ObjectContent{
 		Path:        absolutePath,
-		ContentType: contentType,
+		ContentType: inferredMimeType(entry),
 		Size:        entry.Size,
 		Reader: &catalogObjectReader{
 			handle:     handle,
@@ -364,6 +459,16 @@ func (a *catalogFileSystemAdapter) ListMetadata(irodsPath string) ([]*irodstypes
 	return a.filesystem.ListMetadata(irodsPath)
 }
 
+func (a *catalogFileSystemAdapter) ComputeChecksum(irodsPath string, resource string) (*irodstypes.IRODSChecksum, error) {
+	conn, err := a.filesystem.GetMetadataConnection()
+	if err != nil {
+		return nil, err
+	}
+	defer a.filesystem.ReturnMetadataConnection(conn) //nolint:errcheck
+
+	return irodslibfs.GetDataObjectChecksum(conn, irodsPath, resource)
+}
+
 func (a *catalogFileSystemAdapter) OpenFile(irodsPath string, resource string, mode string) (CatalogFileHandle, error) {
 	return a.filesystem.OpenFile(irodsPath, resource, mode)
 }
@@ -450,6 +555,34 @@ func metadataMap(metas []*irodstypes.IRODSMeta) map[string]string {
 	return result
 }
 
+func avuMetadataList(metas []*irodstypes.IRODSMeta) []domain.AVUMetadata {
+	if len(metas) == 0 {
+		return nil
+	}
+
+	result := make([]domain.AVUMetadata, 0, len(metas))
+	for _, meta := range metas {
+		if meta == nil {
+			continue
+		}
+
+		result = append(result, domain.AVUMetadata{
+			ID:        fmt.Sprintf("%d", meta.AVUID),
+			Attrib:    strings.TrimSpace(meta.Name),
+			Value:     strings.TrimSpace(meta.Value),
+			Unit:      strings.TrimSpace(meta.Units),
+			CreatedAt: timePointer(meta.CreateTime),
+			UpdatedAt: timePointer(meta.ModifyTime),
+		})
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+
+	return result
+}
+
 func checksumString(entry *irodsfs.Entry) string {
 	if entry == nil || len(entry.CheckSum) == 0 {
 		return ""
@@ -463,6 +596,19 @@ func checksumString(entry *irodsfs.Entry) string {
 	return checksum
 }
 
+func inferredMimeType(entry *irodsfs.Entry) string {
+	if entry == nil || entry.IsDir() {
+		return ""
+	}
+
+	contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(entry.Path)))
+	if contentType == "" {
+		return "application/octet-stream"
+	}
+
+	return contentType
+}
+
 func firstReplicaResource(entry *irodsfs.Entry) string {
 	if entry == nil || len(entry.IRODSReplicas) == 0 || entry.IRODSReplicas[0].ResourceName == "" {
 		return ""
@@ -471,7 +617,7 @@ func firstReplicaResource(entry *irodsfs.Entry) string {
 	return entry.IRODSReplicas[0].ResourceName
 }
 
-func collectionPathEntry(zone string, entry *irodsfs.Entry, metadata []*irodstypes.IRODSMeta, childCount int) domain.PathEntry {
+func collectionPathEntry(zone string, entry *irodsfs.Entry, metadata []*irodstypes.IRODSMeta, childCount int, options PathLookupOptions) domain.PathEntry {
 	return domain.PathEntry{
 		ID:          entry.Path,
 		Path:        entry.Path,
@@ -479,25 +625,52 @@ func collectionPathEntry(zone string, entry *irodsfs.Entry, metadata []*irodstyp
 		Zone:        zone,
 		CreatedAt:   timePointer(entry.CreateTime),
 		UpdatedAt:   timePointer(entry.ModifyTime),
+		Replicas:    pathReplicas(entry, options),
 		HasChildren: childCount > 0,
 		ChildCount:  childCount,
 		Metadata:    metadataMap(metadata),
 	}
 }
 
-func dataObjectPathEntry(zone string, entry *irodsfs.Entry, metadata []*irodstypes.IRODSMeta) domain.PathEntry {
+func dataObjectPathEntry(zone string, entry *irodsfs.Entry, metadata []*irodstypes.IRODSMeta, options PathLookupOptions) domain.PathEntry {
 	return domain.PathEntry{
 		ID:          entry.Path,
 		Path:        entry.Path,
 		Kind:        "data_object",
 		Checksum:    checksumString(entry),
+		MimeType:    inferredMimeType(entry),
 		Size:        entry.Size,
 		DisplaySize: humanReadableSize(entry.Size),
 		Zone:        zone,
 		Resource:    firstReplicaResource(entry),
 		CreatedAt:   timePointer(entry.CreateTime),
 		UpdatedAt:   timePointer(entry.ModifyTime),
+		Replicas:    pathReplicas(entry, options),
 		Metadata:    metadataMap(metadata),
+	}
+}
+
+func pathChecksumFromEntry(entry *irodsfs.Entry) domain.PathChecksum {
+	if entry == nil {
+		return domain.PathChecksum{}
+	}
+
+	checksum := checksumString(entry)
+	return domain.PathChecksum{
+		Checksum: checksum,
+		Type:     checksumTypeFromStringOrAlgorithm(checksum, entry.CheckSumAlgorithm),
+	}
+}
+
+func pathChecksumFromIRODSChecksum(checksum *irodstypes.IRODSChecksum) domain.PathChecksum {
+	if checksum == nil {
+		return domain.PathChecksum{}
+	}
+
+	checksumString := irodsChecksumString(checksum)
+	return domain.PathChecksum{
+		Checksum: checksumString,
+		Type:     checksumTypeFromStringOrAlgorithm(checksumString, checksum.Algorithm),
 	}
 }
 
@@ -533,4 +706,108 @@ func humanReadableSize(size int64) string {
 	}
 
 	return fmt.Sprintf("%.1f %s", rounded, units[unitIndex])
+}
+
+func pathReplicas(entry *irodsfs.Entry, options PathLookupOptions) []domain.PathReplica {
+	if options.VerboseLevel <= 0 || entry == nil || entry.IsDir() || len(entry.IRODSReplicas) == 0 {
+		return nil
+	}
+
+	replicas := make([]domain.PathReplica, 0, len(entry.IRODSReplicas))
+	for _, replica := range entry.IRODSReplicas {
+		pathReplica := domain.PathReplica{
+			Number:            replica.Number,
+			Owner:             strings.TrimSpace(replica.Owner),
+			ResourceName:      strings.TrimSpace(replica.ResourceName),
+			ResourceHierarchy: strings.TrimSpace(replica.ResourceHierarchy),
+			Size:              entry.Size,
+			DisplaySize:       humanReadableSize(entry.Size),
+			UpdatedAt:         timePointer(replica.ModifyTime),
+			Status:            strings.TrimSpace(replica.Status),
+			StatusSymbol:      replicaStatusSymbol(replica.Status),
+			StatusDescription: replicaStatusDescription(replica.Status),
+		}
+
+		if options.VerboseLevel >= 2 {
+			pathReplica.Checksum = irodsChecksumString(replica.Checksum)
+			pathReplica.DataType = strings.TrimSpace(entry.DataType)
+			pathReplica.PhysicalPath = strings.TrimSpace(replica.Path)
+		}
+
+		replicas = append(replicas, pathReplica)
+	}
+
+	return replicas
+}
+
+func irodsChecksumString(checksum *irodstypes.IRODSChecksum) string {
+	if checksum == nil {
+		return ""
+	}
+
+	return strings.TrimSpace(checksum.IRODSChecksumString)
+}
+
+func checksumTypeFromStringOrAlgorithm(checksum string, algorithm irodstypes.ChecksumAlgorithm) string {
+	checksum = strings.TrimSpace(checksum)
+	if checksum != "" {
+		if prefix, _, ok := strings.Cut(checksum, ":"); ok {
+			return strings.TrimSpace(prefix)
+		}
+	}
+
+	switch algorithm {
+	case irodstypes.ChecksumAlgorithmSHA256:
+		return "sha2"
+	case irodstypes.ChecksumAlgorithmMD5:
+		return "md5"
+	default:
+		return ""
+	}
+}
+
+func replicaStatusSymbol(status string) string {
+	switch normalizeReplicaStatus(status) {
+	case "0", "stale":
+		return "X"
+	case "1", "good":
+		return "&"
+	case "2", "intermediate":
+		return "?"
+	case "3", "read-locked":
+		return "?"
+	case "4", "write-locked":
+		return "?"
+	default:
+		return "?"
+	}
+}
+
+func replicaStatusDescription(status string) string {
+	switch normalizeReplicaStatus(status) {
+	case "0", "stale":
+		return "stale"
+	case "1", "good":
+		return "good"
+	case "2", "intermediate":
+		return "intermediate"
+	case "3", "read-locked":
+		return "read-locked"
+	case "4", "write-locked":
+		return "write-locked"
+	default:
+		return ""
+	}
+}
+
+func normalizeReplicaStatus(status string) string {
+	status = strings.TrimSpace(strings.ToLower(status))
+	switch status {
+	case "0", "1", "2", "3", "4":
+		return status
+	case "stale", "good", "intermediate", "read-locked", "read_locked", "write-locked", "write_locked":
+		return strings.ReplaceAll(status, "_", "-")
+	default:
+		return status
+	}
 }
