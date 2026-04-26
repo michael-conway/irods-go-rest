@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -60,8 +62,55 @@ func TestCatalogGetPathDataObjectIntegration(t *testing.T) {
 	if entry.Resource == "" {
 		t.Fatal("expected resource to be populated")
 	}
+	expectedMimeType := mime.TypeByExtension(filepath.Ext(fixture.objectPath))
+	if expectedMimeType == "" {
+		expectedMimeType = "application/octet-stream"
+	}
+	if entry.MimeType != expectedMimeType {
+		t.Fatalf("expected mime type %q, got %q", expectedMimeType, entry.MimeType)
+	}
 	if got := entry.Metadata["catalog.integration.object"]; got != "payload" {
 		t.Fatalf("expected object metadata value %q, got %q", "payload", got)
+	}
+}
+
+func TestCatalogPathChecksumIntegration(t *testing.T) {
+	service := newIntegrationCatalogService(t)
+	fixture := newCatalogIntegrationFixture(t)
+
+	initial, err := service.GetPathChecksum(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath)
+	if err != nil {
+		t.Fatalf("GetPathChecksum returned error: %v", err)
+	}
+	if initial.Checksum != "" || initial.Type != "" {
+		t.Fatalf("expected empty checksum before compute, got %+v", initial)
+	}
+
+	computed, err := service.ComputePathChecksum(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath)
+	if err != nil {
+		t.Fatalf("ComputePathChecksum returned error: %v", err)
+	}
+	if computed.Checksum == "" {
+		t.Fatal("expected computed checksum to be populated")
+	}
+	if computed.Type == "" {
+		t.Fatal("expected computed checksum type to be populated")
+	}
+
+	current, err := service.GetPathChecksum(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath)
+	if err != nil {
+		t.Fatalf("GetPathChecksum after compute returned error: %v", err)
+	}
+	if current.Checksum != computed.Checksum || current.Type != computed.Type {
+		t.Fatalf("expected current checksum %+v to match computed %+v", current, computed)
+	}
+
+	entry, err := service.GetPath(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath, PathLookupOptions{})
+	if err != nil {
+		t.Fatalf("GetPath after compute returned error: %v", err)
+	}
+	if entry.Checksum == nil || entry.Checksum.Checksum != computed.Checksum {
+		t.Fatalf("expected path checksum %q after compute, got %+v", computed.Checksum, entry.Checksum)
 	}
 }
 
@@ -195,7 +244,7 @@ func newCatalogIntegrationFixture(t *testing.T) *catalogIntegrationFixture {
 
 	objectPath := rootPath + "/fixture.txt"
 	objectContent := []byte("catalog integration payload\n")
-	if _, err := filesystem.UploadFileFromBuffer(bytes.NewBuffer(objectContent), objectPath, "", false, true, nil); err != nil {
+	if _, err := filesystem.UploadFileFromBuffer(bytes.NewBuffer(objectContent), objectPath, "", false, false, nil); err != nil {
 		t.Fatalf("upload object %q: %v", objectPath, err)
 	}
 

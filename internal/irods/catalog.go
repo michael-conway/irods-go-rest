@@ -460,7 +460,7 @@ func (a *catalogFileSystemAdapter) ListMetadata(irodsPath string) ([]*irodstypes
 }
 
 func (a *catalogFileSystemAdapter) ComputeChecksum(irodsPath string, resource string) (*irodstypes.IRODSChecksum, error) {
-	conn, err := a.filesystem.GetMetadataConnection()
+	conn, err := a.filesystem.GetMetadataConnection(false)
 	if err != nil {
 		return nil, err
 	}
@@ -637,7 +637,7 @@ func dataObjectPathEntry(zone string, entry *irodsfs.Entry, metadata []*irodstyp
 		ID:          entry.Path,
 		Path:        entry.Path,
 		Kind:        "data_object",
-		Checksum:    checksumString(entry),
+		Checksum:    pathChecksumPointerFromEntry(entry),
 		MimeType:    inferredMimeType(entry),
 		Size:        entry.Size,
 		DisplaySize: humanReadableSize(entry.Size),
@@ -648,6 +648,15 @@ func dataObjectPathEntry(zone string, entry *irodsfs.Entry, metadata []*irodstyp
 		Replicas:    pathReplicas(entry, options),
 		Metadata:    metadataMap(metadata),
 	}
+}
+
+func pathChecksumPointerFromEntry(entry *irodsfs.Entry) *domain.PathChecksum {
+	checksum := pathChecksumFromEntry(entry)
+	if checksum.Checksum == "" && checksum.Type == "" {
+		return nil
+	}
+
+	return &checksum
 }
 
 func pathChecksumFromEntry(entry *irodsfs.Entry) domain.PathChecksum {

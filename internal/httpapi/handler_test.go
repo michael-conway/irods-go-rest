@@ -241,7 +241,7 @@ func TestGetPathAcceptsValidBearerToken(t *testing.T) {
 	if body := rec.Body.String(); !containsAll(body, `"/tempZone/home/test1/file.txt"`, `"kind":"data_object"`) {
 		t.Fatalf("unexpected response body: %q", body)
 	}
-	if body := rec.Body.String(); !containsAll(body, `"display_size":"128 B"`, `"created_at":"2023-11-14T22:13:20Z"`, `"updated_at":"2023-11-14T22:13:20Z"`) {
+	if body := rec.Body.String(); !containsAll(body, `"display_size":"128 B"`, `"mime_type":"text/plain; charset=utf-8"`, `"created_at":"2023-11-14T22:13:20Z"`, `"updated_at":"2023-11-14T22:13:20Z"`) {
 		t.Fatalf("expected display size and timestamps in response body: %q", body)
 	}
 }
@@ -289,7 +289,7 @@ func TestGetPathVerboseReturnsReplicaVeryLongFormat(t *testing.T) {
 
 	if body := rec.Body.String(); !containsAll(
 		body,
-		`"checksum":"sha2:YWJjMTIz"`,
+		`"checksum":{"checksum":"sha2:YWJjMTIz","type":"sha2"}`,
 		`"data_type":"generic"`,
 		`"physical_path":"/var/lib/irods/Vault/home/test1/file.txt"`,
 	) {
@@ -407,6 +407,62 @@ func TestGetPathAVUsReturnsAVUList(t *testing.T) {
 		`"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt"`,
 	) {
 		t.Fatalf("unexpected metadata response body: %q", body)
+	}
+}
+
+func TestGetPathChecksumReturnsTypedChecksum(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/checksum?irods_path=/tempZone/home/test1/file.txt", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"irods_path":"/tempZone/home/test1/file.txt"`,
+		`"checksum":"sha2:YWJjMTIz"`,
+		`"type":"sha2"`,
+		`"path_segments"`,
+	) {
+		t.Fatalf("unexpected checksum response body: %q", body)
+	}
+}
+
+func TestPostPathChecksumComputesAndUpdatesPathView(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/checksum?irods_path=/tempZone/home/test1/project/child.txt", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"checksum":"sha2:Y2hpbGQtY29tcHV0ZWQ="`, `"type":"sha2"`) {
+		t.Fatalf("unexpected computed checksum response body: %q", body)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/path?irods_path=/tempZone/home/test1/project/child.txt", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec = httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 from path lookup after checksum compute, got %d", rec.Code)
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"checksum":{"checksum":"sha2:Y2hpbGQtY29tcHV0ZWQ=","type":"sha2"}`) {
+		t.Fatalf("expected path response to reflect computed checksum, got %q", body)
 	}
 }
 
@@ -547,8 +603,9 @@ func testHandler(t *testing.T) *Handler {
 	if err != nil {
 		t.Fatalf("read rest config: %v", err)
 	}
+	filesystem := newTestCatalogFileSystem()
 	factory := func(_ *irodstypes.IRODSAccount, _ string) (irods.CatalogFileSystem, error) {
-		return newTestCatalogFileSystem(), nil
+		return filesystem, nil
 	}
 
 	return NewHandler(*cfg, restservice.NewPathService(irods.NewCatalogServiceWithFactory(*cfg, factory)), stubAuthService{}, stubAuthService{}, auth.NewSessionStore())
@@ -685,6 +742,39 @@ func (f *testCatalogFileSystem) List(irodsPath string) ([]*irodsfs.Entry, error)
 
 func (f *testCatalogFileSystem) ListMetadata(irodsPath string) ([]*irodstypes.IRODSMeta, error) {
 	return f.metadataByPath[irodsPath], nil
+}
+
+func (f *testCatalogFileSystem) ComputeChecksum(irodsPath string, _ string) (*irodstypes.IRODSChecksum, error) {
+	entry, ok := f.entriesByPath[irodsPath]
+	if !ok {
+		return nil, errors.New("not found")
+	}
+	if entry.IsDir() {
+		return nil, errors.New("not found")
+	}
+
+	var checksum string
+	switch irodsPath {
+	case "/tempZone/home/test1/project/child.txt":
+		checksum = "sha2:Y2hpbGQtY29tcHV0ZWQ="
+		entry.CheckSum = []byte("child-computed")
+	default:
+		checksum = "sha2:YWJjMTIz"
+		entry.CheckSum = []byte("abc123")
+	}
+
+	entry.CheckSumAlgorithm = irodstypes.ChecksumAlgorithmSHA256
+	if len(entry.IRODSReplicas) > 0 {
+		entry.IRODSReplicas[0].Checksum = &irodstypes.IRODSChecksum{
+			Algorithm:           irodstypes.ChecksumAlgorithmSHA256,
+			IRODSChecksumString: checksum,
+		}
+	}
+
+	return &irodstypes.IRODSChecksum{
+		Algorithm:           irodstypes.ChecksumAlgorithmSHA256,
+		IRODSChecksumString: checksum,
+	}, nil
 }
 
 func (f *testCatalogFileSystem) OpenFile(irodsPath string, _ string, _ string) (irods.CatalogFileHandle, error) {

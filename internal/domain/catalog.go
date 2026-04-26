@@ -12,7 +12,7 @@ type PathEntry struct {
 	Zone         string            `json:"zone"`
 	Parent       *ParentLink       `json:"parent,omitempty"`
 	PathSegments []PathSegmentLink `json:"path_segments,omitempty"`
-	Checksum     string            `json:"checksum,omitempty"`
+	Checksum     *PathChecksum     `json:"checksum,omitempty"`
 	MimeType     string            `json:"mime_type,omitempty"`
 	Size         int64             `json:"size,omitempty"`
 	DisplaySize  string            `json:"display_size,omitempty"`

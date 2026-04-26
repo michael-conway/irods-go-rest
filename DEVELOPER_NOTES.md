@@ -314,4 +314,6 @@ Guidance for future AI or developer passes:
 
 Current notes:
 
-* none yet
+* Checksum operations currently require dropping below the high-level `fs.FileSystem` API and calling `irods/fs.GetDataObjectChecksum(...)` with an acquired metadata connection. `irods-go-rest` would be cleaner if `go-irodsclient/fs.FileSystem` exposed first-class methods for:
+  * fetching the current stored checksum for a data object
+  * triggering server-side checksum calculation and returning the typed checksum result
