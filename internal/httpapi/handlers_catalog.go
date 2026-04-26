@@ -117,6 +117,38 @@ func (h *Handler) getPathAVUs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) getPathChecksum(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
+	if objectPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
+		return
+	}
+
+	checksum, err := h.paths.GetPathChecksum(r.Context(), objectPath)
+	if err != nil {
+		writePathError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, pathChecksumResponse(objectPath, checksum))
+}
+
+func (h *Handler) postPathChecksum(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
+	if objectPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
+		return
+	}
+
+	checksum, err := h.paths.ComputePathChecksum(r.Context(), objectPath)
+	if err != nil {
+		writePathError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, pathChecksumResponse(objectPath, checksum))
+}
+
 func (h *Handler) headPathContents(w http.ResponseWriter, r *http.Request) {
 	h.servePathContents(w, r, true)
 }
@@ -186,6 +218,19 @@ func queryIRODSPath(r *http.Request) string {
 	return strings.TrimSpace(r.URL.Query().Get("irods_path"))
 }
 
+func writePathError(w http.ResponseWriter, err error) {
+	if errors.Is(err, irods.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+	if errors.Is(err, irods.ErrPermissionDenied) {
+		writeError(w, http.StatusForbidden, "permission_denied", err.Error())
+		return
+	}
+
+	writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+}
+
 func queryVerboseLevel(r *http.Request) (int, error) {
 	raw := strings.TrimSpace(r.URL.Query().Get("verbose"))
 	if raw == "" {
@@ -208,6 +253,15 @@ func pathEntryResponse(r *http.Request, entry domain.PathEntry) domain.PathEntry
 	entry.Parent = buildParentLink(r, entry.Path)
 	entry.PathSegments = buildPathSegments(entry.Path)
 	return entry
+}
+
+func pathChecksumResponse(irodsPath string, checksum domain.PathChecksum) map[string]any {
+	return map[string]any{
+		"irods_path":    irodsPath,
+		"path_segments": buildPathSegments(irodsPath),
+		"checksum":      checksum.Checksum,
+		"type":          checksum.Type,
+	}
 }
 
 func buildParentLink(r *http.Request, irodsPath string) *domain.ParentLink {

@@ -169,6 +169,97 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/path/checksum:
+    get:
+      operationId: getPathChecksum
+      tags: [path]
+      summary: Fetch the current stored checksum for a data object path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a data object.
+      responses:
+        "200":
+          description: Current checksum information for the requested data object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathChecksumResponse"
+        "400":
+          description: Missing irods_path query parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Object not found or not a data object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: postPathChecksum
+      tags: [path]
+      summary: Compute and store the checksum for a data object path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a data object.
+      responses:
+        "200":
+          description: Newly computed checksum information for the requested data object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathChecksumResponse"
+        "400":
+          description: Missing irods_path query parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Object not found or not a data object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/path/contents:
     head:
       operationId: headPathContents
@@ -413,7 +504,10 @@ components:
           type: integer
           format: int32
         checksum:
+          $ref: "#/components/schemas/PathChecksum"
+        mime_type:
           type: string
+          description: Inferred MIME type for a data object, based on the logical path extension.
         size:
           type: integer
           format: int64
@@ -512,6 +606,30 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AVUMetadata"
+    PathChecksum:
+      type: object
+      properties:
+        checksum:
+          type: string
+        type:
+          type: string
+          description: Checksum type prefix such as `sha2` or `md5`.
+    PathChecksumResponse:
+      type: object
+      required: [irods_path, path_segments]
+      properties:
+        irods_path:
+          type: string
+        path_segments:
+          type: array
+          description: Ordered collection path segments for the requested data object, each with a display name and HATEOAS link.
+          items:
+            $ref: "#/components/schemas/PathSegmentLink"
+        checksum:
+          type: string
+        type:
+          type: string
+          description: Checksum type prefix such as `sha2` or `md5`.
     AVUMetadata:
       type: object
       required: [id, attrib, value]

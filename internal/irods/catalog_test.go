@@ -62,8 +62,14 @@ func TestCatalogGetPathDataObjectMapsFilesystemEntry(t *testing.T) {
 	if entry.Resource != "demoResc" {
 		t.Fatalf("expected resource demoResc, got %q", entry.Resource)
 	}
-	if entry.Checksum == "" {
+	if entry.Checksum == nil || entry.Checksum.Checksum == "" {
 		t.Fatal("expected checksum to be populated")
+	}
+	if entry.Checksum.Type != "sha2" {
+		t.Fatalf("expected checksum type sha2, got %+v", entry.Checksum)
+	}
+	if entry.MimeType != "text/plain; charset=utf-8" {
+		t.Fatalf("expected mime type text/plain; charset=utf-8, got %q", entry.MimeType)
 	}
 	if got := entry.Metadata["source"]; got != "unit-test" {
 		t.Fatalf("expected metadata mapping, got %q", got)
@@ -173,6 +179,50 @@ func TestCatalogGetPathMetadataMapsAVUs(t *testing.T) {
 	}
 	if metadata[0].CreatedAt == nil || metadata[0].UpdatedAt == nil {
 		t.Fatal("expected AVU timestamps to be populated")
+	}
+}
+
+func TestCatalogGetPathChecksumReturnsTypedChecksum(t *testing.T) {
+	service := newTestCatalogService(t, newCatalogTestFileSystem())
+
+	checksum, err := service.GetPathChecksum(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt")
+	if err != nil {
+		t.Fatalf("GetPathChecksum returned error: %v", err)
+	}
+
+	if checksum.Checksum != "sha2:YWJjMTIz" {
+		t.Fatalf("expected checksum sha2:YWJjMTIz, got %q", checksum.Checksum)
+	}
+	if checksum.Type != "sha2" {
+		t.Fatalf("expected checksum type sha2, got %q", checksum.Type)
+	}
+}
+
+func TestCatalogComputePathChecksumUpdatesDisplayChecksum(t *testing.T) {
+	filesystem := newCatalogTestFileSystem()
+	file := filesystem.entriesByPath["/tempZone/home/alice/file.txt"]
+	file.CheckSum = nil
+	file.CheckSumAlgorithm = irodstypes.ChecksumAlgorithmUnknown
+
+	service := newTestCatalogService(t, filesystem)
+
+	computed, err := service.ComputePathChecksum(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt")
+	if err != nil {
+		t.Fatalf("ComputePathChecksum returned error: %v", err)
+	}
+	if computed.Checksum != "sha2:ZGVmNDU2" {
+		t.Fatalf("expected computed checksum sha2:ZGVmNDU2, got %q", computed.Checksum)
+	}
+	if computed.Type != "sha2" {
+		t.Fatalf("expected computed checksum type sha2, got %q", computed.Type)
+	}
+
+	entry, err := service.GetPath(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt", PathLookupOptions{})
+	if err != nil {
+		t.Fatalf("GetPath returned error after compute: %v", err)
+	}
+	if entry.Checksum == nil || entry.Checksum.Checksum != computed.Checksum {
+		t.Fatalf("expected path checksum %q after compute, got %+v", computed.Checksum, entry.Checksum)
 	}
 }
 
@@ -406,6 +456,34 @@ func (f *catalogTestFileSystem) ListMetadata(irodsPath string) ([]*irodstypes.IR
 	}
 
 	return f.metadataByPath[irodsPath], nil
+}
+
+func (f *catalogTestFileSystem) ComputeChecksum(irodsPath string, _ string) (*irodstypes.IRODSChecksum, error) {
+	if irodsPath == "/tempZone/home/alice/forbidden" {
+		return nil, irodstypes.NewIRODSError(irodscommon.CAT_NO_ACCESS_PERMISSION)
+	}
+
+	entry, ok := f.entriesByPath[irodsPath]
+	if !ok {
+		return nil, irodstypes.NewFileNotFoundError(irodsPath)
+	}
+	if entry.IsDir() {
+		return nil, irodstypes.NewFileNotFoundError(irodsPath)
+	}
+
+	entry.CheckSumAlgorithm = irodstypes.ChecksumAlgorithmSHA256
+	entry.CheckSum = []byte("def456")
+	if len(entry.IRODSReplicas) > 0 {
+		entry.IRODSReplicas[0].Checksum = &irodstypes.IRODSChecksum{
+			Algorithm:           irodstypes.ChecksumAlgorithmSHA256,
+			IRODSChecksumString: "sha2:ZGVmNDU2",
+		}
+	}
+
+	return &irodstypes.IRODSChecksum{
+		Algorithm:           irodstypes.ChecksumAlgorithmSHA256,
+		IRODSChecksumString: "sha2:ZGVmNDU2",
+	}, nil
 }
 
 func (f *catalogTestFileSystem) OpenFile(irodsPath string, _ string, _ string) (CatalogFileHandle, error) {

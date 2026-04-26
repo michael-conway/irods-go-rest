@@ -6,8 +6,10 @@ package e2e
 import (
 	"encoding/json"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -107,6 +109,7 @@ func TestGetObjectPathBasicAuthE2E(t *testing.T) {
 		Path     string `json:"path"`
 		Kind     string `json:"kind"`
 		Size     int64  `json:"size"`
+		MimeType string `json:"mime_type"`
 		Resource string `json:"resource"`
 	}
 	decodeJSON(t, resp.Body, &payload)
@@ -119,6 +122,13 @@ func TestGetObjectPathBasicAuthE2E(t *testing.T) {
 	}
 	if payload.Size <= 0 {
 		t.Fatalf("expected positive size, got %d", payload.Size)
+	}
+	expectedMimeType := mime.TypeByExtension(filepath.Ext(fixture.objectPath))
+	if expectedMimeType == "" {
+		expectedMimeType = "application/octet-stream"
+	}
+	if payload.MimeType != expectedMimeType {
+		t.Fatalf("expected mime type %q, got %q", expectedMimeType, payload.MimeType)
 	}
 	if strings.TrimSpace(payload.Resource) == "" {
 		t.Fatal("expected resource to be populated")
@@ -319,6 +329,93 @@ func TestGetPathAVUsBasicAuthE2E(t *testing.T) {
 
 	if !foundExpectedAVU {
 		t.Fatalf("expected AVU %q=%q [%q] in response", fixture.objectAVU.Attrib, fixture.objectAVU.Value, fixture.objectAVU.Unit)
+	}
+}
+
+func TestPathChecksumBasicAuthE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	fixture := requireE2EFixture(t)
+	client := newE2EHTTPClient()
+
+	req := newE2ERequest(t, http.MethodGet, pathURL(baseURL, "/api/v1/path/checksum", fixture.objectPath), nil)
+	setBasicAuth(req)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("perform request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var initial struct {
+		IRODSPath string `json:"irods_path"`
+		Checksum  string `json:"checksum"`
+		Type      string `json:"type"`
+	}
+	decodeJSON(t, resp.Body, &initial)
+
+	if initial.IRODSPath != fixture.objectPath {
+		t.Fatalf("expected irods_path %q, got %q", fixture.objectPath, initial.IRODSPath)
+	}
+	if initial.Checksum != "" || initial.Type != "" {
+		t.Fatalf("expected empty checksum before compute, got %+v", initial)
+	}
+
+	req = newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path/checksum", fixture.objectPath), nil)
+	setBasicAuth(req)
+
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("perform checksum compute request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from checksum compute, got %d", resp.StatusCode)
+	}
+
+	var computed struct {
+		Checksum string `json:"checksum"`
+		Type     string `json:"type"`
+	}
+	decodeJSON(t, resp.Body, &computed)
+
+	if strings.TrimSpace(computed.Checksum) == "" {
+		t.Fatal("expected computed checksum to be populated")
+	}
+	if strings.TrimSpace(computed.Type) == "" {
+		t.Fatal("expected computed checksum type to be populated")
+	}
+
+	req = newE2ERequest(t, http.MethodGet, pathURL(baseURL, "/api/v1/path", fixture.objectPath), nil)
+	setBasicAuth(req)
+
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("perform path request after checksum compute: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from path lookup after checksum compute, got %d", resp.StatusCode)
+	}
+
+	var pathPayload struct {
+		Checksum struct {
+			Checksum string `json:"checksum"`
+			Type     string `json:"type"`
+		} `json:"checksum"`
+	}
+	decodeJSON(t, resp.Body, &pathPayload)
+
+	if pathPayload.Checksum.Checksum != computed.Checksum {
+		t.Fatalf("expected path checksum %q after compute, got %+v", computed.Checksum, pathPayload.Checksum)
+	}
+	if pathPayload.Checksum.Type != computed.Type {
+		t.Fatalf("expected path checksum type %q after compute, got %+v", computed.Type, pathPayload.Checksum)
 	}
 }
 
