@@ -29,6 +29,7 @@ Testing and workflow assumptions:
 
 * package-local unit tests should remain next to the code they validate
 * docker-compose-backed HTTP end-to-end tests belong under `e2e/`
+* live direct iRODS integration tests for `internal/irods` belong next to that package and should follow the same shared config model as the HTTP E2E suite
 * `DRS_TEST_BEARER_TOKEN` is intentionally reused as the shared bearer token variable across `irods-go-rest` and `irods-go-drs`
 * when work on `irods-go-rest` exposes missing or awkward functionality in the CyVerse Go client, flag it explicitly and record it in the `Go Client Notes` section of this file
 * keep a running list of desired `go-irodsclient` changes in this file rather than scattering those notes across commit messages or one-off prompts
@@ -209,13 +210,62 @@ Run them explicitly:
 go test -tags=e2e ./e2e/...
 ```
 
-Current E2E environment conventions:
+Current shared live-test environment conventions:
 
+* `GOREST_E2E_CONFIG_FILE`
 * `GOREST_E2E_BASE_URL`
 * `DRS_TEST_BEARER_TOKEN`
 * `GOREST_E2E_SKIP_TLS_VERIFY`
+* `GOREST_E2E_BASIC_USERNAME`
+* `GOREST_E2E_BASIC_PASSWORD`
+* `GOREST_E2E_IRODS_HOST`
+* `GOREST_E2E_IRODS_PORT`
+* `GOREST_E2E_IRODS_ZONE`
+* `GOREST_E2E_IRODS_USER`
+* `GOREST_E2E_IRODS_PASSWORD`
 
 The shared bearer token variable intentionally matches the convention already used across `irods-go-drs` integration and e2e tests so the two services can be exercised in one local test environment without introducing another token variable name.
+
+Both the HTTP E2E suite and the direct `internal/irods` integration suite
+should consume the same shared config inputs. Do not introduce a second
+`GOREST_TEST_*` or package-specific live-test config surface unless there is a
+strong reason.
+
+For live test runs, `GOREST_E2E_CONFIG_FILE` should be sufficient by itself.
+The helpers should treat that file as the default source for:
+
+* `PublicURL` -> `GOREST_E2E_BASE_URL`
+* `IrodsHost` -> `GOREST_E2E_IRODS_HOST`
+* `IrodsPort` -> `GOREST_E2E_IRODS_PORT`
+* `IrodsZone` -> `GOREST_E2E_IRODS_ZONE`
+
+Preferred live-test setup is a single `GOREST_E2E_CONFIG_FILE` that contains both:
+
+* the normal top-level app config fields
+* an `E2E` section for test-only values such as `test1` credentials and optional bearer token input
+
+`IRODS_REST_CONFIG_FILE` is optional only when the separately running app
+process also needs to be pointed at the same config file. The live test suites
+should not read it as a fallback.
+
+Both the HTTP E2E suite and the direct `internal/irods` integration suite must
+be invoked with `GOREST_E2E_CONFIG_FILE` set and should not rely on
+`IRODS_REST_CONFIG_FILE` or the sample config fallback.
+
+Current path-fixture defaults for the docker compose stack assume the
+configured Basic user fixture, which is commonly `test1`:
+
+* general E2E and direct integration coverage should use the configured Basic user unless a test is specifically about admin-backed access or proxy-auth behavior
+* path-oriented E2E tests should generate a fresh local fixture tree under `e2e/resources/test_folder`, upload it to a per-run iRODS collection in the `test1` home area, and derive collection/object assertions from that generated fixture instead of hard-coding a shared collection path
+* use `e2e/rest-config.e2e.sample.yaml` as the baseline example for the one-file E2E setup
+* the sample one-file E2E config assumes the app is reachable at `http://127.0.0.1:8080`
+* if the fixture uploader account differs from the Basic auth user, keep those responsibilities separate: uploader creds may be `rods`, but the generated fixture path for general path tests should still live under the Basic user's home collection
+* when `IRODSUser` differs from `BasicUsername`, fixture setup and direct catalog integration setup should use a proxy-account shape so the uploader can create content under the Basic user's home collection without changing which user the tests are validating
+
+Current gaps relative to the checked-in `internal/config/rest-config.yaml`:
+
+* the file does not currently populate `IrodsHost`, `IrodsPort`, `IrodsZone`, `IrodsAdminUser`, `IrodsAdminPassword`, `IrodsAuthScheme`, `IrodsDefaultResource`, `OidcUrl`, or `OidcRealm`
+* the current config model does not carry E2E-specific inputs for `DRS_TEST_BEARER_TOKEN`, `GOREST_E2E_BASIC_USERNAME`, `GOREST_E2E_BASIC_PASSWORD`, `GOREST_E2E_IRODS_USER`, `GOREST_E2E_IRODS_PASSWORD`, or `GOREST_E2E_SKIP_TLS_VERIFY`
 
 ### Keycloak env file expectations
 

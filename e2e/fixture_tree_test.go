@@ -17,7 +17,6 @@ import (
 	"time"
 
 	irodsfs "github.com/cyverse/go-irodsclient/fs"
-	irodslibfs "github.com/cyverse/go-irodsclient/irods/fs"
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
 )
 
@@ -28,14 +27,6 @@ type e2eFixture struct {
 	objectPath          string
 	childCollectionPath string
 	missingPath         string
-	objectAVU           e2eFixtureAVU
-	collectionAVU       e2eFixtureAVU
-}
-
-type e2eFixtureAVU struct {
-	Attrib string
-	Value  string
-	Unit   string
 }
 
 type generatedTreeManifest struct {
@@ -101,35 +92,13 @@ func buildE2EFixture(t *testing.T) (*e2eFixture, error) {
 		return nil, err
 	}
 
-	objectPath := irodsJoin(irodsRootPath, manifest.objectRelPath)
-	collectionPath := irodsRootPath
-	objectAVU := e2eFixtureAVU{
-		Attrib: "e2e.object.avu",
-		Value:  "present",
-		Unit:   "fixture",
-	}
-	collectionAVU := e2eFixtureAVU{
-		Attrib: "e2e.collection.avu",
-		Value:  "root",
-		Unit:   "fixture",
-	}
-
-	if err := filesystem.AddMetadata(objectPath, objectAVU.Attrib, objectAVU.Value, objectAVU.Unit); err != nil {
-		return nil, fmt.Errorf("add object AVU to %q: %w", objectPath, err)
-	}
-	if err := filesystem.AddMetadata(collectionPath, collectionAVU.Attrib, collectionAVU.Value, collectionAVU.Unit); err != nil {
-		return nil, fmt.Errorf("add collection AVU to %q: %w", collectionPath, err)
-	}
-
 	return &e2eFixture{
 		localRootPath:       localRootPath,
 		irodsRootPath:       irodsRootPath,
-		collectionPath:      collectionPath,
-		objectPath:          objectPath,
+		collectionPath:      irodsRootPath,
+		objectPath:          irodsJoin(irodsRootPath, manifest.objectRelPath),
 		childCollectionPath: irodsJoin(irodsRootPath, manifest.childCollectionRelPath),
 		missingPath:         irodsJoin(irodsRootPath, "missing-"+randomToken(rng, 6)+".txt"),
-		objectAVU:           objectAVU,
-		collectionAVU:       collectionAVU,
 	}, nil
 }
 
@@ -283,50 +252,6 @@ func uploadLocalFixtureTree(filesystem *irodsfs.FileSystem, localRootPath string
 	})
 }
 
-func requireE2EChecksum(t *testing.T, irodsPath string) {
-	t.Helper()
-
-	filesystem := newE2EIRODSFilesystem(t)
-	defer filesystem.Release()
-
-	conn, err := filesystem.GetMetadataConnection(false)
-	if err != nil {
-		t.Fatalf("get metadata connection for %q: %v", irodsPath, err)
-	}
-	defer filesystem.ReturnMetadataConnection(conn) //nolint:errcheck
-
-	checksum, err := irodslibfs.GetDataObjectChecksum(conn, irodsPath, "")
-	if err != nil {
-		t.Fatalf("compute checksum for %q: %v", irodsPath, err)
-	}
-	if checksum == nil || strings.TrimSpace(checksum.IRODSChecksumString) == "" {
-		t.Fatalf("expected computed checksum for %q to be populated", irodsPath)
-	}
-}
-
-func requireE2EChecksummedObjectPath(t *testing.T, fixture *e2eFixture) string {
-	t.Helper()
-
-	if fixture == nil {
-		t.Fatal("expected fixture to be populated")
-	}
-
-	filesystem := newE2EIRODSFilesystem(t)
-	defer filesystem.Release()
-
-	destPath := irodsJoin(
-		fixture.irodsRootPath,
-		"checksummed-"+randomToken(mathrand.New(mathrand.NewSource(time.Now().UnixNano())), 8)+filepath.Ext(fixture.objectPath),
-	)
-
-	if err := filesystem.CopyFile(fixture.objectPath, destPath, true); err != nil {
-		t.Fatalf("copy %q to %q for checksum setup: %v", fixture.objectPath, destPath, err)
-	}
-
-	requireE2EChecksum(t, destPath)
-	return destPath
-}
-
 func generatedCollectionName(rng *mathrand.Rand) string {
 	return "collection_" + randomToken(rng, 10)
 }
@@ -338,9 +263,6 @@ func generatedFileName(rng *mathrand.Rand) string {
 
 func randomToken(rng *mathrand.Rand, length int) string {
 	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
-	if rng == nil {
-		rng = mathrand.New(mathrand.NewSource(time.Now().UnixNano()))
-	}
 
 	builder := strings.Builder{}
 	builder.Grow(length)

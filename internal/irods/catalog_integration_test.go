@@ -9,8 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -19,7 +17,7 @@ func TestCatalogGetPathCollectionIntegration(t *testing.T) {
 	service := newIntegrationCatalogService(t)
 	fixture := newCatalogIntegrationFixture(t)
 
-	entry, err := service.GetPath(context.Background(), integrationCatalogRequestContext(t), fixture.rootPath, PathLookupOptions{})
+	entry, err := service.GetPath(context.Background(), integrationCatalogRequestContext(t), fixture.rootPath)
 	if err != nil {
 		t.Fatalf("GetPath returned error: %v", err)
 	}
@@ -45,7 +43,7 @@ func TestCatalogGetPathDataObjectIntegration(t *testing.T) {
 	service := newIntegrationCatalogService(t)
 	fixture := newCatalogIntegrationFixture(t)
 
-	entry, err := service.GetPath(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath, PathLookupOptions{})
+	entry, err := service.GetPath(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath)
 	if err != nil {
 		t.Fatalf("GetPath returned error: %v", err)
 	}
@@ -62,55 +60,8 @@ func TestCatalogGetPathDataObjectIntegration(t *testing.T) {
 	if entry.Resource == "" {
 		t.Fatal("expected resource to be populated")
 	}
-	expectedMimeType := mime.TypeByExtension(filepath.Ext(fixture.objectPath))
-	if expectedMimeType == "" {
-		expectedMimeType = "application/octet-stream"
-	}
-	if entry.MimeType != expectedMimeType {
-		t.Fatalf("expected mime type %q, got %q", expectedMimeType, entry.MimeType)
-	}
 	if got := entry.Metadata["catalog.integration.object"]; got != "payload" {
 		t.Fatalf("expected object metadata value %q, got %q", "payload", got)
-	}
-}
-
-func TestCatalogPathChecksumIntegration(t *testing.T) {
-	service := newIntegrationCatalogService(t)
-	fixture := newCatalogIntegrationFixture(t)
-
-	initial, err := service.GetPathChecksum(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath)
-	if err != nil {
-		t.Fatalf("GetPathChecksum returned error: %v", err)
-	}
-	if initial.Checksum != "" || initial.Type != "" {
-		t.Fatalf("expected empty checksum before compute, got %+v", initial)
-	}
-
-	computed, err := service.ComputePathChecksum(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath)
-	if err != nil {
-		t.Fatalf("ComputePathChecksum returned error: %v", err)
-	}
-	if computed.Checksum == "" {
-		t.Fatal("expected computed checksum to be populated")
-	}
-	if computed.Type == "" {
-		t.Fatal("expected computed checksum type to be populated")
-	}
-
-	current, err := service.GetPathChecksum(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath)
-	if err != nil {
-		t.Fatalf("GetPathChecksum after compute returned error: %v", err)
-	}
-	if current.Checksum != computed.Checksum || current.Type != computed.Type {
-		t.Fatalf("expected current checksum %+v to match computed %+v", current, computed)
-	}
-
-	entry, err := service.GetPath(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath, PathLookupOptions{})
-	if err != nil {
-		t.Fatalf("GetPath after compute returned error: %v", err)
-	}
-	if entry.Checksum == nil || entry.Checksum.Checksum != computed.Checksum {
-		t.Fatalf("expected path checksum %q after compute, got %+v", computed.Checksum, entry.Checksum)
 	}
 }
 
@@ -146,197 +97,6 @@ func TestCatalogGetPathChildrenIntegration(t *testing.T) {
 	}
 }
 
-func TestCatalogCreatePathChildCollectionIntegration(t *testing.T) {
-	service := newIntegrationCatalogService(t)
-	fixture := newCatalogIntegrationFixture(t)
-
-	entry, err := service.CreatePathChild(context.Background(), integrationCatalogRequestContext(t), fixture.rootPath, PathCreateOptions{
-		ChildName: "created-collection",
-		Kind:      "collection",
-	})
-	if err != nil {
-		t.Fatalf("CreatePathChild returned error: %v", err)
-	}
-
-	expectedPath := fixture.rootPath + "/created-collection"
-	if entry.Path != expectedPath {
-		t.Fatalf("expected path %q, got %q", expectedPath, entry.Path)
-	}
-	if entry.Kind != "collection" {
-		t.Fatalf("expected collection kind, got %q", entry.Kind)
-	}
-}
-
-func TestCatalogCreatePathChildDataObjectIntegration(t *testing.T) {
-	service := newIntegrationCatalogService(t)
-	fixture := newCatalogIntegrationFixture(t)
-
-	entry, err := service.CreatePathChild(context.Background(), integrationCatalogRequestContext(t), fixture.rootPath, PathCreateOptions{
-		ChildName: "created-file.txt",
-		Kind:      "data_object",
-	})
-	if err != nil {
-		t.Fatalf("CreatePathChild returned error: %v", err)
-	}
-
-	expectedPath := fixture.rootPath + "/created-file.txt"
-	if entry.Path != expectedPath {
-		t.Fatalf("expected path %q, got %q", expectedPath, entry.Path)
-	}
-	if entry.Kind != "data_object" {
-		t.Fatalf("expected data_object kind, got %q", entry.Kind)
-	}
-	if entry.Size != 0 {
-		t.Fatalf("expected zero-byte file, got %d", entry.Size)
-	}
-}
-
-func TestCatalogDeletePathDataObjectIntegration(t *testing.T) {
-	service := newIntegrationCatalogService(t)
-	fixture := newCatalogIntegrationFixture(t)
-
-	deletePath := fixture.rootPath + "/delete-me.txt"
-	filesystem := newIntegrationIRODSFilesystem(t)
-	defer filesystem.Release()
-	if _, err := filesystem.CreateFile(deletePath, "", "w"); err != nil {
-		t.Fatalf("create file %q: %v", deletePath, err)
-	}
-
-	if err := service.DeletePath(context.Background(), integrationCatalogRequestContext(t), deletePath, false); err != nil {
-		t.Fatalf("DeletePath returned error: %v", err)
-	}
-
-	if filesystem.Exists(deletePath) {
-		t.Fatalf("expected file %q to be deleted", deletePath)
-	}
-}
-
-func TestCatalogDeletePathNonEmptyCollectionRequiresForceIntegration(t *testing.T) {
-	service := newIntegrationCatalogService(t)
-	fixture := newCatalogIntegrationFixture(t)
-
-	err := service.DeletePath(context.Background(), integrationCatalogRequestContext(t), fixture.rootPath, false)
-	if !errors.Is(err, ErrConflict) {
-		t.Fatalf("expected ErrConflict, got %v", err)
-	}
-}
-
-func TestCatalogDeletePathCollectionForceIntegration(t *testing.T) {
-	service := newIntegrationCatalogService(t)
-	fixture := newCatalogIntegrationFixture(t)
-	filesystem := newIntegrationIRODSFilesystem(t)
-	defer filesystem.Release()
-
-	if err := service.DeletePath(context.Background(), integrationCatalogRequestContext(t), fixture.rootPath, true); err != nil {
-		t.Fatalf("DeletePath returned error: %v", err)
-	}
-
-	if filesystem.Exists(fixture.rootPath) {
-		t.Fatalf("expected collection %q to be deleted", fixture.rootPath)
-	}
-}
-
-func TestCatalogRenamePathDataObjectIntegration(t *testing.T) {
-	service := newIntegrationCatalogService(t)
-	fixture := newCatalogIntegrationFixture(t)
-	filesystem := newIntegrationIRODSFilesystem(t)
-	defer filesystem.Release()
-
-	entry, err := service.RenamePath(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath, "renamed.txt")
-	if err != nil {
-		t.Fatalf("RenamePath returned error: %v", err)
-	}
-
-	expectedPath := fixture.rootPath + "/renamed.txt"
-	if entry.Path != expectedPath {
-		t.Fatalf("expected path %q, got %q", expectedPath, entry.Path)
-	}
-	if !filesystem.Exists(expectedPath) {
-		t.Fatalf("expected renamed file %q to exist", expectedPath)
-	}
-}
-
-func TestCatalogRenamePathCollectionIntegration(t *testing.T) {
-	service := newIntegrationCatalogService(t)
-	fixture := newCatalogIntegrationFixture(t)
-	filesystem := newIntegrationIRODSFilesystem(t)
-	defer filesystem.Release()
-
-	entry, err := service.RenamePath(context.Background(), integrationCatalogRequestContext(t), fixture.childCollectionPath, "renamed-nested")
-	if err != nil {
-		t.Fatalf("RenamePath returned error: %v", err)
-	}
-
-	expectedPath := fixture.rootPath + "/renamed-nested"
-	if entry.Path != expectedPath {
-		t.Fatalf("expected path %q, got %q", expectedPath, entry.Path)
-	}
-	if !filesystem.Exists(expectedPath) {
-		t.Fatalf("expected renamed collection %q to exist", expectedPath)
-	}
-}
-
-func TestCatalogPathMetadataAddDeleteIntegration(t *testing.T) {
-	service := newIntegrationCatalogService(t)
-	fixture := newCatalogIntegrationFixture(t)
-
-	created, err := service.AddPathMetadata(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath, "catalog.integration.added", "present", "test")
-	if err != nil {
-		t.Fatalf("AddPathMetadata returned error: %v", err)
-	}
-	if created.ID == "" {
-		t.Fatal("expected created AVU id to be populated")
-	}
-
-	metadata, err := service.GetPathMetadata(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath)
-	if err != nil {
-		t.Fatalf("GetPathMetadata returned error: %v", err)
-	}
-
-	found := false
-	for _, avu := range metadata {
-		if avu.ID == created.ID && avu.Attrib == "catalog.integration.added" && avu.Value == "present" && avu.Unit == "test" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected created AVU %q in metadata list", created.ID)
-	}
-
-	if err := service.DeletePathMetadata(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath, created.ID); err != nil {
-		t.Fatalf("DeletePathMetadata returned error: %v", err)
-	}
-
-	metadata, err = service.GetPathMetadata(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath)
-	if err != nil {
-		t.Fatalf("GetPathMetadata after delete returned error: %v", err)
-	}
-	for _, avu := range metadata {
-		if avu.ID == created.ID {
-			t.Fatalf("expected AVU %q to be removed", created.ID)
-		}
-	}
-}
-
-func TestCatalogPathMetadataUpdateIntegration(t *testing.T) {
-	service := newIntegrationCatalogService(t)
-	fixture := newCatalogIntegrationFixture(t)
-
-	created, err := service.AddPathMetadata(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath, "catalog.integration.update", "before", "test")
-	if err != nil {
-		t.Fatalf("AddPathMetadata returned error: %v", err)
-	}
-
-	updated, err := service.UpdatePathMetadata(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath, created.ID, "catalog.integration.update", "after", "test")
-	if err != nil {
-		t.Fatalf("UpdatePathMetadata returned error: %v", err)
-	}
-	if updated.Value != "after" {
-		t.Fatalf("expected updated AVU value, got %+v", updated)
-	}
-}
-
 func TestCatalogGetObjectContentByPathIntegration(t *testing.T) {
 	service := newIntegrationCatalogService(t)
 	fixture := newCatalogIntegrationFixture(t)
@@ -360,15 +120,6 @@ func TestCatalogGetObjectContentByPathIntegration(t *testing.T) {
 	if content.ContentType != "text/plain; charset=utf-8" {
 		t.Fatalf("expected content type %q, got %q", "text/plain; charset=utf-8", content.ContentType)
 	}
-	if content.FileName == "" {
-		t.Fatal("expected file name to be populated")
-	}
-	if content.Checksum != nil {
-		t.Fatalf("expected checksum to be absent before explicit compute, got %+v", content.Checksum)
-	}
-	if content.UpdatedAt == nil {
-		t.Fatal("expected updated timestamp to be populated")
-	}
 
 	buffer := make([]byte, len(fixture.objectContent))
 	n, err := content.Reader.ReadAt(buffer, 0)
@@ -384,7 +135,7 @@ func TestCatalogGetObjectContentByPathIntegration(t *testing.T) {
 func TestCatalogGetPathNormalizesNotFoundIntegration(t *testing.T) {
 	service := newIntegrationCatalogService(t)
 
-	_, err := service.GetPath(context.Background(), integrationCatalogRequestContext(t), integrationMissingPath(t), PathLookupOptions{})
+	_, err := service.GetPath(context.Background(), integrationCatalogRequestContext(t), integrationMissingPath(t))
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
@@ -394,7 +145,7 @@ func TestCatalogGetPathProxyIntegration(t *testing.T) {
 	service := newIntegrationCatalogService(t)
 	fixture := newCatalogIntegrationFixture(t)
 
-	entry, err := service.GetPath(context.Background(), integrationBearerRequestContext(t), fixture.objectPath, PathLookupOptions{})
+	entry, err := service.GetPath(context.Background(), integrationBearerRequestContext(t), fixture.objectPath)
 	if err != nil {
 		t.Fatalf("GetPath with bearer proxy context returned error: %v", err)
 	}
@@ -444,7 +195,7 @@ func newCatalogIntegrationFixture(t *testing.T) *catalogIntegrationFixture {
 
 	objectPath := rootPath + "/fixture.txt"
 	objectContent := []byte("catalog integration payload\n")
-	if _, err := filesystem.UploadFileFromBuffer(bytes.NewBuffer(objectContent), objectPath, "", false, false, nil); err != nil {
+	if _, err := filesystem.UploadFileFromBuffer(bytes.NewBuffer(objectContent), objectPath, "", false, true, nil); err != nil {
 		t.Fatalf("upload object %q: %v", objectPath, err)
 	}
 

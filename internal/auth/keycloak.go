@@ -2,19 +2,20 @@ package auth
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/michael-conway/irods-go-rest/internal/config"
+	"github.com/michael-conway/irods-go-rest/internal/logutil"
 )
 
 var (
@@ -109,16 +110,14 @@ func (k *KeycloakService) configError(requireRedirect bool) error {
 func (k *KeycloakService) AuthorizationURL(state string) (string, error) {
 	if err := k.configError(true); err != nil {
 		if k == nil {
-			log.Printf("keycloak AuthorizationURL config error: service=nil")
+			logAuthError("keycloak AuthorizationURL config error", err, "service_nil", true)
 		} else {
-			log.Printf(
-				"keycloak AuthorizationURL config error: base_url=%q realm=%q client_id=%q redirect_url=%q state_present=%t err=%v",
-				k.baseURL,
-				k.realm,
-				k.clientID,
-				k.redirectURL,
-				strings.TrimSpace(state) != "",
-				err,
+			logAuthError("keycloak AuthorizationURL config error", err,
+				"base_url", k.baseURL,
+				"realm", k.realm,
+				"client_id", k.clientID,
+				"redirect_url", k.redirectURL,
+				"state_present", strings.TrimSpace(state) != "",
 			)
 		}
 		return "", err
@@ -130,6 +129,7 @@ func (k *KeycloakService) AuthorizationURL(state string) (string, error) {
 
 	authURL, err := url.Parse(fmt.Sprintf("%s/realms/%s/protocol/openid-connect/auth", k.baseURL, url.PathEscape(k.realm)))
 	if err != nil {
+		logAuthError("keycloak AuthorizationURL parse failed", err, "base_url", k.baseURL, "realm", k.realm)
 		return "", fmt.Errorf("build authorization url: %w", err)
 	}
 
@@ -146,6 +146,7 @@ func (k *KeycloakService) AuthorizationURL(state string) (string, error) {
 
 func (k *KeycloakService) ExchangeCode(ctx context.Context, code string) (Token, error) {
 	if err := k.configError(true); err != nil {
+		logAuthError("keycloak ExchangeCode config error", err, "base_url", k.baseURL, "realm", k.realm, "client_id", k.clientID)
 		return Token{}, err
 	}
 
@@ -165,6 +166,7 @@ func (k *KeycloakService) ExchangeCode(ctx context.Context, code string) (Token,
 	tokenURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", k.baseURL, url.PathEscape(k.realm))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
+		logAuthError("keycloak ExchangeCode request build failed", err, "token_url", tokenURL, "client_id", k.clientID)
 		return Token{}, fmt.Errorf("build keycloak token request: %w", err)
 	}
 
@@ -172,11 +174,13 @@ func (k *KeycloakService) ExchangeCode(ctx context.Context, code string) (Token,
 
 	resp, err := k.httpClient.Do(req)
 	if err != nil {
+		logAuthError("keycloak ExchangeCode request failed", err, "token_url", tokenURL, "client_id", k.clientID)
 		return Token{}, fmt.Errorf("request keycloak token: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		logAuthError("keycloak ExchangeCode non-success status", fmt.Errorf("keycloak token request failed: %s", resp.Status), "token_url", tokenURL, "client_id", k.clientID, "status_code", resp.StatusCode)
 		return Token{}, fmt.Errorf("keycloak token request failed: %s", resp.Status)
 	}
 
@@ -190,6 +194,7 @@ func (k *KeycloakService) ExchangeCode(ctx context.Context, code string) (Token,
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		logAuthError("keycloak ExchangeCode decode failed", err, "token_url", tokenURL, "client_id", k.clientID)
 		return Token{}, fmt.Errorf("decode keycloak token response: %w", err)
 	}
 
@@ -218,6 +223,7 @@ func (k *KeycloakService) NewState() (string, error) {
 
 func (k *KeycloakService) VerifyToken(ctx context.Context, accessToken string) (Principal, error) {
 	if err := k.configError(false); err != nil {
+		logAuthError("keycloak VerifyToken config error", err, "base_url", k.baseURL, "realm", k.realm, "client_id", k.clientID)
 		return Principal{}, err
 	}
 
@@ -235,6 +241,7 @@ func (k *KeycloakService) VerifyToken(ctx context.Context, accessToken string) (
 	introspectURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token/introspect", k.baseURL, url.PathEscape(k.realm))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, introspectURL, strings.NewReader(form.Encode()))
 	if err != nil {
+		logAuthError("keycloak VerifyToken request build failed", err, "introspect_url", introspectURL, "client_id", k.clientID)
 		return Principal{}, fmt.Errorf("build keycloak introspection request: %w", err)
 	}
 
@@ -242,11 +249,13 @@ func (k *KeycloakService) VerifyToken(ctx context.Context, accessToken string) (
 
 	resp, err := k.httpClient.Do(req)
 	if err != nil {
+		logAuthError("keycloak VerifyToken request failed", err, "introspect_url", introspectURL, "client_id", k.clientID)
 		return Principal{}, fmt.Errorf("request keycloak introspection: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		logAuthError("keycloak VerifyToken non-success status", fmt.Errorf("keycloak introspection failed: %s", resp.Status), "introspect_url", introspectURL, "client_id", k.clientID, "status_code", resp.StatusCode)
 		return Principal{}, fmt.Errorf("keycloak introspection failed: %s", resp.Status)
 	}
 
@@ -258,10 +267,12 @@ func (k *KeycloakService) VerifyToken(ctx context.Context, accessToken string) (
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		logAuthError("keycloak VerifyToken decode failed", err, "introspect_url", introspectURL, "client_id", k.clientID)
 		return Principal{}, fmt.Errorf("decode keycloak introspection response: %w", err)
 	}
 
 	if !payload.Active {
+		logAuthError("keycloak VerifyToken inactive token", ErrUnauthorized, "introspect_url", introspectURL, "client_id", k.clientID)
 		return Principal{}, ErrUnauthorized
 	}
 
@@ -271,4 +282,9 @@ func (k *KeycloakService) VerifyToken(ctx context.Context, accessToken string) (
 		Scope:    strings.Fields(payload.Scope),
 		Active:   payload.Active,
 	}, nil
+}
+
+func logAuthError(msg string, err error, args ...any) {
+	logArgs := append([]any{"error", err.Error(), "stack_trace", logutil.StackTrace()}, args...)
+	slog.Error(msg, logArgs...)
 }

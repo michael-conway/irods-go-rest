@@ -19,7 +19,6 @@ import (
 )
 
 const integrationConfigFileEnvVar = "GOREST_E2E_CONFIG_FILE"
-
 type integrationTestConfig struct {
 	E2E struct {
 		BasicUsername string
@@ -358,24 +357,12 @@ func resolveIntegrationConfigPath(configFile string) (string, error) {
 		return configFile, nil
 	}
 
-	_, _, _, ok := runtime.Caller(0)
+	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
 		return "", fmt.Errorf("resolve relative %s path %q: runtime caller unavailable", config.ConfigFileEnvVar, configFile)
 	}
 
-	repoRoot, err := integrationRepoRoot()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(repoRoot, configFile), nil
-}
-
-func integrationRepoRoot() (string, error) {
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		return "", fmt.Errorf("resolve relative %s path: runtime caller unavailable", integrationConfigFileEnvVar)
-	}
-
 	irodsDir := filepath.Dir(filename)
-	return filepath.Dir(filepath.Dir(irodsDir)), nil
+	repoRoot := filepath.Dir(filepath.Dir(irodsDir))
+	return filepath.Join(repoRoot, configFile), nil
 }
