@@ -4,10 +4,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/michael-conway/irods-go-rest/internal/auth"
+	"github.com/michael-conway/irods-go-rest/internal/logutil"
 )
 
 const irodsTicketBearerPrefix = "irods-ticket:"
@@ -16,6 +18,7 @@ func (h *Handler) requireBearer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authz, err := authorizationFromRequest(r)
 		if err != nil {
+			logAuthMiddlewareError("authorization header parse failed", err, r, "phase", "requireBearer")
 			w.Header().Set("WWW-Authenticate", `Bearer realm="irods-go-rest", Basic realm="irods-go-rest"`)
 			writeError(w, http.StatusUnauthorized, "missing_authorization", err.Error())
 			return
@@ -23,6 +26,7 @@ func (h *Handler) requireBearer(next http.Handler) http.Handler {
 
 		switch authz.Scheme {
 		case "basic":
+			slog.Debug("http auth resolved basic credentials", "path", r.URL.Path, "username", authz.Username)
 			ctx := auth.WithPrincipal(r.Context(), auth.Principal{
 				Subject:  authz.Username,
 				Username: authz.Username,
@@ -35,6 +39,7 @@ func (h *Handler) requireBearer(next http.Handler) http.Handler {
 		case "bearer":
 			principal, err := h.verifier.VerifyToken(r.Context(), authz.Token)
 			if err != nil {
+				logAuthMiddlewareError("bearer token verification failed", err, r, "phase", "requireBearer", "auth_scheme", authz.Scheme)
 				status := http.StatusBadGateway
 				errorCode := "auth_failed"
 				if errors.Is(err, auth.ErrUnauthorized) {
@@ -64,6 +69,7 @@ func (h *Handler) requireDownloadBearer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authz, err := authorizationFromRequest(r)
 		if err != nil {
+			logAuthMiddlewareError("authorization header parse failed", err, r, "phase", "requireDownloadBearer")
 			w.Header().Set("WWW-Authenticate", `Bearer realm="irods-go-rest", Basic realm="irods-go-rest"`)
 			writeError(w, http.StatusUnauthorized, "missing_authorization", err.Error())
 			return
@@ -71,6 +77,7 @@ func (h *Handler) requireDownloadBearer(next http.Handler) http.Handler {
 
 		switch authz.Scheme {
 		case "basic":
+			slog.Debug("http download auth resolved basic credentials", "path", r.URL.Path, "username", authz.Username)
 			ctx := auth.WithPrincipal(r.Context(), auth.Principal{
 				Subject:  authz.Username,
 				Username: authz.Username,
@@ -81,12 +88,14 @@ func (h *Handler) requireDownloadBearer(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		case "bearer-ticket":
+			slog.Debug("http download auth resolved iRODS ticket", "path", r.URL.Path)
 			ticket := authz.Token
 			next.ServeHTTP(w, r.WithContext(auth.WithTicket(r.Context(), ticket)))
 			return
 		case "bearer":
 			principal, err := h.verifier.VerifyToken(r.Context(), authz.Token)
 			if err != nil {
+				logAuthMiddlewareError("download bearer token verification failed", err, r, "phase", "requireDownloadBearer", "auth_scheme", authz.Scheme)
 				status := http.StatusBadGateway
 				errorCode := "auth_failed"
 				if errors.Is(err, auth.ErrUnauthorized) {
@@ -176,4 +185,15 @@ func basicCredentialsFromHeader(value string) (string, string, error) {
 	}
 
 	return strings.TrimSpace(username), strings.TrimSpace(password), nil
+}
+
+func logAuthMiddlewareError(msg string, err error, r *http.Request, args ...any) {
+	logArgs := []any{
+		"error", err.Error(),
+		"stack_trace", logutil.StackTrace(),
+		"method", r.Method,
+		"path", r.URL.Path,
+	}
+	logArgs = append(logArgs, args...)
+	slog.Error(msg, logArgs...)
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 	"github.com/michael-conway/irods-go-rest/internal/domain"
+	"github.com/michael-conway/irods-go-rest/internal/logutil"
 )
 
 var ErrNotFound = errors.New("resource not found")
@@ -76,25 +78,31 @@ func (s *catalogService) GetPath(_ context.Context, requestContext *RequestConte
 		return domain.PathEntry{}, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
 	}
 
+	slog.Debug("catalog GetPath start", "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
 	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-get-path")
 	if err != nil {
+		logIRODSError("catalog GetPath filesystem setup failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 		return domain.PathEntry{}, err
 	}
 	defer filesystem.Release()
 
 	entry, err := filesystem.Stat(absolutePath)
 	if err != nil {
+		logIRODSError("catalog GetPath stat failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 		return domain.PathEntry{}, normalizePathAccessError("stat path", absolutePath, err)
 	}
 
 	metadata, err := filesystem.ListMetadata(absolutePath)
 	if err != nil {
+		logIRODSError("catalog GetPath list metadata failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 		return domain.PathEntry{}, normalizePathAccessError("list metadata", absolutePath, err)
 	}
 
 	if entry.IsDir() {
 		children, err := filesystem.List(absolutePath)
 		if err != nil {
+			logIRODSError("catalog GetPath list children failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 			return domain.PathEntry{}, normalizePathAccessError("list children", absolutePath, err)
 		}
 
@@ -127,14 +135,18 @@ func (s *catalogService) GetPathChildren(_ context.Context, requestContext *Requ
 		return nil, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
 	}
 
+	slog.Debug("catalog GetPathChildren start", "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
 	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-get-path-children")
 	if err != nil {
+		logIRODSError("catalog GetPathChildren filesystem setup failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 		return nil, err
 	}
 	defer filesystem.Release()
 
 	entry, err := filesystem.Stat(absolutePath)
 	if err != nil {
+		logIRODSError("catalog GetPathChildren stat failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 		return nil, normalizePathAccessError("stat path", absolutePath, err)
 	}
 
@@ -144,6 +156,7 @@ func (s *catalogService) GetPathChildren(_ context.Context, requestContext *Requ
 
 	children, err := filesystem.List(absolutePath)
 	if err != nil {
+		logIRODSError("catalog GetPathChildren list failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 		return nil, normalizePathAccessError("list children", absolutePath, err)
 	}
 
@@ -184,14 +197,18 @@ func (s *catalogService) GetObjectContentByPath(_ context.Context, requestContex
 		return domain.ObjectContent{}, fmt.Errorf("%w: object %q", ErrNotFound, absolutePath)
 	}
 
+	slog.Debug("catalog GetObjectContentByPath start", "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
 	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-get-path-contents")
 	if err != nil {
+		logIRODSError("catalog GetObjectContentByPath filesystem setup failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 		return domain.ObjectContent{}, err
 	}
 
 	entry, err := filesystem.Stat(absolutePath)
 	if err != nil {
 		filesystem.Release()
+		logIRODSError("catalog GetObjectContentByPath stat failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 		return domain.ObjectContent{}, normalizePathAccessError("stat path", absolutePath, err)
 	}
 
@@ -203,6 +220,7 @@ func (s *catalogService) GetObjectContentByPath(_ context.Context, requestContex
 	handle, err := filesystem.OpenFile(absolutePath, "", string(irodstypes.FileOpenModeReadOnly))
 	if err != nil {
 		filesystem.Release()
+		logIRODSError("catalog GetObjectContentByPath open file failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 		return domain.ObjectContent{}, normalizePathAccessError("open object", absolutePath, err)
 	}
 
@@ -225,11 +243,23 @@ func (s *catalogService) GetObjectContentByPath(_ context.Context, requestContex
 func (s *catalogService) filesystemForRequest(requestContext *RequestContext, applicationName string) (CatalogFileSystem, error) {
 	account, err := s.accountForRequest(requestContext)
 	if err != nil {
+		logIRODSError("catalog filesystemForRequest account creation failed", err, "application_name", applicationName, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 		return nil, err
 	}
 
 	filesystem, err := s.createFileSystem(account, applicationName)
 	if err != nil {
+		logIRODSError(
+			"catalog filesystemForRequest connect failed",
+			err,
+			"application_name", applicationName,
+			"auth_scheme", safeAuthScheme(requestContext),
+			"irods_proxy_user", account.ProxyUser,
+			"irods_client_user", account.ClientUser,
+			"irods_zone", account.ClientZone,
+			"irods_host", account.Host,
+			"irods_port", account.Port,
+		)
 		return nil, fmt.Errorf("connect to iRODS: %w", err)
 	}
 
@@ -238,11 +268,20 @@ func (s *catalogService) filesystemForRequest(requestContext *RequestContext, ap
 
 func (s *catalogService) accountForRequest(requestContext *RequestContext) (*irodstypes.IRODSAccount, error) {
 	if requestContext == nil {
+		logIRODSError("catalog accountForRequest missing request context", fmt.Errorf("missing request context"))
 		return nil, fmt.Errorf("missing request context")
 	}
 
 	switch requestContext.AuthScheme {
 	case "basic":
+		slog.Debug(
+			"catalog resolved direct iRODS account",
+			"http_auth_scheme", requestContext.AuthScheme,
+			"irods_account_mode", "direct",
+			"irods_proxy_user", requestContext.Username,
+			"irods_client_user", requestContext.Username,
+			"irods_zone", s.cfg.IrodsZone,
+		)
 		account, err := irodstypes.CreateIRODSAccount(
 			s.cfg.IrodsHost,
 			s.cfg.IrodsPort,
@@ -253,10 +292,19 @@ func (s *catalogService) accountForRequest(requestContext *RequestContext) (*iro
 			s.cfg.IrodsDefaultResource,
 		)
 		if err != nil {
+			logIRODSError("catalog direct account creation failed", err, "http_auth_scheme", requestContext.AuthScheme, "irods_proxy_user", requestContext.Username, "irods_client_user", requestContext.Username, "irods_zone", s.cfg.IrodsZone)
 			return nil, fmt.Errorf("create iRODS account: %w", err)
 		}
 		return account, nil
 	case "bearer-ticket":
+		slog.Debug(
+			"catalog resolved ticket iRODS account",
+			"http_auth_scheme", requestContext.AuthScheme,
+			"irods_account_mode", "ticket",
+			"irods_proxy_user", s.cfg.IrodsAdminUser,
+			"irods_client_user", s.cfg.IrodsAdminUser,
+			"irods_zone", s.cfg.IrodsZone,
+		)
 		account, err := irodstypes.CreateIRODSAccountForTicket(
 			s.cfg.IrodsHost,
 			s.cfg.IrodsPort,
@@ -268,10 +316,19 @@ func (s *catalogService) accountForRequest(requestContext *RequestContext) (*iro
 			s.cfg.IrodsDefaultResource,
 		)
 		if err != nil {
+			logIRODSError("catalog ticket account creation failed", err, "http_auth_scheme", requestContext.AuthScheme, "irods_proxy_user", s.cfg.IrodsAdminUser, "irods_client_user", s.cfg.IrodsAdminUser, "irods_zone", s.cfg.IrodsZone)
 			return nil, fmt.Errorf("create iRODS ticket account: %w", err)
 		}
 		return account, nil
 	case "bearer":
+		slog.Debug(
+			"catalog resolved proxy iRODS account",
+			"http_auth_scheme", requestContext.AuthScheme,
+			"irods_account_mode", "proxy",
+			"irods_proxy_user", s.cfg.IrodsAdminUser,
+			"irods_client_user", requestContext.Username,
+			"irods_zone", s.cfg.IrodsZone,
+		)
 		account, err := irodstypes.CreateIRODSProxyAccount(
 			s.cfg.IrodsHost,
 			s.cfg.IrodsPort,
@@ -284,12 +341,35 @@ func (s *catalogService) accountForRequest(requestContext *RequestContext) (*iro
 			s.cfg.IrodsDefaultResource,
 		)
 		if err != nil {
+			logIRODSError("catalog proxy account creation failed", err, "http_auth_scheme", requestContext.AuthScheme, "irods_proxy_user", s.cfg.IrodsAdminUser, "irods_client_user", requestContext.Username, "irods_zone", s.cfg.IrodsZone)
 			return nil, fmt.Errorf("create iRODS proxy account: %w", err)
 		}
 		return account, nil
 	default:
+		logIRODSError("catalog unsupported auth scheme", fmt.Errorf("unsupported auth scheme %q", requestContext.AuthScheme), "http_auth_scheme", requestContext.AuthScheme, "username", requestContext.Username)
 		return nil, fmt.Errorf("unsupported auth scheme %q", requestContext.AuthScheme)
 	}
+}
+
+func logIRODSError(msg string, err error, args ...any) {
+	logArgs := append([]any{"error", err.Error(), "stack_trace", logutil.StackTrace()}, args...)
+	slog.Error(msg, logArgs...)
+}
+
+func safeAuthScheme(requestContext *RequestContext) string {
+	if requestContext == nil {
+		return ""
+	}
+
+	return requestContext.AuthScheme
+}
+
+func safeUsername(requestContext *RequestContext) string {
+	if requestContext == nil {
+		return ""
+	}
+
+	return requestContext.Username
 }
 
 type catalogObjectReader struct {
