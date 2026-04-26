@@ -362,10 +362,19 @@ components:
         size:
           type: integer
           format: int64
+        display_size:
+          type: string
+          description: Human-readable size formatted automatically as B, KB, MB, or GB.
         zone:
           type: string
         resource:
           type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
         metadata:
           type: object
           additionalProperties:

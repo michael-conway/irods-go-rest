@@ -244,6 +244,20 @@ Preferred live-test setup is a single `GOREST_E2E_CONFIG_FILE` that contains bot
 * the normal top-level app config fields
 * an `E2E` section for test-only values such as `test1` credentials and optional bearer token input
 
+For Keycloak-backed test settings, do not hard-code browser client IDs,
+secrets, or hostnames in the live test helpers. Prefer leaving the top-level
+OIDC fields blank in the sample live-test config and enriching them from the
+docker test-framework `keycloak.env` file instead.
+
+Current live-test Keycloak default source:
+
+* `deployments/docker-test-framework/5-0/keycloak.env`
+
+Optional overrides:
+
+* `E2E.KeycloakEnvFile`
+* `GOREST_E2E_KEYCLOAK_ENV_FILE`
+
 `IRODS_REST_CONFIG_FILE` is optional only when the separately running app
 process also needs to be pointed at the same config file. The live test suites
 should not read it as a fallback.
