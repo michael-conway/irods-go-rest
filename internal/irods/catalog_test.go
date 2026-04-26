@@ -34,6 +34,9 @@ func TestCatalogGetPathCollectionMapsFilesystemEntry(t *testing.T) {
 	if got := entry.Metadata["project"]; got != "demo" {
 		t.Fatalf("expected metadata mapping, got %q", got)
 	}
+	if entry.CreatedAt == nil || entry.UpdatedAt == nil {
+		t.Fatal("expected collection timestamps to be populated")
+	}
 }
 
 func TestCatalogGetPathDataObjectMapsFilesystemEntry(t *testing.T) {
@@ -50,6 +53,9 @@ func TestCatalogGetPathDataObjectMapsFilesystemEntry(t *testing.T) {
 	if entry.Size != 21 {
 		t.Fatalf("expected size 21, got %d", entry.Size)
 	}
+	if entry.DisplaySize != "21 B" {
+		t.Fatalf("expected display size 21 B, got %q", entry.DisplaySize)
+	}
 	if entry.Resource != "demoResc" {
 		t.Fatalf("expected resource demoResc, got %q", entry.Resource)
 	}
@@ -58,6 +64,9 @@ func TestCatalogGetPathDataObjectMapsFilesystemEntry(t *testing.T) {
 	}
 	if got := entry.Metadata["source"]; got != "unit-test" {
 		t.Fatalf("expected metadata mapping, got %q", got)
+	}
+	if entry.CreatedAt == nil || entry.UpdatedAt == nil {
+		t.Fatal("expected data object timestamps to be populated")
 	}
 }
 
@@ -75,8 +84,35 @@ func TestCatalogGetPathChildrenMapsChildEntries(t *testing.T) {
 	if children[0].Kind != "data_object" {
 		t.Fatalf("expected first child to be data_object, got %q", children[0].Kind)
 	}
+	if children[0].DisplaySize != "10 B" {
+		t.Fatalf("expected first child display size 10 B, got %q", children[0].DisplaySize)
+	}
+	if children[0].CreatedAt == nil || children[0].UpdatedAt == nil {
+		t.Fatal("expected first child timestamps to be populated")
+	}
 	if children[1].Kind != "collection" {
 		t.Fatalf("expected second child to be collection, got %q", children[1].Kind)
+	}
+	if children[1].CreatedAt == nil || children[1].UpdatedAt == nil {
+		t.Fatal("expected second child timestamps to be populated")
+	}
+}
+
+func TestHumanReadableSize(t *testing.T) {
+	for _, tc := range []struct {
+		size     int64
+		expected string
+	}{
+		{0, "0 B"},
+		{999, "999 B"},
+		{1024, "1 KB"},
+		{1536, "1.5 KB"},
+		{1048576, "1 MB"},
+		{1610612736, "1.5 GB"},
+	} {
+		if got := humanReadableSize(tc.size); got != tc.expected {
+			t.Fatalf("size %d: expected %q, got %q", tc.size, tc.expected, got)
+		}
 	}
 }
 

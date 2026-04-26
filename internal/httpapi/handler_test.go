@@ -241,6 +241,9 @@ func TestGetPathAcceptsValidBearerToken(t *testing.T) {
 	if body := rec.Body.String(); !containsAll(body, `"/tempZone/home/test1/file.txt"`, `"kind":"data_object"`) {
 		t.Fatalf("unexpected response body: %q", body)
 	}
+	if body := rec.Body.String(); !containsAll(body, `"display_size":"128 B"`, `"created_at":"2023-11-14T22:13:20Z"`, `"updated_at":"2023-11-14T22:13:20Z"`) {
+		t.Fatalf("expected display size and timestamps in response body: %q", body)
+	}
 }
 
 func TestGetPathReturnsCollectionShape(t *testing.T) {
@@ -258,6 +261,9 @@ func TestGetPathReturnsCollectionShape(t *testing.T) {
 
 	if body := rec.Body.String(); !containsAll(body, `"kind":"collection"`, `"childCount":2`) {
 		t.Fatalf("unexpected collection response body: %q", body)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"created_at":"2023-11-14T22:13:20Z"`, `"updated_at":"2023-11-14T22:13:20Z"`) {
+		t.Fatalf("expected collection timestamps in response body: %q", body)
 	}
 
 	if body := rec.Body.String(); !containsAll(
@@ -285,6 +291,10 @@ func TestGetPathChildrenReturnsCollectionChildren(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"display_size":"64 B"`, `"created_at":"2023-11-14T22:13:20Z"`, `"updated_at":"2023-11-14T22:13:20Z"`) {
+		t.Fatalf("expected child timestamps and display size in response body: %q", body)
 	}
 
 	if body := rec.Body.String(); !containsAll(body, `"children"`, `"kind":"data_object"`, `"kind":"collection"`) {

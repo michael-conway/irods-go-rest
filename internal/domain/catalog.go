@@ -1,6 +1,9 @@
 package domain
 
-import "io"
+import (
+	"io"
+	"time"
+)
 
 type PathEntry struct {
 	ID           string            `json:"id"`
@@ -11,7 +14,10 @@ type PathEntry struct {
 	PathSegments []PathSegmentLink `json:"path_segments,omitempty"`
 	Checksum     string            `json:"checksum,omitempty"`
 	Size         int64             `json:"size,omitempty"`
+	DisplaySize  string            `json:"display_size,omitempty"`
 	Resource     string            `json:"resource,omitempty"`
+	CreatedAt    *time.Time        `json:"created_at,omitempty"`
+	UpdatedAt    *time.Time        `json:"updated_at,omitempty"`
 	HasChildren  bool              `json:"hasChildren,omitempty"`
 	ChildCount   int               `json:"childCount,omitempty"`
 	Metadata     map[string]string `json:"metadata,omitempty"`

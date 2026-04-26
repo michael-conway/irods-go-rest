@@ -15,16 +15,19 @@ import (
 	irodsfs "github.com/cyverse/go-irodsclient/fs"
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
 	"github.com/michael-conway/irods-go-rest/internal/config"
+	"github.com/michael-conway/irods-go-rest/internal/testconfig"
 	"github.com/spf13/viper"
 )
 
 const integrationConfigFileEnvVar = "GOREST_E2E_CONFIG_FILE"
+
 type integrationTestConfig struct {
 	E2E struct {
-		BasicUsername string
-		BasicPassword string
-		IRODSUser     string
-		IRODSPassword string
+		BasicUsername   string
+		BasicPassword   string
+		IRODSUser       string
+		IRODSPassword   string
+		KeycloakEnvFile string
 	}
 }
 
@@ -329,6 +332,16 @@ func loadIntegrationConfigs() {
 		return
 	}
 
+	repoRoot, err := integrationRepoRoot()
+	if err != nil {
+		integrationConfigErr = err
+		return
+	}
+	if err := testconfig.ApplyKeycloakEnvDefaults(repoRoot, cfg, integrationKeycloakEnvFile()); err != nil {
+		integrationConfigErr = fmt.Errorf("apply keycloak env defaults for integration config: %w", err)
+		return
+	}
+
 	integrationConfigValue = cfg
 }
 
@@ -362,7 +375,31 @@ func resolveIntegrationConfigPath(configFile string) (string, error) {
 		return "", fmt.Errorf("resolve relative %s path %q: runtime caller unavailable", config.ConfigFileEnvVar, configFile)
 	}
 
-	irodsDir := filepath.Dir(filename)
-	repoRoot := filepath.Dir(filepath.Dir(irodsDir))
+	repoRoot, err := integrationRepoRoot()
+	if err != nil {
+		return "", err
+	}
 	return filepath.Join(repoRoot, configFile), nil
+}
+
+func integrationKeycloakEnvFile() string {
+	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_KEYCLOAK_ENV_FILE")); value != "" {
+		return value
+	}
+
+	if cfg := optionalIntegrationFileConfig(nil); cfg != nil && strings.TrimSpace(cfg.E2E.KeycloakEnvFile) != "" {
+		return strings.TrimSpace(cfg.E2E.KeycloakEnvFile)
+	}
+
+	return testconfig.DefaultKeycloakEnvPath
+}
+
+func integrationRepoRoot() (string, error) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", fmt.Errorf("resolve relative %s path: runtime caller unavailable", integrationConfigFileEnvVar)
+	}
+
+	irodsDir := filepath.Dir(filename)
+	return filepath.Dir(filepath.Dir(irodsDir)), nil
 }

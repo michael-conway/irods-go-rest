@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"mime"
 	"path/filepath"
 	"strings"
+	"time"
 
 	irodsfs "github.com/cyverse/go-irodsclient/fs"
 	irodscommon "github.com/cyverse/go-irodsclient/irods/common"
@@ -106,27 +108,10 @@ func (s *catalogService) GetPath(_ context.Context, requestContext *RequestConte
 			return domain.PathEntry{}, normalizePathAccessError("list children", absolutePath, err)
 		}
 
-		return domain.PathEntry{
-			ID:          absolutePath,
-			Path:        absolutePath,
-			Kind:        "collection",
-			Zone:        s.cfg.IrodsZone,
-			HasChildren: len(children) > 0,
-			ChildCount:  len(children),
-			Metadata:    metadataMap(metadata),
-		}, nil
+		return collectionPathEntry(s.cfg.IrodsZone, entry, metadata, len(children)), nil
 	}
 
-	return domain.PathEntry{
-		ID:       absolutePath,
-		Path:     absolutePath,
-		Kind:     "data_object",
-		Checksum: checksumString(entry),
-		Size:     entry.Size,
-		Zone:     s.cfg.IrodsZone,
-		Resource: firstReplicaResource(entry),
-		Metadata: metadataMap(metadata),
-	}, nil
+	return dataObjectPathEntry(s.cfg.IrodsZone, entry, metadata), nil
 }
 
 func (s *catalogService) GetPathChildren(_ context.Context, requestContext *RequestContext, absolutePath string) ([]domain.PathEntry, error) {
@@ -167,25 +152,11 @@ func (s *catalogService) GetPathChildren(_ context.Context, requestContext *Requ
 		}
 
 		if child.IsDir() {
-			results = append(results, domain.PathEntry{
-				ID:          child.Path,
-				Path:        child.Path,
-				Kind:        "collection",
-				Zone:        s.cfg.IrodsZone,
-				HasChildren: false,
-			})
+			results = append(results, collectionPathEntry(s.cfg.IrodsZone, child, nil, 0))
 			continue
 		}
 
-		results = append(results, domain.PathEntry{
-			ID:       child.Path,
-			Path:     child.Path,
-			Kind:     "data_object",
-			Zone:     s.cfg.IrodsZone,
-			Size:     child.Size,
-			Checksum: checksumString(child),
-			Resource: firstReplicaResource(child),
-		})
+		results = append(results, dataObjectPathEntry(s.cfg.IrodsZone, child, nil))
 	}
 
 	return results, nil
@@ -498,4 +469,68 @@ func firstReplicaResource(entry *irodsfs.Entry) string {
 	}
 
 	return entry.IRODSReplicas[0].ResourceName
+}
+
+func collectionPathEntry(zone string, entry *irodsfs.Entry, metadata []*irodstypes.IRODSMeta, childCount int) domain.PathEntry {
+	return domain.PathEntry{
+		ID:          entry.Path,
+		Path:        entry.Path,
+		Kind:        "collection",
+		Zone:        zone,
+		CreatedAt:   timePointer(entry.CreateTime),
+		UpdatedAt:   timePointer(entry.ModifyTime),
+		HasChildren: childCount > 0,
+		ChildCount:  childCount,
+		Metadata:    metadataMap(metadata),
+	}
+}
+
+func dataObjectPathEntry(zone string, entry *irodsfs.Entry, metadata []*irodstypes.IRODSMeta) domain.PathEntry {
+	return domain.PathEntry{
+		ID:          entry.Path,
+		Path:        entry.Path,
+		Kind:        "data_object",
+		Checksum:    checksumString(entry),
+		Size:        entry.Size,
+		DisplaySize: humanReadableSize(entry.Size),
+		Zone:        zone,
+		Resource:    firstReplicaResource(entry),
+		CreatedAt:   timePointer(entry.CreateTime),
+		UpdatedAt:   timePointer(entry.ModifyTime),
+		Metadata:    metadataMap(metadata),
+	}
+}
+
+func timePointer(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+
+	ts := value.UTC()
+	return &ts
+}
+
+func humanReadableSize(size int64) string {
+	if size < 0 {
+		return ""
+	}
+
+	units := []string{"B", "KB", "MB", "GB"}
+	value := float64(size)
+	unitIndex := 0
+	for value >= 1024 && unitIndex < len(units)-1 {
+		value /= 1024
+		unitIndex++
+	}
+
+	if unitIndex == 0 {
+		return fmt.Sprintf("%d %s", size, units[unitIndex])
+	}
+
+	rounded := math.Round(value*10) / 10
+	if rounded == math.Trunc(rounded) {
+		return fmt.Sprintf("%.0f %s", rounded, units[unitIndex])
+	}
+
+	return fmt.Sprintf("%.1f %s", rounded, units[unitIndex])
 }

@@ -49,6 +49,7 @@ The current convention for E2E tests is:
 * `GOREST_E2E_IRODS_ZONE` - optional iRODS zone override for fixture upload; if unset, E2E setup falls back to top-level `IrodsZone` from `GOREST_E2E_CONFIG_FILE`
 * `GOREST_E2E_IRODS_USER` - optional iRODS fixture-uploader or proxy user; otherwise read from `E2E.IRODSUser`, then falls back to the Basic auth user
 * `GOREST_E2E_IRODS_PASSWORD` - optional uploader or proxy password; otherwise read from `E2E.IRODSPassword`, then falls back to the Basic auth password only when no distinct proxy uploader is configured
+* `GOREST_E2E_KEYCLOAK_ENV_FILE` - optional override for the docker test-framework `keycloak.env` file used to populate top-level OIDC settings when they are left blank in `GOREST_E2E_CONFIG_FILE`
 
 Both suites require `GOREST_E2E_CONFIG_FILE`. They do not fall back to
 `IRODS_REST_CONFIG_FILE` or `e2e/rest-config.e2e.sample.yaml` automatically.
@@ -60,6 +61,7 @@ That file may contain:
 
 * the same top-level app config fields used by `irods-go-rest`
 * an additional `E2E` section for test-only values such as the `test1` credentials
+* an optional `E2E.KeycloakEnvFile` path pointing at the docker test-framework `keycloak.env`
 
 For the test side, `GOREST_E2E_CONFIG_FILE` is sufficient by itself. The E2E
 and direct integration helpers treat it as the default app-config source for
@@ -69,6 +71,19 @@ loading:
 * `IrodsHost`
 * `IrodsPort`
 * `IrodsZone`
+
+If top-level `OidcUrl`, `OidcClientId`, `OidcClientSecret`, or `OidcRealm` are
+blank, both suites enrich those values from the configured `keycloak.env` file.
+The default path is:
+
+* `deployments/docker-test-framework/5-0/keycloak.env`
+
+The loader resolves:
+
+* `KC_HOSTNAME` -> `OidcUrl` as `https://<hostname>:8443`
+* `IRODS_REST_WEB_CLIENT_ID` -> `OidcClientId`
+* `IRODS_REST_WEB_CLIENT_SECRET` -> `OidcClientSecret`
+* `realm-drs.json` next to `keycloak.env` -> `OidcRealm`
 
 `IRODS_REST_CONFIG_FILE` is optional only if you also want the separately
 running app process to use the same config file. The tests themselves do not
@@ -82,6 +97,8 @@ go test -tags=e2e ./e2e/...
 ```
 
 The sample config assumes the app is reachable at `http://127.0.0.1:8080`.
+It intentionally leaves the top-level OIDC fields blank so the live test
+loaders pull them from `keycloak.env`.
 
 Sample combined config:
 
