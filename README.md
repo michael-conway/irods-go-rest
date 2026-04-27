@@ -149,6 +149,13 @@ Current path-based endpoints:
   `GET /api/v1/path?irods_path=/tempZone/home/test1/file.txt`
 * Collection children:
   `GET /api/v1/path/children?irods_path=/tempZone/home/test1/project`
+* AVU metadata:
+  `GET /api/v1/path/avu?irods_path=/tempZone/home/test1/file.txt`
+* Add AVU metadata:
+  `POST /api/v1/path/avu?irods_path=/tempZone/home/test1/file.txt`
+* Update or delete a single AVU:
+  `PUT /api/v1/path/avu/{avu_id}?irods_path=/tempZone/home/test1/file.txt`
+  `DELETE /api/v1/path/avu/{avu_id}?irods_path=/tempZone/home/test1/file.txt`
 * Content headers:
   `HEAD /api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt`
 * Content bytes:
@@ -161,7 +168,7 @@ Path responses also include a `parent` field when a parent exists. This follows 
 * `parent.irods_path`
 * `parent.href`
 
-Collection-specific behavior is expressed through subresources such as `/path/children`. Data-object-specific behavior is expressed through subresources such as `/path/contents`.
+Collection-specific behavior is expressed through subresources such as `/path/children`. AVU metadata is exposed as `/path/avu` so clients can list, create, update, and delete metadata rows while preserving `irods_path` as the resource identifier. Data-object-specific behavior is expressed through subresources such as `/path/contents`.
 
 This establishes `/path` as the generic REST pattern for logical-path-oriented operations. Additional routes such as `/path/metadata` and `/path/acl` can be added later without changing the core addressing model.
 

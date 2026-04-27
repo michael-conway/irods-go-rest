@@ -244,7 +244,11 @@ func TestGetPathAcceptsValidBearerToken(t *testing.T) {
 	if body := rec.Body.String(); !containsAll(body, `"display_size":"128 B"`, `"mime_type":"text/plain; charset=utf-8"`, `"created_at":"2023-11-14T22:13:20Z"`, `"updated_at":"2023-11-14T22:13:20Z"`) {
 		t.Fatalf("expected display size and timestamps in response body: %q", body)
 	}
-	if body := rec.Body.String(); !containsAll(body, `"links":{"avus":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"}}`) {
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"avus":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"}`,
+		`"create_avu":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"}`,
+	) {
 		t.Fatalf("expected AVU HATEOAS link in response body: %q", body)
 	}
 }
@@ -404,14 +408,78 @@ func TestGetPathAVUsReturnsAVUList(t *testing.T) {
 		`"attrib":"source"`,
 		`"value":"test"`,
 		`"unit":"fixture"`,
+		`"links":{"avus":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"},"create_avu":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"}}`,
 		`"update":{"href":"/api/v1/path/avu/701?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"PUT"}`,
 		`"delete":{"href":"/api/v1/path/avu/701?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"DELETE"}`,
+		`"count":1`,
+		`"total":1`,
 		`"created_at":"2023-11-14T22:13:20Z"`,
 		`"updated_at":"2023-11-14T22:13:20Z"`,
 		`"path_segments"`,
 		`"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt"`,
 	) {
 		t.Fatalf("unexpected metadata response body: %q", body)
+	}
+}
+
+func TestGetPathAVUsSupportsFilterSortAndPagination(t *testing.T) {
+	handler := testHandler(t)
+
+	for _, body := range []string{
+		`{"attrib":"priority","value":"2","unit":"test"}`,
+		`{"attrib":"priority","value":"1","unit":"test"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/path/avu?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer token123")
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		handler.Routes().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("expected 201 while seeding AVU, got %d: %s", rec.Code, rec.Body.String())
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/avu?irods_path=/tempZone/home/test1/file.txt&attrib=priority&sort=value&order=asc&limit=1", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !containsAll(body, `"value":"1"`, `"count":1`, `"total":2`, `"offset":0`, `"limit":1`) {
+		t.Fatalf("unexpected filtered AVU response body: %q", body)
+	}
+	if strings.Contains(body, `"value":"2"`) || strings.Contains(body, `"attrib":"source"`) {
+		t.Fatalf("expected filtered and paginated AVU response, got %q", body)
+	}
+}
+
+func TestPostPathAVUReturnsFieldValidationErrors(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/avu?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(`{"attrib":" ","value":""}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"message":"AVU request validation failed"`,
+		`"fields":{"attrib":"attribute is required","value":"value is required"}`,
+	) {
+		t.Fatalf("unexpected validation response body: %q", body)
 	}
 }
 
