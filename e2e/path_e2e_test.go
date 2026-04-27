@@ -195,9 +195,10 @@ func TestGetObjectPathVerboseLongBasicAuthE2E(t *testing.T) {
 func TestGetObjectPathVerboseVeryLongBasicAuthE2E(t *testing.T) {
 	baseURL := requireE2EBaseURL(t)
 	fixture := requireE2EFixture(t)
+	checksummedObjectPath := requireE2EChecksummedObjectPath(t, fixture)
 	client := newE2EHTTPClient()
 
-	req := newE2ERequest(t, http.MethodGet, pathURLWithQuery(baseURL, "/api/v1/path", fixture.objectPath, "verbose=2"), nil)
+	req := newE2ERequest(t, http.MethodGet, pathURLWithQuery(baseURL, "/api/v1/path", checksummedObjectPath, "verbose=2"), nil)
 	setBasicAuth(req)
 
 	resp, err := client.Do(req)
@@ -220,8 +221,8 @@ func TestGetObjectPathVerboseVeryLongBasicAuthE2E(t *testing.T) {
 	}
 	decodeJSON(t, resp.Body, &payload)
 
-	if payload.Path != fixture.objectPath {
-		t.Fatalf("expected path %q, got %q", fixture.objectPath, payload.Path)
+	if payload.Path != checksummedObjectPath {
+		t.Fatalf("expected path %q, got %q", checksummedObjectPath, payload.Path)
 	}
 	if len(payload.Replicas) < 1 {
 		t.Fatal("expected at least one replica in verbose=2 response")

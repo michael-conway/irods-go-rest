@@ -10,11 +10,11 @@ IrodsAuthScheme: native
 IrodsNegotiationPolicy: request_server_negotiation
 IrodsDefaultResource: demoResc
 
-OidcUrl: ""
-OidcClientId: ""
-OidcClientSecret: ""
+OidcUrl: https://localhost:8443
+OidcClientId: irods-go-rest
+OidcClientSecret: change-me
 OidcInsecureSkipVerify: false
-OidcRealm: ""
+OidcRealm: drs
 OidcScope: openid profile email
 
 E2E:
@@ -23,6 +23,5 @@ E2E:
   BasicPassword: test
   IRODSUser: rods
   IRODSPassword: rods
-  KeycloakEnvFile: deployments/docker-test-framework/5-0/keycloak.env
   SkipTLSVerify: false
   BearerToken: ""

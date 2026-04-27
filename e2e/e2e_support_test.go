@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/michael-conway/irods-go-rest/internal/config"
-	"github.com/michael-conway/irods-go-rest/internal/testconfig"
 	"github.com/spf13/viper"
 )
 
@@ -34,14 +33,13 @@ const e2eConfigFileEnvVar = "GOREST_E2E_CONFIG_FILE"
 
 type e2eTestConfig struct {
 	E2E struct {
-		BaseURL         string
-		BasicUsername   string
-		BasicPassword   string
-		IRODSUser       string
-		IRODSPassword   string
-		KeycloakEnvFile string
-		SkipTLSVerify   bool
-		BearerToken     string
+		BaseURL       string
+		BasicUsername string
+		BasicPassword string
+		IRODSUser     string
+		IRODSPassword string
+		SkipTLSVerify bool
+		BearerToken   string
 	}
 }
 
@@ -323,16 +321,6 @@ func loadE2EConfigs() {
 		return
 	}
 
-	repoRoot, err := e2eRepoRoot()
-	if err != nil {
-		e2eConfigErr = err
-		return
-	}
-	if err := testconfig.ApplyKeycloakEnvDefaults(repoRoot, cfg, e2eKeycloakEnvFile()); err != nil {
-		e2eConfigErr = fmt.Errorf("apply keycloak env defaults for e2e config: %w", err)
-		return
-	}
-
 	e2eConfigValue = cfg
 }
 
@@ -379,18 +367,6 @@ func e2eUsesProxyUser(t *testing.T) bool {
 	}
 
 	return e2eIRODSUser(t) != e2eBasicUsername(t)
-}
-
-func e2eKeycloakEnvFile() string {
-	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_KEYCLOAK_ENV_FILE")); value != "" {
-		return value
-	}
-
-	if cfg := optionalE2EFileConfig(nil); cfg != nil && strings.TrimSpace(cfg.E2E.KeycloakEnvFile) != "" {
-		return strings.TrimSpace(cfg.E2E.KeycloakEnvFile)
-	}
-
-	return testconfig.DefaultKeycloakEnvPath
 }
 
 func e2eRepoRoot() (string, error) {
