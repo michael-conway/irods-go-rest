@@ -1,5 +1,9 @@
 # iRODS Go REST API
 
+[![Go](https://github.com/michael-conway/irods-go-rest/actions/workflows/go.yml/badge.svg)](https://github.com/michael-conway/irods-go-rest/actions/workflows/go.yml)
+[![Container Build](https://github.com/michael-conway/irods-go-rest/actions/workflows/container-build.yml/badge.svg)](https://github.com/michael-conway/irods-go-rest/actions/workflows/container-build.yml)
+[![CodeQL Advanced](https://github.com/michael-conway/irods-go-rest/actions/workflows/codeql.yml/badge.svg)](https://github.com/michael-conway/irods-go-rest/actions/workflows/codeql.yml)
+
 OpenAPI Go REST API for iRODS.
 
 ## Overview
