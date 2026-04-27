@@ -37,6 +37,15 @@ paths:
           schema:
             type: string
           description: Full iRODS absolute logical path to a file or collection.
+        - in: query
+          name: verbose
+          required: false
+          schema:
+            type: string
+          description: |
+            Optional verbosity level for replica details on data objects.
+            `1`, `true`, or `long` includes `ils -l` style replica information.
+            `2` or `very_long` includes `ils -L` style checksum, data type, and physical path details.
       responses:
         "200":
           description: Metadata for a file or collection path
@@ -52,6 +61,12 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           description: Object not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
           content:
             application/json:
               schema:
@@ -92,6 +107,305 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           description: Path not found or not a collection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested collection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/path/avu:
+    get:
+      operationId: getPathAVUs
+      tags: [path]
+      summary: List AVUs for an iRODS logical path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a file or collection.
+      responses:
+        "200":
+          description: AVUs for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathAVUResponse"
+        "400":
+          description: Missing irods_path query parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Object not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: postPathAVU
+      tags: [path]
+      summary: Add a single AVU to an iRODS logical path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a file or collection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PathAVUCreateRequest"
+      responses:
+        "201":
+          description: AVU created for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathAVUSingleResponse"
+        "400":
+          description: Missing irods_path query parameter or invalid JSON body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Object not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/path/avu/{avu_id}:
+    put:
+      operationId: putPathAVU
+      tags: [path]
+      summary: Update a single AVU on an iRODS logical path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: avu_id
+          required: true
+          schema:
+            type: string
+          description: AVU identifier returned by the AVU listing endpoint.
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a file or collection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PathAVUCreateRequest"
+      responses:
+        "200":
+          description: AVU updated for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathAVUSingleResponse"
+        "400":
+          description: Missing irods_path query parameter, invalid AVU identifier, or invalid JSON body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Object or AVU not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deletePathAVU
+      tags: [path]
+      summary: Delete a single AVU from an iRODS logical path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: avu_id
+          required: true
+          schema:
+            type: string
+          description: AVU identifier returned by the AVU listing endpoint.
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a file or collection.
+      responses:
+        "204":
+          description: AVU deleted
+        "400":
+          description: Missing irods_path query parameter or invalid AVU identifier
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Object or AVU not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/path/checksum:
+    get:
+      operationId: getPathChecksum
+      tags: [path]
+      summary: Fetch the current stored checksum for a data object path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a data object.
+      responses:
+        "200":
+          description: Current checksum information for the requested data object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathChecksumResponse"
+        "400":
+          description: Missing irods_path query parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Object not found or not a data object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: postPathChecksum
+      tags: [path]
+      summary: Compute and store the checksum for a data object path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a data object.
+      responses:
+        "200":
+          description: Newly computed checksum information for the requested data object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathChecksumResponse"
+        "400":
+          description: Missing irods_path query parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Object not found or not a data object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested object
           content:
             application/json:
               schema:
@@ -140,6 +454,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "416":
           description: Invalid byte range
           content:
@@ -153,6 +473,9 @@ paths:
       description: |
         Accepts Basic auth, an OAuth bearer token, or a bearer token prefixed as `irods-ticket:<ticket>`.
         Supports single-range byte restarts via the `Range` header.
+        Responses include download-oriented headers such as `Content-Disposition`,
+        `Last-Modified`, `ETag` when a checksum is already stored, and
+        `X-Content-Type-Options: nosniff`.
       security:
         - BearerAuth: []
         - BasicAuth: []
@@ -202,8 +525,93 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "416":
           description: Invalid byte range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: postPathContents
+      tags: [path]
+      summary: Upload a data object into a collection path
+      description: |
+        Uploads a complete object using `multipart/form-data`.
+
+        The client specifies the target parent collection and child file name as
+        separate form fields. The server resolves the canonical iRODS object path
+        as `parent_path + "/" + file_name`.
+
+        Initial contract scope is whole-object upload only. Resumable upload and
+        chunk restart behavior are intentionally deferred to a future upload-session
+        design rather than overloading this operation with partial-write semantics.
+
+        Future server implementations may apply per-user saved defaults from the
+        user's iRODS home configuration, but explicit request values must take
+        precedence over saved defaults.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/PathContentsUploadRequest"
+            encoding:
+              content:
+                contentType: application/octet-stream
+      responses:
+        "201":
+          description: Object created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathContentsUploadResponse"
+        "200":
+          description: Existing object replaced because overwrite was enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathContentsUploadResponse"
+        "400":
+          description: Missing multipart fields or invalid parameter values
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Parent collection not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Target object already exists and overwrite is not enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          description: Request must use multipart/form-data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Unexpected server-side failure
           content:
             application/json:
               schema:
@@ -233,7 +641,7 @@ components:
           example: development
     PathEntry:
       type: object
-      required: [id, path, kind, zone]
+      required: [id, path, kind, zone, path_segments]
       properties:
         id:
           type: string
@@ -242,26 +650,90 @@ components:
         kind:
           type: string
           enum: [data_object, collection]
+        links:
+          $ref: "#/components/schemas/PathLinks"
         parent:
           $ref: "#/components/schemas/ParentLink"
+        path_segments:
+          type: array
+          description: Ordered collection path segments for the path resource, each with a display name and HATEOAS link.
+          items:
+            $ref: "#/components/schemas/PathSegmentLink"
         hasChildren:
           type: boolean
         childCount:
           type: integer
           format: int32
         checksum:
+          $ref: "#/components/schemas/PathChecksum"
+        mime_type:
           type: string
+          description: Inferred MIME type for a data object, based on the logical path extension.
         size:
           type: integer
           format: int64
+        display_size:
+          type: string
+          description: Human-readable size formatted automatically as B, KB, MB, or GB.
         zone:
           type: string
         resource:
           type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        replicas:
+          type: array
+          items:
+            $ref: "#/components/schemas/PathReplica"
         metadata:
           type: object
           additionalProperties:
             type: string
+    PathReplica:
+      type: object
+      required: [number]
+      properties:
+        number:
+          type: integer
+          format: int64
+        owner:
+          type: string
+        resource_name:
+          type: string
+        resource_hierarchy:
+          type: string
+        size:
+          type: integer
+          format: int64
+        display_size:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          description: Raw iRODS replica status value.
+        status_symbol:
+          type: string
+          description: ils-style replica status indicator such as `&`, `X`, or `?`.
+        status_description:
+          type: string
+          description: Human-readable interpretation of the replica status.
+        checksum:
+          type: string
+        data_type:
+          type: string
+        physical_path:
+          type: string
+    PathLinks:
+      type: object
+      properties:
+        avus:
+          $ref: "#/components/schemas/ActionLink"
     ParentLink:
       type: object
       required: [irods_path, href]
@@ -272,14 +744,226 @@ components:
           type: string
     PathChildrenResponse:
       type: object
-      required: [irods_path, children]
+      required: [irods_path, path_segments, children]
       properties:
         irods_path:
           type: string
+        path_segments:
+          type: array
+          description: Ordered collection path segments for the requested collection, each with a display name and HATEOAS link.
+          items:
+            $ref: "#/components/schemas/PathSegmentLink"
         children:
           type: array
           items:
             $ref: "#/components/schemas/PathEntry"
+    PathAVUResponse:
+      type: object
+      required: [irods_path, path_segments, avus]
+      properties:
+        irods_path:
+          type: string
+        path_segments:
+          type: array
+          description: Ordered collection path segments for the requested path, each with a display name and HATEOAS link.
+          items:
+            $ref: "#/components/schemas/PathSegmentLink"
+        avus:
+          type: array
+          items:
+            $ref: "#/components/schemas/AVUMetadata"
+    PathAVUSingleResponse:
+      type: object
+      required: [irods_path, path_segments, avu]
+      properties:
+        irods_path:
+          type: string
+        path_segments:
+          type: array
+          description: Ordered collection path segments for the requested path, each with a display name and HATEOAS link.
+          items:
+            $ref: "#/components/schemas/PathSegmentLink"
+        avu:
+          $ref: "#/components/schemas/AVUMetadata"
+    PathAVUCreateRequest:
+      type: object
+      required: [attrib, value]
+      properties:
+        attrib:
+          type: string
+        value:
+          type: string
+        unit:
+          type: string
+    PathChecksum:
+      type: object
+      properties:
+        checksum:
+          type: string
+        type:
+          type: string
+          description: Checksum type prefix such as `sha2` or `md5`.
+    PathChecksumResponse:
+      type: object
+      required: [irods_path, path_segments]
+      properties:
+        irods_path:
+          type: string
+        path_segments:
+          type: array
+          description: Ordered collection path segments for the requested data object, each with a display name and HATEOAS link.
+          items:
+            $ref: "#/components/schemas/PathSegmentLink"
+        checksum:
+          type: string
+        type:
+          type: string
+          description: Checksum type prefix such as `sha2` or `md5`.
+    AVUMetadata:
+      type: object
+      required: [id, attrib, value]
+      properties:
+        id:
+          type: string
+          description: Generic identifier for the AVU row as returned by iRODS.
+        attrib:
+          type: string
+          description: AVU attribute name.
+        value:
+          type: string
+          description: AVU value.
+        unit:
+          type: string
+          description: Optional AVU units value.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        links:
+          $ref: "#/components/schemas/AVULinks"
+    AVULinks:
+      type: object
+      properties:
+        update:
+          $ref: "#/components/schemas/ActionLink"
+        delete:
+          $ref: "#/components/schemas/ActionLink"
+    ActionLink:
+      type: object
+      required: [href]
+      properties:
+        href:
+          type: string
+        method:
+          type: string
+    PathSegmentLink:
+      type: object
+      required: [display_name, irods_path, href]
+      properties:
+        display_name:
+          type: string
+          description: Human-readable segment name for one level of the collection path.
+        irods_path:
+          type: string
+          description: Canonical iRODS path up to this segment.
+        href:
+          type: string
+          description: Relative REST link for displaying this collection level.
+    PathContentsUploadRequest:
+      type: object
+      required: [parent_path, file_name, content]
+      properties:
+        parent_path:
+          type: string
+          description: Absolute iRODS collection path that will contain the uploaded object.
+          example: /tempZone/home/alice/project
+        file_name:
+          type: string
+          description: Target data object name within `parent_path`.
+          example: sample.fastq.gz
+        content:
+          type: string
+          format: binary
+          description: Complete binary payload for the uploaded object.
+        checksum:
+          type: boolean
+          default: false
+          description: |
+            When true, request checksum calculation or verification during upload.
+            Future implementations may apply per-user saved defaults when this field
+            is omitted, but explicit request values override saved defaults.
+        overwrite:
+          type: boolean
+          default: false
+          description: |
+            When true, allow replacement of an existing object at the resolved path.
+            Future implementations may apply per-user saved defaults when this field
+            is omitted, but explicit request values override saved defaults.
+    PathContentsUploadResponse:
+      type: object
+      required: [path, parent_path, file_name, action, size, links]
+      properties:
+        path:
+          type: string
+          description: Resolved canonical iRODS object path.
+          example: /tempZone/home/alice/project/sample.fastq.gz
+        parent_path:
+          type: string
+          description: Canonical parent collection path that received the uploaded object.
+          example: /tempZone/home/alice/project
+        file_name:
+          type: string
+          description: Uploaded data object name.
+          example: sample.fastq.gz
+        action:
+          type: string
+          enum: [created, replaced]
+          description: Indicates whether the upload created a new object or replaced an existing object.
+        size:
+          type: integer
+          format: int64
+          description: Uploaded object size in bytes.
+        checksum:
+          $ref: "#/components/schemas/UploadChecksumInfo"
+        links:
+          $ref: "#/components/schemas/PathContentsUploadLinks"
+    UploadChecksumInfo:
+      type: object
+      required: [requested, verified]
+      properties:
+        requested:
+          type: boolean
+          description: True when the request explicitly asked for checksum handling.
+        verified:
+          type: boolean
+          description: True when checksum processing was completed by the server.
+        algorithm:
+          type: string
+          description: Checksum algorithm used by the server when checksum processing was completed.
+          example: sha2
+        value:
+          type: string
+          description: Calculated or verified checksum value.
+          example: 9d4e1e23bd5b727046a9e3b4b7db57bd8d6ee684
+    PathContentsUploadLinks:
+      type: object
+      required: [path, contents, parent]
+      properties:
+        path:
+          $ref: "#/components/schemas/ResourceLink"
+        contents:
+          $ref: "#/components/schemas/ResourceLink"
+        parent:
+          $ref: "#/components/schemas/ResourceLink"
+    ResourceLink:
+      type: object
+      required: [href]
+      properties:
+        href:
+          type: string
+          description: Relative REST link for the related resource.
     Error:
       type: object
       required: [code, message]

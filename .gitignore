@@ -26,3 +26,7 @@ go.work.sum
 .env
 .idea
 .gocache
+
+# Generated E2E fixture tree
+e2e/resources/test_folder/**
+!e2e/resources/test_folder/

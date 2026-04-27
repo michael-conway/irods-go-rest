@@ -12,6 +12,7 @@ import (
 	"github.com/michael-conway/irods-go-rest/internal/config"
 	"github.com/michael-conway/irods-go-rest/internal/httpapi"
 	"github.com/michael-conway/irods-go-rest/internal/irods"
+	"github.com/michael-conway/irods-go-rest/internal/restservice"
 )
 
 type App struct {
@@ -33,9 +34,10 @@ func listenAddr(publicURL string) string {
 
 func New(cfg config.RestConfig) *App {
 	catalog := irods.NewCatalogService(cfg)
+	paths := restservice.NewPathService(catalog)
 	authService := auth.NewKeycloakService(cfg)
 	sessionStore := auth.NewSessionStore()
-	handler := httpapi.NewHandler(cfg, catalog, authService, authService, sessionStore)
+	handler := httpapi.NewHandler(cfg, paths, authService, authService, sessionStore)
 
 	return &App{
 		server: &http.Server{

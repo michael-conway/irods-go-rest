@@ -1,0 +1,27 @@
+PublicURL: http://127.0.0.1:8080
+RestLogLevel: info
+
+IrodsHost: localhost
+IrodsPort: 1247
+IrodsZone: tempZone
+IrodsAdminUser: rods
+IrodsAdminPassword: rods
+IrodsAuthScheme: native
+IrodsNegotiationPolicy: request_server_negotiation
+IrodsDefaultResource: demoResc
+
+OidcUrl: https://localhost:8443
+OidcClientId: irods-go-rest
+OidcClientSecret: change-me
+OidcInsecureSkipVerify: false
+OidcRealm: drs
+OidcScope: openid profile email
+
+E2E:
+  BaseURL: http://127.0.0.1:8080
+  BasicUsername: test1
+  BasicPassword: test
+  IRODSUser: rods
+  IRODSPassword: rods
+  SkipTLSVerify: false
+  BearerToken: ""
