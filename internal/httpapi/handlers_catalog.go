@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/michael-conway/irods-go-rest/internal/domain"
 	"github.com/michael-conway/irods-go-rest/internal/irods"
@@ -96,6 +98,12 @@ func (h *Handler) getPathAVUs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	options, err := queryAVUListOptions(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
 	metadata, err := h.paths.GetPathMetadata(r.Context(), objectPath)
 	if err != nil {
 		if errors.Is(err, irods.ErrNotFound) {
@@ -111,10 +119,17 @@ func (h *Handler) getPathAVUs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	metadata, total := applyAVUListOptions(metadata, options)
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"irods_path":    objectPath,
 		"path_segments": buildPathSegments(objectPath),
+		"links":         pathLinksForEntry(objectPath),
 		"avus":          avuMetadataResponseList(r, objectPath, metadata),
+		"count":         len(metadata),
+		"total":         total,
+		"offset":        options.Offset,
+		"limit":         options.Limit,
 	})
 }
 
@@ -132,6 +147,10 @@ func (h *Handler) postPathAVU(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
+		return
+	}
+	if fields := avuValidationFields(request.Attrib, request.Value); len(fields) > 0 {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "AVU request validation failed", fields)
 		return
 	}
 
@@ -172,6 +191,10 @@ func (h *Handler) putPathAVU(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
+		return
+	}
+	if fields := avuValidationFields(request.Attrib, request.Value); len(fields) > 0 {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "AVU request validation failed", fields)
 		return
 	}
 
@@ -360,6 +383,146 @@ func queryVerboseLevel(r *http.Request) (int, error) {
 	}
 }
 
+type avuListOptions struct {
+	Attrib   string
+	Sort     string
+	Order    string
+	Limit    int
+	Offset   int
+	hasLimit bool
+}
+
+func queryAVUListOptions(r *http.Request) (avuListOptions, error) {
+	query := r.URL.Query()
+	options := avuListOptions{
+		Attrib: strings.TrimSpace(query.Get("attrib")),
+		Sort:   strings.TrimSpace(query.Get("sort")),
+		Order:  strings.ToLower(strings.TrimSpace(query.Get("order"))),
+	}
+
+	if options.Sort != "" {
+		switch options.Sort {
+		case "id", "attrib", "value", "unit", "created_at", "updated_at":
+		default:
+			return avuListOptions{}, fmt.Errorf("sort query parameter must be one of id, attrib, value, unit, created_at, or updated_at")
+		}
+	}
+
+	if options.Order == "" {
+		options.Order = "asc"
+	}
+	switch options.Order {
+	case "asc", "desc":
+	default:
+		return avuListOptions{}, fmt.Errorf("order query parameter must be asc or desc")
+	}
+
+	if rawLimit := strings.TrimSpace(query.Get("limit")); rawLimit != "" {
+		limit, err := strconv.Atoi(rawLimit)
+		if err != nil || limit < 1 || limit > 1000 {
+			return avuListOptions{}, fmt.Errorf("limit query parameter must be an integer from 1 through 1000")
+		}
+		options.Limit = limit
+		options.hasLimit = true
+	}
+
+	if rawOffset := strings.TrimSpace(query.Get("offset")); rawOffset != "" {
+		offset, err := strconv.Atoi(rawOffset)
+		if err != nil || offset < 0 {
+			return avuListOptions{}, fmt.Errorf("offset query parameter must be a non-negative integer")
+		}
+		options.Offset = offset
+	}
+
+	return options, nil
+}
+
+func applyAVUListOptions(metadata []domain.AVUMetadata, options avuListOptions) ([]domain.AVUMetadata, int) {
+	filtered := metadata
+	if options.Attrib != "" {
+		filtered = make([]domain.AVUMetadata, 0, len(metadata))
+		for _, avu := range metadata {
+			if avu.Attrib == options.Attrib {
+				filtered = append(filtered, avu)
+			}
+		}
+	}
+
+	if options.Sort != "" {
+		sort.SliceStable(filtered, func(i, j int) bool {
+			cmp := compareAVUMetadata(filtered[i], filtered[j], options.Sort)
+			if options.Order == "desc" {
+				return cmp > 0
+			}
+			return cmp < 0
+		})
+	}
+
+	total := len(filtered)
+	if options.Offset >= total {
+		return nil, total
+	}
+
+	start := options.Offset
+	end := total
+	if options.hasLimit && start+options.Limit < end {
+		end = start + options.Limit
+	}
+
+	return filtered[start:end], total
+}
+
+func compareAVUMetadata(left domain.AVUMetadata, right domain.AVUMetadata, field string) int {
+	switch field {
+	case "id":
+		return strings.Compare(left.ID, right.ID)
+	case "attrib":
+		return strings.Compare(left.Attrib, right.Attrib)
+	case "value":
+		return strings.Compare(left.Value, right.Value)
+	case "unit":
+		return strings.Compare(left.Unit, right.Unit)
+	case "created_at":
+		return compareOptionalTime(left.CreatedAt, right.CreatedAt)
+	case "updated_at":
+		return compareOptionalTime(left.UpdatedAt, right.UpdatedAt)
+	default:
+		return 0
+	}
+}
+
+func compareOptionalTime(left *time.Time, right *time.Time) int {
+	switch {
+	case left == nil && right == nil:
+		return 0
+	case left == nil:
+		return -1
+	case right == nil:
+		return 1
+	case left.Before(*right):
+		return -1
+	case left.After(*right):
+		return 1
+	default:
+		return 0
+	}
+}
+
+func avuValidationFields(attrib string, value string) map[string]string {
+	fields := map[string]string{}
+	if strings.TrimSpace(attrib) == "" {
+		fields["attrib"] = "attribute is required"
+	}
+	if strings.TrimSpace(value) == "" {
+		fields["value"] = "value is required"
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+
+	return fields
+}
+
 func pathEntryResponse(r *http.Request, entry domain.PathEntry) domain.PathEntry {
 	entry.Links = pathLinksForEntry(entry.Path)
 	entry.Parent = buildParentLink(r, entry.Path)
@@ -421,10 +584,15 @@ func pathLinksForEntry(irodsPath string) *domain.PathLinks {
 		return nil
 	}
 
+	avuPath := "/api/v1/path/avu?irods_path=" + url.QueryEscape(irodsPath)
 	return &domain.PathLinks{
 		AVUs: &domain.ActionLink{
-			Href:   "/api/v1/path/avu?irods_path=" + url.QueryEscape(irodsPath),
+			Href:   avuPath,
 			Method: http.MethodGet,
+		},
+		CreateAVU: &domain.ActionLink{
+			Href:   avuPath,
+			Method: http.MethodPost,
 		},
 	}
 }

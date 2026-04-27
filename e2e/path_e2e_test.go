@@ -4,6 +4,7 @@
 package e2e
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"mime"
@@ -431,6 +432,98 @@ func TestPostAndDeletePathAVUBasicAuthE2E(t *testing.T) {
 	}
 }
 
+func TestDataObjectAVUCreateDeleteReloadBasicAuthE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	fixture := requireE2EFixture(t)
+	client := newE2EHTTPClient()
+
+	filesystem := newE2EIRODSFilesystem(t)
+	objectPath := fixture.missingPath + ".avu-roundtrip"
+	t.Cleanup(func() {
+		defer filesystem.Release()
+		if err := filesystem.RemoveFile(objectPath, true); err != nil && filesystem.Exists(objectPath) {
+			t.Errorf("cleanup object %q: %v", objectPath, err)
+		}
+	})
+
+	if _, err := filesystem.UploadFileFromBuffer(bytes.NewBufferString("e2e avu round-trip payload\n"), objectPath, "", false, false, nil); err != nil {
+		t.Fatalf("upload object %q: %v", objectPath, err)
+	}
+
+	req := newE2ERequest(t, http.MethodGet, pathURL(baseURL, "/api/v1/path", objectPath), nil)
+	setBasicAuth(req)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("perform object lookup request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from object lookup, got %d", resp.StatusCode)
+	}
+
+	var object struct {
+		Path string `json:"path"`
+		Kind string `json:"kind"`
+	}
+	decodeJSON(t, resp.Body, &object)
+	if object.Path != objectPath || object.Kind != "data_object" {
+		t.Fatalf("unexpected object lookup response %+v", object)
+	}
+
+	firstAVU := createPathAVUE2E(t, client, baseURL, objectPath, `{"attrib":"e2e.roundtrip.first","value":"keep","unit":"test"}`)
+	secondAVU := createPathAVUE2E(t, client, baseURL, objectPath, `{"attrib":"e2e.roundtrip.second","value":"delete","unit":"test"}`)
+
+	req = newE2ERequest(t, http.MethodDelete, strings.TrimRight(baseURL, "/")+"/api/v1/path/avu/"+url.PathEscape(secondAVU.ID)+"?irods_path="+url.QueryEscape(objectPath), nil)
+	setBasicAuth(req)
+
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("perform AVU delete request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204 from AVU delete, got %d", resp.StatusCode)
+	}
+
+	req = newE2ERequest(t, http.MethodGet, pathURL(baseURL, "/api/v1/path/avu", objectPath), nil)
+	setBasicAuth(req)
+
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("perform AVU reload request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from AVU reload, got %d", resp.StatusCode)
+	}
+
+	var reloaded struct {
+		Count int `json:"count"`
+		Total int `json:"total"`
+		AVUs  []struct {
+			ID     string `json:"id"`
+			Attrib string `json:"attrib"`
+			Value  string `json:"value"`
+			Unit   string `json:"unit"`
+		} `json:"avus"`
+	}
+	decodeJSON(t, resp.Body, &reloaded)
+
+	if reloaded.Count != 1 || reloaded.Total != 1 || len(reloaded.AVUs) != 1 {
+		t.Fatalf("expected one AVU after reload, got %+v", reloaded)
+	}
+	if reloaded.AVUs[0].ID != firstAVU.ID || reloaded.AVUs[0].Attrib != firstAVU.Attrib || reloaded.AVUs[0].Value != firstAVU.Value || reloaded.AVUs[0].Unit != firstAVU.Unit {
+		t.Fatalf("expected remaining AVU %+v, got %+v", firstAVU, reloaded.AVUs[0])
+	}
+	if reloaded.AVUs[0].ID == secondAVU.ID {
+		t.Fatalf("expected deleted AVU %q to stay removed after reload", secondAVU.ID)
+	}
+}
+
 func TestPutPathAVUBasicAuthE2E(t *testing.T) {
 	baseURL := requireE2EBaseURL(t)
 	fixture := requireE2EFixture(t)
@@ -722,6 +815,42 @@ func pathURLWithQuery(baseURL string, route string, irodsPath string, extraQuery
 	}
 
 	return url + "&" + extraQuery
+}
+
+type pathAVUE2E struct {
+	ID     string `json:"id"`
+	Attrib string `json:"attrib"`
+	Value  string `json:"value"`
+	Unit   string `json:"unit"`
+}
+
+func createPathAVUE2E(t *testing.T, client *http.Client, baseURL string, irodsPath string, body string) pathAVUE2E {
+	t.Helper()
+
+	req := newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path/avu", irodsPath), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	setBasicAuth(req)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("perform AVU create request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 from AVU create, got %d", resp.StatusCode)
+	}
+
+	var created struct {
+		AVU pathAVUE2E `json:"avu"`
+	}
+	decodeJSON(t, resp.Body, &created)
+
+	if strings.TrimSpace(created.AVU.ID) == "" {
+		t.Fatal("expected created AVU id to be populated")
+	}
+
+	return created.AVU
 }
 
 func decodeJSON(t *testing.T, body io.Reader, target any) {

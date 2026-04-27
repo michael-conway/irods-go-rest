@@ -138,6 +138,38 @@ paths:
           schema:
             type: string
           description: Full iRODS absolute logical path to a file or collection.
+        - in: query
+          name: attrib
+          schema:
+            type: string
+          description: Exact AVU attribute name to include in the response.
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum: [id, attrib, value, unit, created_at, updated_at]
+          description: AVU field to sort by.
+        - in: query
+          name: order
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+          description: Sort direction when sort is provided.
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+          description: Maximum number of AVUs to return.
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Number of filtered AVUs to skip before returning results.
       responses:
         "200":
           description: AVUs for the requested path
@@ -146,7 +178,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/PathAVUResponse"
         "400":
-          description: Missing irods_path query parameter
+          description: Missing irods_path query parameter or invalid list option
           content:
             application/json:
               schema:
@@ -734,6 +766,8 @@ components:
       properties:
         avus:
           $ref: "#/components/schemas/ActionLink"
+        create_avu:
+          $ref: "#/components/schemas/ActionLink"
     ParentLink:
       type: object
       required: [irods_path, href]
@@ -768,10 +802,24 @@ components:
           description: Ordered collection path segments for the requested path, each with a display name and HATEOAS link.
           items:
             $ref: "#/components/schemas/PathSegmentLink"
+        links:
+          $ref: "#/components/schemas/PathLinks"
         avus:
           type: array
           items:
             $ref: "#/components/schemas/AVUMetadata"
+        count:
+          type: integer
+          description: Number of AVUs returned after filtering and pagination.
+        total:
+          type: integer
+          description: Number of AVUs matching the filter before pagination.
+        offset:
+          type: integer
+          description: Number of matching AVUs skipped before returning results.
+        limit:
+          type: integer
+          description: Requested page size, or 0 when no limit was requested.
     PathAVUSingleResponse:
       type: object
       required: [irods_path, path_segments, avu]
@@ -972,3 +1020,8 @@ components:
           type: string
         message:
           type: string
+        fields:
+          type: object
+          description: Optional field-level validation messages keyed by request field name.
+          additionalProperties:
+            type: string

@@ -11,8 +11,16 @@ Use:
 - `GET /api/v1/path?irods_path=...` for generic path lookup
 - `/api/v1/path/children` for collection children
 - `/api/v1/path/contents` for data object bytes
+- `/api/v1/path/avu` for path-scoped AVU metadata rows
 
 Keep `irods_path` as the identifier input. Do not move full iRODS paths into URL path segments unless there is a strong reason.
+
+For AVUs, keep the path as `irods_path` and the AVU row identifier as the child resource identifier:
+
+- `GET /api/v1/path/avu?irods_path=...`
+- `POST /api/v1/path/avu?irods_path=...`
+- `PUT /api/v1/path/avu/{avu_id}?irods_path=...`
+- `DELETE /api/v1/path/avu/{avu_id}?irods_path=...`
 
 ## Code layout
 
