@@ -17,6 +17,7 @@ import (
 	"time"
 
 	irodsfs "github.com/cyverse/go-irodsclient/fs"
+	irodslibfs "github.com/cyverse/go-irodsclient/irods/fs"
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
 )
 
@@ -280,6 +281,50 @@ func uploadLocalFixtureTree(filesystem *irodsfs.FileSystem, localRootPath string
 
 		return nil
 	})
+}
+
+func requireE2EChecksum(t *testing.T, irodsPath string) {
+	t.Helper()
+
+	filesystem := newE2EIRODSFilesystem(t)
+	defer filesystem.Release()
+
+	conn, err := filesystem.GetMetadataConnection(false)
+	if err != nil {
+		t.Fatalf("get metadata connection for %q: %v", irodsPath, err)
+	}
+	defer filesystem.ReturnMetadataConnection(conn) //nolint:errcheck
+
+	checksum, err := irodslibfs.GetDataObjectChecksum(conn, irodsPath, "")
+	if err != nil {
+		t.Fatalf("compute checksum for %q: %v", irodsPath, err)
+	}
+	if checksum == nil || strings.TrimSpace(checksum.IRODSChecksumString) == "" {
+		t.Fatalf("expected computed checksum for %q to be populated", irodsPath)
+	}
+}
+
+func requireE2EChecksummedObjectPath(t *testing.T, fixture *e2eFixture) string {
+	t.Helper()
+
+	if fixture == nil {
+		t.Fatal("expected fixture to be populated")
+	}
+
+	filesystem := newE2EIRODSFilesystem(t)
+	defer filesystem.Release()
+
+	destPath := irodsJoin(
+		fixture.irodsRootPath,
+		"checksummed-"+randomToken(mathrand.New(mathrand.NewSource(time.Now().UnixNano())), 8)+filepath.Ext(fixture.objectPath),
+	)
+
+	if err := filesystem.CopyFile(fixture.objectPath, destPath, true); err != nil {
+		t.Fatalf("copy %q to %q for checksum setup: %v", fixture.objectPath, destPath, err)
+	}
+
+	requireE2EChecksum(t, destPath)
+	return destPath
 }
 
 func generatedCollectionName(rng *mathrand.Rand) string {

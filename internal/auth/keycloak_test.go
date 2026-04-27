@@ -3,9 +3,13 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -13,13 +17,8 @@ import (
 )
 
 func TestAuthorizationURL(t *testing.T) {
-	service := NewKeycloakService(config.RestConfig{
-		OidcUrl:      "http://keycloak.local",
-		OidcRealm:    "demo",
-		OidcClientId: "irods-rest",
-		PublicURL:    "http://localhost:8080",
-		OidcScope:    "openid profile email",
-	})
+	cfg := keycloakUnitTestConfig(t)
+	service := NewKeycloakService(cfg)
 
 	redirectURL, err := service.AuthorizationURL("state123")
 	if err != nil {
@@ -31,20 +30,21 @@ func TestAuthorizationURL(t *testing.T) {
 		t.Fatalf("parse authorization url: %v", err)
 	}
 
-	if parsed.Path != "/realms/demo/protocol/openid-connect/auth" {
+	if parsed.Path != fmt.Sprintf("/realms/%s/protocol/openid-connect/auth", cfg.OidcRealm) {
 		t.Fatalf("unexpected path: %s", parsed.Path)
 	}
 
-	assertQueryValue(t, parsed.Query(), "client_id", "irods-rest")
-	assertQueryValue(t, parsed.Query(), "redirect_uri", "http://localhost:8080/web/callback")
+	assertQueryValue(t, parsed.Query(), "client_id", cfg.OidcClientId)
+	assertQueryValue(t, parsed.Query(), "redirect_uri", strings.TrimRight(cfg.PublicURL, "/")+"/web/callback")
 	assertQueryValue(t, parsed.Query(), "response_type", "code")
-	assertQueryValue(t, parsed.Query(), "scope", "openid profile email")
+	assertQueryValue(t, parsed.Query(), "scope", cfg.OidcScope)
 	assertQueryValue(t, parsed.Query(), "state", "state123")
 }
 
 func TestExchangeCodeSuccess(t *testing.T) {
+	cfg := keycloakUnitTestConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/realms/demo/protocol/openid-connect/token" {
+		if r.URL.Path != fmt.Sprintf("/realms/%s/protocol/openid-connect/token", cfg.OidcRealm) {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 
@@ -57,10 +57,10 @@ func TestExchangeCodeSuccess(t *testing.T) {
 		}
 
 		assertQueryValue(t, r.Form, "grant_type", "authorization_code")
-		assertQueryValue(t, r.Form, "client_id", "irods-rest")
-		assertQueryValue(t, r.Form, "client_secret", "secret")
+		assertQueryValue(t, r.Form, "client_id", cfg.OidcClientId)
+		assertQueryValue(t, r.Form, "client_secret", cfg.OidcClientSecret)
 		assertQueryValue(t, r.Form, "code", "code123")
-		assertQueryValue(t, r.Form, "redirect_uri", "http://localhost:8080/web/callback")
+		assertQueryValue(t, r.Form, "redirect_uri", strings.TrimRight(cfg.PublicURL, "/")+"/web/callback")
 
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"access_token":  "abc123",
@@ -73,13 +73,8 @@ func TestExchangeCodeSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	service := NewKeycloakService(config.RestConfig{
-		OidcUrl:      "http://keycloak.local",
-		OidcRealm:    "demo",
-		OidcClientId: "irods-rest",
-		PublicURL:    "http://localhost:8080",
-		OidcScope:    "openid profile email",
-	})
+	cfg.OidcUrl = server.URL
+	service := NewKeycloakService(cfg)
 
 	token, err := service.ExchangeCode(context.Background(), "code123")
 	if err != nil {
@@ -92,8 +87,9 @@ func TestExchangeCodeSuccess(t *testing.T) {
 }
 
 func TestVerifyTokenSuccess(t *testing.T) {
+	cfg := keycloakUnitTestConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/realms/demo/protocol/openid-connect/token/introspect" {
+		if r.URL.Path != fmt.Sprintf("/realms/%s/protocol/openid-connect/token/introspect", cfg.OidcRealm) {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 
@@ -102,8 +98,8 @@ func TestVerifyTokenSuccess(t *testing.T) {
 		}
 
 		assertQueryValue(t, r.Form, "token", "abc123")
-		assertQueryValue(t, r.Form, "client_id", "irods-rest")
-		assertQueryValue(t, r.Form, "client_secret", "secret")
+		assertQueryValue(t, r.Form, "client_id", cfg.OidcClientId)
+		assertQueryValue(t, r.Form, "client_secret", cfg.OidcClientSecret)
 
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"active":             true,
@@ -114,13 +110,8 @@ func TestVerifyTokenSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	service := NewKeycloakService(config.RestConfig{
-		OidcUrl:      "http://keycloak.local",
-		OidcRealm:    "demo",
-		OidcClientId: "irods-rest",
-		PublicURL:    "http://localhost:8080",
-		OidcScope:    "openid profile email",
-	})
+	cfg.OidcUrl = server.URL
+	service := NewKeycloakService(cfg)
 
 	principal, err := service.VerifyToken(context.Background(), "abc123")
 	if err != nil {
@@ -133,13 +124,7 @@ func TestVerifyTokenSuccess(t *testing.T) {
 }
 
 func TestNewState(t *testing.T) {
-	service := NewKeycloakService(config.RestConfig{
-		OidcUrl:      "http://keycloak.local",
-		OidcRealm:    "demo",
-		OidcClientId: "irods-rest",
-		PublicURL:    "http://localhost:8080",
-		OidcScope:    "openid profile email",
-	})
+	service := NewKeycloakService(keycloakUnitTestConfig(t))
 
 	state, err := service.NewState()
 	if err != nil {
@@ -156,5 +141,91 @@ func assertQueryValue(t *testing.T, values url.Values, key string, expected stri
 
 	if got := values.Get(key); got != expected {
 		t.Fatalf("expected %s=%q, got %q", key, expected, got)
+	}
+}
+
+func keycloakUnitTestConfig(t *testing.T) config.RestConfig {
+	t.Helper()
+
+	repoRoot, err := authRepoRoot()
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+
+	cfg, err := keycloakUnitTestRestConfig(repoRoot)
+	if err != nil {
+		t.Fatalf("load unit test rest config: %v", err)
+	}
+
+	if strings.TrimSpace(cfg.PublicURL) == "" {
+		cfg.PublicURL = "http://localhost:8080"
+	}
+	if strings.TrimSpace(cfg.OidcScope) == "" {
+		cfg.OidcScope = "openid profile email"
+	}
+
+	requireConfiguredTestValue(t, "OidcUrl", cfg.OidcUrl)
+	requireConfiguredTestValue(t, "OidcRealm", cfg.OidcRealm)
+	requireConfiguredTestValue(t, "OidcClientId", cfg.OidcClientId)
+	requireConfiguredTestValue(t, "OidcClientSecret", cfg.OidcClientSecret)
+
+	return cfg
+}
+
+func keycloakUnitTestRestConfig(repoRoot string) (config.RestConfig, error) {
+	configFile := strings.TrimSpace(os.Getenv("GOREST_E2E_CONFIG_FILE"))
+	if configFile == "" {
+		return config.RestConfig{}, nil
+	}
+
+	resolvedConfigPath, err := resolveAuthConfigPath(repoRoot, configFile)
+	if err != nil {
+		return config.RestConfig{}, err
+	}
+
+	originalConfigFile := os.Getenv(config.ConfigFileEnvVar)
+	if err := os.Setenv(config.ConfigFileEnvVar, resolvedConfigPath); err != nil {
+		return config.RestConfig{}, fmt.Errorf("set %s: %w", config.ConfigFileEnvVar, err)
+	}
+	defer func() {
+		_ = os.Setenv(config.ConfigFileEnvVar, originalConfigFile)
+	}()
+
+	cfg, err := config.ReadRestConfig("", "", nil)
+	if err != nil {
+		return config.RestConfig{}, fmt.Errorf("read rest config from GOREST_E2E_CONFIG_FILE=%q: %w", resolvedConfigPath, err)
+	}
+
+	return *cfg, nil
+}
+
+func resolveAuthConfigPath(repoRoot string, configFile string) (string, error) {
+	configFile = strings.TrimSpace(configFile)
+	if configFile == "" {
+		return "", fmt.Errorf("empty config file path")
+	}
+
+	if filepath.IsAbs(configFile) {
+		return configFile, nil
+	}
+
+	return filepath.Join(repoRoot, configFile), nil
+}
+
+func authRepoRoot() (string, error) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", fmt.Errorf("runtime caller unavailable")
+	}
+
+	internalDir := filepath.Dir(filepath.Dir(filename))
+	return filepath.Dir(internalDir), nil
+}
+
+func requireConfiguredTestValue(t *testing.T, field string, value string) {
+	t.Helper()
+
+	if strings.TrimSpace(value) == "" {
+		t.Skipf("keycloak unit tests require %s in GOREST_E2E_CONFIG_FILE", field)
 	}
 }
