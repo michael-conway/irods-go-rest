@@ -34,15 +34,17 @@ const swaggerUIHTML = `<!DOCTYPE html>
 type Handler struct {
 	cfg        config.RestConfig
 	paths      restservice.PathService
+	tickets    restservice.TicketService
 	authFlow   auth.AuthFlowService
 	verifier   auth.TokenVerifier
 	webSession *auth.SessionStore
 }
 
-func NewHandler(cfg config.RestConfig, paths restservice.PathService, authFlow auth.AuthFlowService, verifier auth.TokenVerifier, webSession *auth.SessionStore) *Handler {
+func NewHandler(cfg config.RestConfig, paths restservice.PathService, tickets restservice.TicketService, authFlow auth.AuthFlowService, verifier auth.TokenVerifier, webSession *auth.SessionStore) *Handler {
 	return &Handler{
 		cfg:        cfg,
 		paths:      paths,
+		tickets:    tickets,
 		authFlow:   authFlow,
 		verifier:   verifier,
 		webSession: webSession,
@@ -66,8 +68,14 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("DELETE /api/v1/path/avu/{avu_id}", h.requireBearer(http.HandlerFunc(h.deletePathAVU)))
 	mux.Handle("GET /api/v1/path/checksum", h.requireBearer(http.HandlerFunc(h.getPathChecksum)))
 	mux.Handle("POST /api/v1/path/checksum", h.requireBearer(http.HandlerFunc(h.postPathChecksum)))
+	mux.Handle("POST /api/v1/path/ticket", h.requireBearer(http.HandlerFunc(h.postPathTicket)))
 	mux.Handle("HEAD /api/v1/path/contents", h.requireDownloadBearer(http.HandlerFunc(h.headPathContents)))
 	mux.Handle("GET /api/v1/path/contents", h.requireDownloadBearer(http.HandlerFunc(h.getPathContents)))
+	mux.Handle("GET /api/v1/ticket", h.requireBearer(http.HandlerFunc(h.getTickets)))
+	mux.Handle("POST /api/v1/ticket", h.requireBearer(http.HandlerFunc(h.postTicket)))
+	mux.Handle("GET /api/v1/ticket/{ticket_name}", h.requireBearer(http.HandlerFunc(h.getTicket)))
+	mux.Handle("PATCH /api/v1/ticket/{ticket_name}", h.requireBearer(http.HandlerFunc(h.patchTicket)))
+	mux.Handle("DELETE /api/v1/ticket/{ticket_name}", h.requireBearer(http.HandlerFunc(h.deleteTicket)))
 
 	return requestLogger(mux)
 }

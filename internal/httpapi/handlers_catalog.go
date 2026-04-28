@@ -352,6 +352,10 @@ func queryIRODSPath(r *http.Request) string {
 	return strings.TrimSpace(r.URL.Query().Get("irods_path"))
 }
 
+func queryTicketID(r *http.Request) string {
+	return strings.TrimSpace(r.URL.Query().Get("ticket_id"))
+}
+
 func writePathError(w http.ResponseWriter, err error) {
 	if errors.Is(err, irods.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
@@ -592,6 +596,10 @@ func pathLinksForEntry(irodsPath string) *domain.PathLinks {
 		},
 		CreateAVU: &domain.ActionLink{
 			Href:   avuPath,
+			Method: http.MethodPost,
+		},
+		CreateTicket: &domain.ActionLink{
+			Href:   "/api/v1/path/ticket?irods_path=" + url.QueryEscape(irodsPath),
 			Method: http.MethodPost,
 		},
 	}

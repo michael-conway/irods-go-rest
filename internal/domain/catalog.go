@@ -58,8 +58,9 @@ type AVUMetadata struct {
 }
 
 type PathLinks struct {
-	AVUs      *ActionLink `json:"avus,omitempty"`
-	CreateAVU *ActionLink `json:"create_avu,omitempty"`
+	AVUs         *ActionLink `json:"avus,omitempty"`
+	CreateAVU    *ActionLink `json:"create_avu,omitempty"`
+	CreateTicket *ActionLink `json:"create_ticket,omitempty"`
 }
 
 type AVULinks struct {
@@ -96,4 +97,30 @@ type ObjectContent struct {
 type RangeReadCloser interface {
 	io.ReaderAt
 	io.Closer
+}
+
+type Ticket struct {
+	Name           string       `json:"name"`
+	BearerToken    string       `json:"bearer_token,omitempty"`
+	Type           string       `json:"type,omitempty"`
+	Owner          string       `json:"owner,omitempty"`
+	OwnerZone      string       `json:"owner_zone,omitempty"`
+	ObjectType     string       `json:"object_type,omitempty"`
+	Path           string       `json:"irods_path,omitempty"`
+	UsesLimit      int64        `json:"uses_limit,omitempty"`
+	UsesCount      int64        `json:"uses_count,omitempty"`
+	WriteFileLimit int64        `json:"write_file_limit,omitempty"`
+	WriteFileCount int64        `json:"write_file_count,omitempty"`
+	WriteByteLimit int64        `json:"write_byte_limit,omitempty"`
+	WriteByteCount int64        `json:"write_byte_count,omitempty"`
+	ExpirationTime *time.Time   `json:"expiration_time,omitempty"`
+	Links          *TicketLinks `json:"links,omitempty"`
+}
+
+type TicketLinks struct {
+	Self     *ActionLink `json:"self,omitempty"`
+	Update   *ActionLink `json:"update,omitempty"`
+	Delete   *ActionLink `json:"delete,omitempty"`
+	Path     *ActionLink `json:"path,omitempty"`
+	Download *ActionLink `json:"download,omitempty"`
 }

@@ -56,6 +56,14 @@ type CatalogFileSystem interface {
 	DeleteMetadata(irodsPath string, avuID int64) error
 	ComputeChecksum(irodsPath string, resource string) (*irodstypes.IRODSChecksum, error)
 	OpenFile(irodsPath string, resource string, mode string) (CatalogFileHandle, error)
+	GetTicket(ticketName string) (*irodstypes.IRODSTicket, error)
+	ListTickets() ([]*irodstypes.IRODSTicket, error)
+	CreateTicket(ticketName string, ticketType irodstypes.TicketType, path string) error
+	DeleteTicket(ticketName string) error
+	ModifyTicketUseLimit(ticketName string, uses int64) error
+	ClearTicketUseLimit(ticketName string) error
+	ModifyTicketExpirationTime(ticketName string, expirationTime time.Time) error
+	ClearTicketExpirationTime(ticketName string) error
 	Release()
 }
 
@@ -645,6 +653,38 @@ func (a *catalogFileSystemAdapter) ComputeChecksum(irodsPath string, resource st
 
 func (a *catalogFileSystemAdapter) OpenFile(irodsPath string, resource string, mode string) (CatalogFileHandle, error) {
 	return a.filesystem.OpenFile(irodsPath, resource, mode)
+}
+
+func (a *catalogFileSystemAdapter) GetTicket(ticketName string) (*irodstypes.IRODSTicket, error) {
+	return a.filesystem.GetTicket(ticketName)
+}
+
+func (a *catalogFileSystemAdapter) ListTickets() ([]*irodstypes.IRODSTicket, error) {
+	return a.filesystem.ListTickets()
+}
+
+func (a *catalogFileSystemAdapter) CreateTicket(ticketName string, ticketType irodstypes.TicketType, path string) error {
+	return a.filesystem.CreateTicket(ticketName, ticketType, path)
+}
+
+func (a *catalogFileSystemAdapter) DeleteTicket(ticketName string) error {
+	return a.filesystem.DeleteTicket(ticketName)
+}
+
+func (a *catalogFileSystemAdapter) ModifyTicketUseLimit(ticketName string, uses int64) error {
+	return a.filesystem.ModifyTicketUseLimit(ticketName, uses)
+}
+
+func (a *catalogFileSystemAdapter) ClearTicketUseLimit(ticketName string) error {
+	return a.filesystem.ClearTicketUseLimit(ticketName)
+}
+
+func (a *catalogFileSystemAdapter) ModifyTicketExpirationTime(ticketName string, expirationTime time.Time) error {
+	return a.filesystem.ModifyTicketExpirationTime(ticketName, expirationTime)
+}
+
+func (a *catalogFileSystemAdapter) ClearTicketExpirationTime(ticketName string) error {
+	return a.filesystem.ClearTicketExpirationTime(ticketName)
 }
 
 func (a *catalogFileSystemAdapter) Release() {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -408,7 +409,7 @@ func TestGetPathAVUsReturnsAVUList(t *testing.T) {
 		`"attrib":"source"`,
 		`"value":"test"`,
 		`"unit":"fixture"`,
-		`"links":{"avus":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"},"create_avu":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"}}`,
+		`"links":{"avus":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"},"create_avu":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"},"create_ticket":{"href":"/api/v1/path/ticket?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"}}`,
 		`"update":{"href":"/api/v1/path/avu/701?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"PUT"}`,
 		`"delete":{"href":"/api/v1/path/avu/701?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"DELETE"}`,
 		`"count":1`,
@@ -663,6 +664,22 @@ func TestGetPathContentsAcceptsIRODSTicketBearer(t *testing.T) {
 	}
 }
 
+func TestGetPathContentsAcceptsTicketIDQueryWithoutAuthorization(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt&ticket_id=ticket123", nil)
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); body != "hello content payload" {
+		t.Fatalf("unexpected content body %q", body)
+	}
+}
+
 func TestGetPathContentsAcceptsBasicAuth(t *testing.T) {
 	handler := testHandler(t)
 
@@ -674,6 +691,76 @@ func TestGetPathContentsAcceptsBasicAuth(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestPostPathTicketCreatesAnonymousTicket(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/ticket?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(`{"maximum_uses":5,"lifetime_minutes":30}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"ticket":{"name":"ticket_`, `"bearer_token":"irods-ticket:ticket_`, `"irods_path":"/tempZone/home/test1/file.txt"`, `"download":{"href":"/api/v1/path/contents?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt\u0026ticket_id=ticket_`, `"method":"GET"}`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestGetTicketsReturnsOwnedTickets(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/ticket", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"tickets":[`, `"name":"ticket-existing"`, `"self":{"href":"/api/v1/ticket/ticket-existing","method":"GET"}`, `"create":{"href":"/api/v1/ticket","method":"POST"}`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestPatchTicketUpdatesLimits(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/ticket/ticket-existing", strings.NewReader(`{"maximum_uses":0,"lifetime_minutes":0}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"name":"ticket-existing"`, `"uses_count":1`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+	if strings.Contains(rec.Body.String(), `"expiration_time"`) {
+		t.Fatalf("expected expiration_time to be cleared, got %q", rec.Body.String())
+	}
+}
+
+func TestDeleteTicketRemovesTicket(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/ticket/ticket-existing", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rec.Code)
 	}
 }
 
@@ -792,7 +879,14 @@ func testHandler(t *testing.T) *Handler {
 		return filesystem, nil
 	}
 
-	return NewHandler(*cfg, restservice.NewPathService(irods.NewCatalogServiceWithFactory(*cfg, factory)), stubAuthService{}, stubAuthService{}, auth.NewSessionStore())
+	return NewHandler(
+		*cfg,
+		restservice.NewPathService(irods.NewCatalogServiceWithFactory(*cfg, factory)),
+		restservice.NewTicketService(irods.NewTicketServiceWithFactory(*cfg, factory)),
+		stubAuthService{},
+		stubAuthService{},
+		auth.NewSessionStore(),
+	)
 }
 
 type testCatalogFileSystem struct {
@@ -800,6 +894,7 @@ type testCatalogFileSystem struct {
 	childrenByPath map[string][]*irodsfs.Entry
 	metadataByPath map[string][]*irodstypes.IRODSMeta
 	contentByPath  map[string][]byte
+	ticketsByName  map[string]*irodstypes.IRODSTicket
 }
 
 func newTestCatalogFileSystem() *testCatalogFileSystem {
@@ -901,6 +996,21 @@ func newTestCatalogFileSystem() *testCatalogFileSystem {
 		contentByPath: map[string][]byte{
 			file.Path:  []byte("hello content payload"),
 			child.Path: []byte("child content payload"),
+		},
+		ticketsByName: map[string]*irodstypes.IRODSTicket{
+			"ticket-existing": {
+				ID:             900,
+				Name:           "ticket-existing",
+				Type:           irodstypes.TicketTypeRead,
+				Owner:          "alice",
+				OwnerZone:      "tempZone",
+				ObjectType:     "data",
+				Path:           file.Path,
+				UsesLimit:      5,
+				UsesCount:      1,
+				WriteFileLimit: 10,
+				ExpirationTime: now.Add(30 * time.Minute),
+			},
 		},
 	}
 }
@@ -1013,6 +1123,75 @@ func (f *testCatalogFileSystem) OpenFile(irodsPath string, _ string, _ string) (
 }
 
 func (f *testCatalogFileSystem) Release() {}
+
+func (f *testCatalogFileSystem) GetTicket(ticketName string) (*irodstypes.IRODSTicket, error) {
+	ticket, ok := f.ticketsByName[ticketName]
+	if !ok {
+		return nil, irodstypes.NewTicketNotFoundError(ticketName)
+	}
+	return ticket, nil
+}
+
+func (f *testCatalogFileSystem) ListTickets() ([]*irodstypes.IRODSTicket, error) {
+	results := make([]*irodstypes.IRODSTicket, 0, len(f.ticketsByName))
+	for _, ticket := range f.ticketsByName {
+		results = append(results, ticket)
+	}
+	return results, nil
+}
+
+func (f *testCatalogFileSystem) CreateTicket(ticketName string, ticketType irodstypes.TicketType, irodsPath string) error {
+	if _, ok := f.entriesByPath[irodsPath]; !ok {
+		return errors.New("not found")
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+	f.ticketsByName[ticketName] = &irodstypes.IRODSTicket{
+		ID:         int64(len(f.ticketsByName) + 1000),
+		Name:       ticketName,
+		Type:       ticketType,
+		Owner:      "alice",
+		OwnerZone:  "tempZone",
+		ObjectType: "data",
+		Path:       irodsPath,
+	}
+	f.entriesByPath[path.Clean(irodsPath)].ModifyTime = now
+	return nil
+}
+
+func (f *testCatalogFileSystem) DeleteTicket(ticketName string) error {
+	if _, ok := f.ticketsByName[ticketName]; !ok {
+		return irodstypes.NewTicketNotFoundError(ticketName)
+	}
+	delete(f.ticketsByName, ticketName)
+	return nil
+}
+
+func (f *testCatalogFileSystem) ModifyTicketUseLimit(ticketName string, uses int64) error {
+	ticket, ok := f.ticketsByName[ticketName]
+	if !ok {
+		return irodstypes.NewTicketNotFoundError(ticketName)
+	}
+	ticket.UsesLimit = uses
+	return nil
+}
+
+func (f *testCatalogFileSystem) ClearTicketUseLimit(ticketName string) error {
+	return f.ModifyTicketUseLimit(ticketName, 0)
+}
+
+func (f *testCatalogFileSystem) ModifyTicketExpirationTime(ticketName string, expirationTime time.Time) error {
+	ticket, ok := f.ticketsByName[ticketName]
+	if !ok {
+		return irodstypes.NewTicketNotFoundError(ticketName)
+	}
+	ticket.ExpirationTime = expirationTime
+	return nil
+}
+
+func (f *testCatalogFileSystem) ClearTicketExpirationTime(ticketName string) error {
+	return f.ModifyTicketExpirationTime(ticketName, time.Time{})
+}
 
 type testCatalogFileHandle struct {
 	reader *bytes.Reader

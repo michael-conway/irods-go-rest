@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -358,6 +359,53 @@ func TestCatalogGetObjectContentByPathRejectsCollections(t *testing.T) {
 	}
 }
 
+func TestCatalogCreateAnonymousTicketReturnsCreatedTicket(t *testing.T) {
+	filesystem := newCatalogTestFileSystem()
+	service := newTestCatalogService(t, filesystem).(TicketService)
+
+	ticketNow = func() time.Time { return time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC) }
+	defer func() { ticketNow = time.Now }()
+
+	ticket, err := service.CreateAnonymousTicket(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt", TicketCreateOptions{
+		MaximumUses:     5,
+		LifetimeMinutes: 30,
+	})
+	if err != nil {
+		t.Fatalf("CreateAnonymousTicket returned error: %v", err)
+	}
+
+	if ticket.Name == "" || !strings.HasPrefix(ticket.Name, "ticket_") {
+		t.Fatalf("expected generated ticket name, got %+v", ticket)
+	}
+	if ticket.BearerToken == "" || !strings.HasPrefix(ticket.BearerToken, "irods-ticket:ticket_") {
+		t.Fatalf("expected bearer token in ticket response, got %+v", ticket)
+	}
+	if ticket.Path != "/tempZone/home/alice/file.txt" || ticket.UsesLimit != 5 {
+		t.Fatalf("unexpected ticket mapping %+v", ticket)
+	}
+	if ticket.ExpirationTime == nil {
+		t.Fatalf("expected expiration time on created ticket, got %+v", ticket)
+	}
+}
+
+func TestCatalogListTicketsFiltersToRequestOwner(t *testing.T) {
+	filesystem := newCatalogTestFileSystem()
+	filesystem.ticketsByName["ticket-other"] = &irodstypes.IRODSTicket{
+		Name:  "ticket-other",
+		Owner: "bob",
+	}
+
+	service := newTestCatalogService(t, filesystem).(TicketService)
+
+	tickets, err := service.ListTickets(context.Background(), bearerRequestContext())
+	if err != nil {
+		t.Fatalf("ListTickets returned error: %v", err)
+	}
+	if len(tickets) != 1 || tickets[0].Name != "ticket-existing" {
+		t.Fatalf("expected only alice-owned tickets, got %+v", tickets)
+	}
+}
+
 func newTestCatalogService(t *testing.T, filesystem *catalogTestFileSystem) CatalogService {
 	t.Helper()
 
@@ -388,6 +436,7 @@ type catalogTestFileSystem struct {
 	childrenByPath map[string][]*irodsfs.Entry
 	metadataByPath map[string][]*irodstypes.IRODSMeta
 	contentByPath  map[string][]byte
+	ticketsByName  map[string]*irodstypes.IRODSTicket
 	released       bool
 }
 
@@ -487,6 +536,21 @@ func newCatalogTestFileSystem() *catalogTestFileSystem {
 		},
 		contentByPath: map[string][]byte{
 			file.Path: []byte("hello content payload"),
+		},
+		ticketsByName: map[string]*irodstypes.IRODSTicket{
+			"ticket-existing": {
+				ID:             900,
+				Name:           "ticket-existing",
+				Type:           irodstypes.TicketTypeRead,
+				Owner:          "alice",
+				OwnerZone:      "tempZone",
+				ObjectType:     "data",
+				Path:           file.Path,
+				UsesLimit:      5,
+				UsesCount:      1,
+				WriteFileLimit: 10,
+				ExpirationTime: now.Add(30 * time.Minute),
+			},
 		},
 	}
 }
@@ -610,6 +674,73 @@ func (f *catalogTestFileSystem) OpenFile(irodsPath string, _ string, _ string) (
 
 func (f *catalogTestFileSystem) Release() {
 	f.released = true
+}
+
+func (f *catalogTestFileSystem) GetTicket(ticketName string) (*irodstypes.IRODSTicket, error) {
+	ticket, ok := f.ticketsByName[ticketName]
+	if !ok {
+		return nil, irodstypes.NewTicketNotFoundError(ticketName)
+	}
+	return ticket, nil
+}
+
+func (f *catalogTestFileSystem) ListTickets() ([]*irodstypes.IRODSTicket, error) {
+	results := make([]*irodstypes.IRODSTicket, 0, len(f.ticketsByName))
+	for _, ticket := range f.ticketsByName {
+		results = append(results, ticket)
+	}
+	return results, nil
+}
+
+func (f *catalogTestFileSystem) CreateTicket(ticketName string, ticketType irodstypes.TicketType, irodsPath string) error {
+	if _, ok := f.entriesByPath[irodsPath]; !ok {
+		return irodstypes.NewFileNotFoundError(irodsPath)
+	}
+
+	f.ticketsByName[ticketName] = &irodstypes.IRODSTicket{
+		ID:         int64(len(f.ticketsByName) + 1000),
+		Name:       ticketName,
+		Type:       ticketType,
+		Owner:      "alice",
+		OwnerZone:  "tempZone",
+		ObjectType: "data",
+		Path:       irodsPath,
+	}
+	return nil
+}
+
+func (f *catalogTestFileSystem) DeleteTicket(ticketName string) error {
+	if _, ok := f.ticketsByName[ticketName]; !ok {
+		return irodstypes.NewTicketNotFoundError(ticketName)
+	}
+	delete(f.ticketsByName, ticketName)
+	return nil
+}
+
+func (f *catalogTestFileSystem) ModifyTicketUseLimit(ticketName string, uses int64) error {
+	ticket, ok := f.ticketsByName[ticketName]
+	if !ok {
+		return irodstypes.NewTicketNotFoundError(ticketName)
+	}
+	ticket.UsesLimit = uses
+	return nil
+}
+
+func (f *catalogTestFileSystem) ClearTicketUseLimit(ticketName string) error {
+	return f.ModifyTicketUseLimit(ticketName, 0)
+}
+
+func (f *catalogTestFileSystem) ModifyTicketExpirationTime(ticketName string, expirationTime time.Time) error {
+	ticket, ok := f.ticketsByName[ticketName]
+	if !ok {
+		return irodstypes.NewTicketNotFoundError(ticketName)
+	}
+	ticket.ExpirationTime = expirationTime
+	return nil
+}
+
+func (f *catalogTestFileSystem) ClearTicketExpirationTime(ticketName string) error {
+	return f.ModifyTicketExpirationTime(ticketName, time.Time{})
 }
 
 type catalogTestFileHandle struct {

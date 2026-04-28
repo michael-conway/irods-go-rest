@@ -13,7 +13,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	extension_tickets "github.com/michael-conway/go-irodsclient-extensions/tickets"
 )
+
+type e2eTicketSummary struct {
+	Name string `json:"name"`
+	Path string `json:"irods_path"`
+}
 
 func TestHealthzE2E(t *testing.T) {
 	baseURL := requireE2EBaseURL(t)
@@ -726,6 +733,418 @@ func TestGetPathContentsRangeBasicAuthE2E(t *testing.T) {
 	if len(body) != 16 {
 		t.Fatalf("expected 16 bytes, got %d", len(body))
 	}
+}
+
+func TestGetPathContentsIRODSTicketBearerE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	client := newE2EHTTPClient()
+	filesystem := newE2EIRODSFilesystem(t)
+	defer filesystem.Release()
+
+	objectPath := irodsJoin(
+		"/"+e2eIRODSZone(t)+"/home/"+e2eBasicUsername(t),
+		"e2e-ticket-"+randomToken(nil, 8)+".txt",
+	)
+	content := "irods-go-rest ticket e2e payload\n"
+
+	if _, err := filesystem.UploadFileFromBuffer(bytes.NewBufferString(content), objectPath, "", false, true, nil); err != nil {
+		t.Fatalf("upload ticket e2e object %q: %v", objectPath, err)
+	}
+	defer func() {
+		if err := filesystem.RemoveFile(objectPath, true); err != nil && filesystem.Exists(objectPath) {
+			t.Errorf("cleanup ticket e2e object %q: %v", objectPath, err)
+		}
+	}()
+
+	ticketID, bearerToken, err := extension_tickets.CreateAnonymousDataObjectBearerToken(filesystem, objectPath, 5, 30)
+	if err != nil {
+		t.Fatalf("create anonymous ticket for %q: %v", objectPath, err)
+	}
+	defer func() {
+		if err := filesystem.DeleteTicket(ticketID); err != nil {
+			t.Errorf("cleanup ticket %q: %v", ticketID, err)
+		}
+	}()
+
+	req := newE2ERequest(t, http.MethodGet, pathURL(baseURL, "/api/v1/path/contents", objectPath), nil)
+	setBearerAuth(req, bearerToken)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("perform ticket-auth content request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if got := resp.Header.Get("Accept-Ranges"); got != "bytes" {
+		t.Fatalf("expected Accept-Ranges bytes, got %q", got)
+	}
+	if got := resp.Header.Get("Content-Disposition"); !strings.Contains(got, `attachment;`) {
+		t.Fatalf("expected Content-Disposition attachment header, got %q", got)
+	}
+	if got := resp.Header.Get("Last-Modified"); got == "" {
+		t.Fatal("expected Last-Modified header")
+	}
+	if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("expected nosniff header, got %q", got)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if string(body) != content {
+		t.Fatalf("expected content %q, got %q", content, string(body))
+	}
+}
+
+func TestGetPathContentsTicketIDQueryE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	client := newE2EHTTPClient()
+	filesystem := newE2EIRODSFilesystem(t)
+	defer filesystem.Release()
+
+	objectPath := irodsJoin(
+		"/"+e2eIRODSZone(t)+"/home/"+e2eBasicUsername(t),
+		"e2e-ticket-query-"+randomToken(nil, 8)+".txt",
+	)
+	content := "irods-go-rest ticket query payload\n"
+
+	if _, err := filesystem.UploadFileFromBuffer(bytes.NewBufferString(content), objectPath, "", false, true, nil); err != nil {
+		t.Fatalf("upload ticket query object %q: %v", objectPath, err)
+	}
+	defer func() {
+		if err := filesystem.RemoveFile(objectPath, true); err != nil && filesystem.Exists(objectPath) {
+			t.Errorf("cleanup ticket query object %q: %v", objectPath, err)
+		}
+	}()
+
+	ticketID, _, err := extension_tickets.CreateAnonymousDataObjectBearerToken(filesystem, objectPath, 5, 30)
+	if err != nil {
+		t.Fatalf("create anonymous ticket for %q: %v", objectPath, err)
+	}
+	defer func() {
+		if err := filesystem.DeleteTicket(ticketID); err != nil {
+			t.Logf("best-effort cleanup ticket %q: %v", ticketID, err)
+		}
+	}()
+
+	req := newE2ERequest(t, http.MethodGet, pathURLWithTicketID(baseURL, "/api/v1/path/contents", objectPath, ticketID), nil)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("perform ticket-id content request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if string(body) != content {
+		t.Fatalf("expected content %q, got %q", content, string(body))
+	}
+}
+
+func TestTicketLifecycleE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	client := newE2EHTTPClient()
+	filesystem := newE2EIRODSFilesystem(t)
+	defer filesystem.Release()
+
+	objectPath := irodsJoin(
+		"/"+e2eIRODSZone(t)+"/home/"+e2eBasicUsername(t),
+		"e2e-rest-ticket-lifecycle-"+randomToken(nil, 8)+".txt",
+	)
+	content := "irods-go-rest ticket lifecycle payload\n"
+
+	if _, err := filesystem.UploadFileFromBuffer(bytes.NewBufferString(content), objectPath, "", false, true, nil); err != nil {
+		t.Fatalf("upload ticket lifecycle object %q: %v", objectPath, err)
+	}
+	defer func() {
+		if err := filesystem.RemoveFile(objectPath, true); err != nil && filesystem.Exists(objectPath) {
+			t.Errorf("cleanup ticket lifecycle object %q: %v", objectPath, err)
+		}
+	}()
+
+	createReq := newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path/ticket", objectPath), strings.NewReader(`{"maximum_uses":5,"lifetime_minutes":30}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	setBasicAuth(createReq)
+
+	createResp, err := client.Do(createReq)
+	if err != nil {
+		t.Fatalf("perform create ticket request: %v", err)
+	}
+	defer createResp.Body.Close()
+
+	if createResp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(createResp.Body)
+		t.Fatalf("expected 201, got %d: %s", createResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var createPayload struct {
+		Ticket struct {
+			Name        string `json:"name"`
+			BearerToken string `json:"bearer_token"`
+			Path        string `json:"irods_path"`
+			UsesLimit   int64  `json:"uses_limit"`
+		} `json:"ticket"`
+	}
+	if err := json.NewDecoder(createResp.Body).Decode(&createPayload); err != nil {
+		t.Fatalf("decode create ticket response: %v", err)
+	}
+
+	ticketName := strings.TrimSpace(createPayload.Ticket.Name)
+	if ticketName == "" {
+		t.Fatal("expected created ticket name")
+	}
+	if createPayload.Ticket.BearerToken != "irods-ticket:"+ticketName {
+		t.Fatalf("expected bearer token for %q, got %q", ticketName, createPayload.Ticket.BearerToken)
+	}
+	if createPayload.Ticket.Path != objectPath {
+		t.Fatalf("expected ticket path %q, got %q", objectPath, createPayload.Ticket.Path)
+	}
+	if createPayload.Ticket.UsesLimit != 5 {
+		t.Fatalf("expected uses limit 5, got %d", createPayload.Ticket.UsesLimit)
+	}
+
+	defer func() {
+		if err := filesystem.DeleteTicket(ticketName); err != nil {
+			t.Logf("best-effort cleanup ticket %q: %v", ticketName, err)
+		}
+	}()
+
+	listReq := newE2ERequest(t, http.MethodGet, baseURL+"/api/v1/ticket", nil)
+	setBasicAuth(listReq)
+
+	listResp, err := client.Do(listReq)
+	if err != nil {
+		t.Fatalf("perform list tickets request: %v", err)
+	}
+	defer listResp.Body.Close()
+
+	if listResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(listResp.Body)
+		t.Fatalf("expected 200 from list tickets, got %d: %s", listResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var listPayload struct {
+		Tickets []e2eTicketSummary `json:"tickets"`
+	}
+	if err := json.NewDecoder(listResp.Body).Decode(&listPayload); err != nil {
+		t.Fatalf("decode list tickets response: %v", err)
+	}
+	if !ticketPresent(listPayload.Tickets, ticketName, objectPath) {
+		t.Fatalf("expected ticket %q for path %q in high-level list", ticketName, objectPath)
+	}
+
+	getReq := newE2ERequest(t, http.MethodGet, baseURL+"/api/v1/ticket/"+url.PathEscape(ticketName), nil)
+	setBasicAuth(getReq)
+
+	getResp, err := client.Do(getReq)
+	if err != nil {
+		t.Fatalf("perform get ticket request: %v", err)
+	}
+	defer getResp.Body.Close()
+
+	if getResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(getResp.Body)
+		t.Fatalf("expected 200 from get ticket, got %d: %s", getResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var getPayload struct {
+		Ticket struct {
+			Name string `json:"name"`
+			Path string `json:"irods_path"`
+		} `json:"ticket"`
+	}
+	if err := json.NewDecoder(getResp.Body).Decode(&getPayload); err != nil {
+		t.Fatalf("decode get ticket response: %v", err)
+	}
+	if getPayload.Ticket.Name != ticketName || getPayload.Ticket.Path != objectPath {
+		t.Fatalf("unexpected get ticket payload: %+v", getPayload.Ticket)
+	}
+
+	deleteReq := newE2ERequest(t, http.MethodDelete, baseURL+"/api/v1/ticket/"+url.PathEscape(ticketName), nil)
+	setBasicAuth(deleteReq)
+
+	deleteResp, err := client.Do(deleteReq)
+	if err != nil {
+		t.Fatalf("perform delete ticket request: %v", err)
+	}
+	defer deleteResp.Body.Close()
+
+	if deleteResp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(deleteResp.Body)
+		t.Fatalf("expected 204 from delete ticket, got %d: %s", deleteResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	ticketName = ""
+
+	verifyReq := newE2ERequest(t, http.MethodGet, baseURL+"/api/v1/ticket", nil)
+	setBasicAuth(verifyReq)
+
+	verifyResp, err := client.Do(verifyReq)
+	if err != nil {
+		t.Fatalf("perform verify list tickets request: %v", err)
+	}
+	defer verifyResp.Body.Close()
+
+	if verifyResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(verifyResp.Body)
+		t.Fatalf("expected 200 from verify list tickets, got %d: %s", verifyResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var verifyPayload struct {
+		Tickets []e2eTicketSummary `json:"tickets"`
+	}
+	if err := json.NewDecoder(verifyResp.Body).Decode(&verifyPayload); err != nil {
+		t.Fatalf("decode verify list tickets response: %v", err)
+	}
+	if ticketPresent(verifyPayload.Tickets, createPayload.Ticket.Name, objectPath) {
+		t.Fatalf("expected deleted ticket %q to be absent from high-level list", createPayload.Ticket.Name)
+	}
+}
+
+func TestGetTicketThenDeleteThenGetTicketE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	client := newE2EHTTPClient()
+	filesystem := newE2EIRODSFilesystem(t)
+	defer filesystem.Release()
+
+	objectPath := irodsJoin(
+		"/"+e2eIRODSZone(t)+"/home/"+e2eBasicUsername(t),
+		"e2e-rest-ticket-get-delete-"+randomToken(nil, 8)+".txt",
+	)
+	content := "irods-go-rest ticket get-delete payload\n"
+
+	if _, err := filesystem.UploadFileFromBuffer(bytes.NewBufferString(content), objectPath, "", false, true, nil); err != nil {
+		t.Fatalf("upload ticket get-delete object %q: %v", objectPath, err)
+	}
+	defer func() {
+		if err := filesystem.RemoveFile(objectPath, true); err != nil && filesystem.Exists(objectPath) {
+			t.Errorf("cleanup ticket get-delete object %q: %v", objectPath, err)
+		}
+	}()
+
+	createReq := newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path/ticket", objectPath), strings.NewReader(`{"maximum_uses":5,"lifetime_minutes":30}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	setBasicAuth(createReq)
+
+	createResp, err := client.Do(createReq)
+	if err != nil {
+		t.Fatalf("perform create ticket request: %v", err)
+	}
+	defer createResp.Body.Close()
+
+	if createResp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(createResp.Body)
+		t.Fatalf("expected 201, got %d: %s", createResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var createPayload struct {
+		Ticket struct {
+			Name string `json:"name"`
+			Path string `json:"irods_path"`
+		} `json:"ticket"`
+	}
+	if err := json.NewDecoder(createResp.Body).Decode(&createPayload); err != nil {
+		t.Fatalf("decode create ticket response: %v", err)
+	}
+
+	ticketName := strings.TrimSpace(createPayload.Ticket.Name)
+	if ticketName == "" {
+		t.Fatal("expected created ticket name")
+	}
+
+	defer func() {
+		if ticketName != "" {
+			if err := filesystem.DeleteTicket(ticketName); err != nil {
+				t.Logf("best-effort cleanup ticket %q: %v", ticketName, err)
+			}
+		}
+	}()
+
+	getBeforeDeleteReq := newE2ERequest(t, http.MethodGet, baseURL+"/api/v1/ticket/"+url.PathEscape(ticketName), nil)
+	setBasicAuth(getBeforeDeleteReq)
+
+	getBeforeDeleteResp, err := client.Do(getBeforeDeleteReq)
+	if err != nil {
+		t.Fatalf("perform get-before-delete ticket request: %v", err)
+	}
+	defer getBeforeDeleteResp.Body.Close()
+
+	if getBeforeDeleteResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(getBeforeDeleteResp.Body)
+		t.Fatalf("expected 200 from get-before-delete ticket, got %d: %s", getBeforeDeleteResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var getBeforeDeletePayload struct {
+		Ticket struct {
+			Name string `json:"name"`
+			Path string `json:"irods_path"`
+		} `json:"ticket"`
+	}
+	if err := json.NewDecoder(getBeforeDeleteResp.Body).Decode(&getBeforeDeletePayload); err != nil {
+		t.Fatalf("decode get-before-delete ticket response: %v", err)
+	}
+	if getBeforeDeletePayload.Ticket.Name != ticketName || getBeforeDeletePayload.Ticket.Path != objectPath {
+		t.Fatalf("unexpected get-before-delete ticket payload: %+v", getBeforeDeletePayload.Ticket)
+	}
+
+	deleteReq := newE2ERequest(t, http.MethodDelete, baseURL+"/api/v1/ticket/"+url.PathEscape(ticketName), nil)
+	setBasicAuth(deleteReq)
+
+	deleteResp, err := client.Do(deleteReq)
+	if err != nil {
+		t.Fatalf("perform delete ticket request: %v", err)
+	}
+	defer deleteResp.Body.Close()
+
+	if deleteResp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(deleteResp.Body)
+		t.Fatalf("expected 204 from delete ticket, got %d: %s", deleteResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	ticketName = ""
+
+	getAfterDeleteReq := newE2ERequest(t, http.MethodGet, baseURL+"/api/v1/ticket/"+url.PathEscape(createPayload.Ticket.Name), nil)
+	setBasicAuth(getAfterDeleteReq)
+
+	getAfterDeleteResp, err := client.Do(getAfterDeleteReq)
+	if err != nil {
+		t.Fatalf("perform get-after-delete ticket request: %v", err)
+	}
+	defer getAfterDeleteResp.Body.Close()
+
+	if getAfterDeleteResp.StatusCode != http.StatusNotFound {
+		body, _ := io.ReadAll(getAfterDeleteResp.Body)
+		t.Fatalf("expected 404 from get-after-delete ticket, got %d: %s", getAfterDeleteResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+}
+
+func ticketPresent(tickets []e2eTicketSummary, ticketName string, objectPath string) bool {
+	for _, ticket := range tickets {
+		if strings.TrimSpace(ticket.Name) == strings.TrimSpace(ticketName) && strings.TrimSpace(ticket.Path) == strings.TrimSpace(objectPath) {
+			return true
+		}
+	}
+	return false
+}
+
+func pathURLWithTicketID(baseURL string, path string, irodsPath string, ticketID string) string {
+	query := url.Values{}
+	query.Set("irods_path", irodsPath)
+	query.Set("ticket_id", ticketID)
+	return strings.TrimRight(baseURL, "/") + path + "?" + query.Encode()
 }
 
 func TestHeadPathContentsBasicAuthE2E(t *testing.T) {
