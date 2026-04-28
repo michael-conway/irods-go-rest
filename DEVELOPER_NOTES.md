@@ -32,6 +32,10 @@ Keep the code split this way:
 
 Do not push URL-building or handler concerns into the iRODS layer.
 
+Monitor shared higher-level iRODS client functionality against `go-irodsclient-extensions`.
+
+If logic here is also needed by `irods-go-drs` or other clients, prefer refactoring it into `go-irodsclient-extensions` instead of keeping duplicated copies in service repositories.
+
 ## Auth
 
 Current API auth supports:
@@ -96,3 +100,4 @@ docker compose up
 Current gap:
 
 - Checksum operations still require dropping below the high-level `fs.FileSystem` API and calling lower-level iRODS functions with a metadata connection. A first-class checksum API in `go-irodsclient/fs.FileSystem` would simplify this service.
+- Ticket parsing, ticket creation helpers, and other reusable client workflows should be monitored for extraction into `go-irodsclient-extensions` when they are not HTTP-specific.
