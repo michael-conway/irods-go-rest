@@ -99,6 +99,29 @@ type ObjectContent struct {
 	Reader      RangeReadCloser
 }
 
+type UploadChecksumInfo struct {
+	Requested bool   `json:"requested"`
+	Verified  bool   `json:"verified"`
+	Algorithm string `json:"algorithm,omitempty"`
+	Value     string `json:"value,omitempty"`
+}
+
+type PathContentsUploadLinks struct {
+	Path     *ActionLink `json:"path,omitempty"`
+	Contents *ActionLink `json:"contents,omitempty"`
+	Parent   *ActionLink `json:"parent,omitempty"`
+}
+
+type PathContentsUploadResult struct {
+	Path       string                   `json:"path"`
+	ParentPath string                   `json:"parent_path"`
+	FileName   string                   `json:"file_name"`
+	Action     string                   `json:"action"`
+	Size       int64                    `json:"size"`
+	Checksum   *UploadChecksumInfo      `json:"checksum,omitempty"`
+	Links      *PathContentsUploadLinks `json:"links,omitempty"`
+}
+
 type RangeReadCloser interface {
 	io.ReaderAt
 	io.Closer

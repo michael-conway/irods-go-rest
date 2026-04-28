@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -523,6 +524,59 @@ func TestPostPathChildrenCreatesZeroByteFile(t *testing.T) {
 		`"display_size":"0 B"`,
 	) {
 		t.Fatalf("unexpected create data object response body: %q", body)
+	}
+}
+
+func TestPostPathContentsUploadsDataObject(t *testing.T) {
+	handler := testHandler(t)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("parent_path", "/tempZone/home/test1/project"); err != nil {
+		t.Fatalf("write parent_path: %v", err)
+	}
+	if err := writer.WriteField("file_name", "upload.txt"); err != nil {
+		t.Fatalf("write file_name: %v", err)
+	}
+	if err := writer.WriteField("checksum", "true"); err != nil {
+		t.Fatalf("write checksum: %v", err)
+	}
+	part, err := writer.CreateFormFile("content", "upload.txt")
+	if err != nil {
+		t.Fatalf("create content part: %v", err)
+	}
+	if _, err := part.Write([]byte("upload payload")); err != nil {
+		t.Fatalf("write content part: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/contents", &body)
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"path":"/tempZone/home/test1/project/upload.txt"`,
+		`"parent_path":"/tempZone/home/test1/project"`,
+		`"file_name":"upload.txt"`,
+		`"action":"created"`,
+		`"size":14`,
+		`"requested":true`,
+		`"verified":true`,
+		`"path":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject%2Fupload.txt","method":"GET"}`,
+		`"contents":{"href":"/api/v1/path/contents?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject%2Fupload.txt","method":"GET"}`,
+		`"parent":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"GET"}`,
+	) {
+		t.Fatalf("unexpected upload response body: %q", body)
 	}
 }
 
@@ -1281,7 +1335,14 @@ func (f *testCatalogFileSystem) CreateFile(irodsPath string, _ string, _ string)
 	f.childrenByPath[parentPath] = append(f.childrenByPath[parentPath], entry)
 	f.contentByPath[entry.Path] = nil
 
-	return &testCatalogFileHandle{reader: bytes.NewReader(nil)}, nil
+	return &testCatalogFileHandle{
+		reader: bytes.NewReader(nil),
+		writer: bytes.NewBuffer(nil),
+		onClose: func(data []byte) {
+			f.contentByPath[entry.Path] = append([]byte(nil), data...)
+			entry.Size = int64(len(data))
+		},
+	}, nil
 }
 
 func (f *testCatalogFileSystem) RemoveDir(irodsPath string, recurse bool, _ bool) error {
@@ -1611,14 +1672,27 @@ func filterChildEntry(entries []*irodsfs.Entry, targetPath string) []*irodsfs.En
 }
 
 type testCatalogFileHandle struct {
-	reader *bytes.Reader
+	reader  *bytes.Reader
+	writer  *bytes.Buffer
+	onClose func([]byte)
 }
 
 func (f *testCatalogFileHandle) ReadAt(buffer []byte, offset int64) (int, error) {
 	return f.reader.ReadAt(buffer, offset)
 }
 
+func (f *testCatalogFileHandle) Write(data []byte) (int, error) {
+	if f.writer == nil {
+		return 0, errors.New("file handle is not writable")
+	}
+
+	return f.writer.Write(data)
+}
+
 func (f *testCatalogFileHandle) Close() error {
+	if f.onClose != nil && f.writer != nil {
+		f.onClose(f.writer.Bytes())
+	}
 	return nil
 }
 
