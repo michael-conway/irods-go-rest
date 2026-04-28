@@ -77,6 +77,63 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deletePath
+      tags: [path]
+      summary: Delete a data object or collection path
+      description: |
+        Deletes the path identified by `irods_path`.
+        Collections must be empty unless `force=true`, which performs a recursive delete.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a file or collection.
+        - in: query
+          name: force
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: When `true`, bypass the empty-collection check and recursively delete collections.
+      responses:
+        "204":
+          description: Path deleted
+        "400":
+          description: Missing path or invalid force query parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Path not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Collection is not empty and force was not supplied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/path/children:
     get:
       operationId: getPathChildren
@@ -107,6 +164,113 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           description: Path not found or not a collection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested collection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/path/actions/move:
+    post:
+      operationId: postPathMove
+      tags: [path]
+      summary: Rename a data object or collection within its current parent collection
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to the source file or collection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PathMoveRequest"
+      responses:
+        "200":
+          description: Renamed path entry at the new location
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathEntry"
+        "400":
+          description: Missing path or invalid rename request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Path not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: postPathChildren
+      tags: [path]
+      summary: Create a direct child collection or zero-byte data object
+      description: |
+        Creates a child under the collection identified by `irods_path`.
+        Use `kind: collection` to create a collection and `kind: data_object` to create
+        a zero-byte data object. `mkdirs: true` is only supported for collection creation.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to the parent collection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PathChildCreateRequest"
+      responses:
+        "201":
+          description: Child collection or data object created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathEntry"
+        "400":
+          description: Missing parent path or invalid child request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Parent path not found or not a collection
           content:
             application/json:
               schema:
@@ -1025,6 +1189,10 @@ components:
           $ref: "#/components/schemas/ActionLink"
         create_ticket:
           $ref: "#/components/schemas/ActionLink"
+        create_child_collection:
+          $ref: "#/components/schemas/ActionLink"
+        create_child_data_object:
+          $ref: "#/components/schemas/ActionLink"
     ParentLink:
       type: object
       required: [irods_path, href]
@@ -1090,6 +1258,27 @@ components:
             $ref: "#/components/schemas/PathSegmentLink"
         avu:
           $ref: "#/components/schemas/AVUMetadata"
+    PathChildCreateRequest:
+      type: object
+      required: [child_name, kind]
+      properties:
+        child_name:
+          type: string
+          description: Relative child name or relative nested path to create under the parent collection.
+        kind:
+          type: string
+          enum: [collection, data_object]
+        mkdirs:
+          type: boolean
+          default: false
+          description: When `true`, create intermediate collection segments for collection creation.
+    PathMoveRequest:
+      type: object
+      required: [new_name]
+      properties:
+        new_name:
+          type: string
+          description: New basename for the file or collection within the same parent collection.
     PathAVUCreateRequest:
       type: object
       required: [attrib, value]

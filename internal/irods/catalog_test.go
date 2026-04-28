@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -152,6 +153,139 @@ func TestCatalogGetPathChildrenMapsChildEntries(t *testing.T) {
 	}
 	if children[1].CreatedAt == nil || children[1].UpdatedAt == nil {
 		t.Fatal("expected second child timestamps to be populated")
+	}
+}
+
+func TestCatalogCreatePathChildCollectionReturnsCreatedEntry(t *testing.T) {
+	service := newTestCatalogService(t, newCatalogTestFileSystem())
+
+	entry, err := service.CreatePathChild(context.Background(), bearerRequestContext(), "/tempZone/home/alice/project", PathCreateOptions{
+		ChildName: "new-folder",
+		Kind:      "collection",
+	})
+	if err != nil {
+		t.Fatalf("CreatePathChild returned error: %v", err)
+	}
+
+	if entry.Path != "/tempZone/home/alice/project/new-folder" {
+		t.Fatalf("expected created path, got %q", entry.Path)
+	}
+	if entry.Kind != "collection" {
+		t.Fatalf("expected collection kind, got %q", entry.Kind)
+	}
+	if entry.ChildCount != 0 {
+		t.Fatalf("expected empty collection child count, got %d", entry.ChildCount)
+	}
+}
+
+func TestCatalogCreatePathChildCollectionSupportsMkdirs(t *testing.T) {
+	service := newTestCatalogService(t, newCatalogTestFileSystem())
+
+	entry, err := service.CreatePathChild(context.Background(), bearerRequestContext(), "/tempZone/home/alice/project", PathCreateOptions{
+		ChildName: "nested/deeper",
+		Kind:      "collection",
+		Mkdirs:    true,
+	})
+	if err != nil {
+		t.Fatalf("CreatePathChild with mkdirs returned error: %v", err)
+	}
+
+	if entry.Path != "/tempZone/home/alice/project/nested/deeper" {
+		t.Fatalf("expected nested created path, got %q", entry.Path)
+	}
+}
+
+func TestCatalogCreatePathChildDataObjectReturnsZeroByteEntry(t *testing.T) {
+	service := newTestCatalogService(t, newCatalogTestFileSystem())
+
+	entry, err := service.CreatePathChild(context.Background(), bearerRequestContext(), "/tempZone/home/alice/project", PathCreateOptions{
+		ChildName: "empty.txt",
+		Kind:      "data_object",
+	})
+	if err != nil {
+		t.Fatalf("CreatePathChild returned error: %v", err)
+	}
+
+	if entry.Path != "/tempZone/home/alice/project/empty.txt" {
+		t.Fatalf("expected created path, got %q", entry.Path)
+	}
+	if entry.Kind != "data_object" {
+		t.Fatalf("expected data_object kind, got %q", entry.Kind)
+	}
+	if entry.Size != 0 || entry.DisplaySize != "0 B" {
+		t.Fatalf("expected zero-byte file, got size=%d display=%q", entry.Size, entry.DisplaySize)
+	}
+}
+
+func TestCatalogDeletePathRemovesDataObject(t *testing.T) {
+	filesystem := newCatalogTestFileSystem()
+	service := newTestCatalogService(t, filesystem)
+
+	if err := service.DeletePath(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt", false); err != nil {
+		t.Fatalf("DeletePath returned error: %v", err)
+	}
+
+	if _, ok := filesystem.entriesByPath["/tempZone/home/alice/file.txt"]; ok {
+		t.Fatal("expected file entry to be removed")
+	}
+}
+
+func TestCatalogDeletePathRejectsNonEmptyCollectionWithoutForce(t *testing.T) {
+	service := newTestCatalogService(t, newCatalogTestFileSystem())
+
+	err := service.DeletePath(context.Background(), bearerRequestContext(), "/tempZone/home/alice/project", false)
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("expected ErrConflict, got %v", err)
+	}
+}
+
+func TestCatalogDeletePathRecursivelyRemovesCollectionWithForce(t *testing.T) {
+	filesystem := newCatalogTestFileSystem()
+	service := newTestCatalogService(t, filesystem)
+
+	if err := service.DeletePath(context.Background(), bearerRequestContext(), "/tempZone/home/alice/project", true); err != nil {
+		t.Fatalf("DeletePath returned error: %v", err)
+	}
+
+	if _, ok := filesystem.entriesByPath["/tempZone/home/alice/project"]; ok {
+		t.Fatal("expected collection entry to be removed")
+	}
+	if _, ok := filesystem.entriesByPath["/tempZone/home/alice/project/child.txt"]; ok {
+		t.Fatal("expected child entry to be removed")
+	}
+}
+
+func TestCatalogRenamePathRenamesDataObject(t *testing.T) {
+	filesystem := newCatalogTestFileSystem()
+	service := newTestCatalogService(t, filesystem)
+
+	entry, err := service.RenamePath(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt", "renamed.txt")
+	if err != nil {
+		t.Fatalf("RenamePath returned error: %v", err)
+	}
+
+	if entry.Path != "/tempZone/home/alice/renamed.txt" {
+		t.Fatalf("expected renamed path, got %q", entry.Path)
+	}
+	if _, ok := filesystem.entriesByPath["/tempZone/home/alice/file.txt"]; ok {
+		t.Fatal("expected original file path to be removed")
+	}
+}
+
+func TestCatalogRenamePathRenamesCollection(t *testing.T) {
+	filesystem := newCatalogTestFileSystem()
+	service := newTestCatalogService(t, filesystem)
+
+	entry, err := service.RenamePath(context.Background(), bearerRequestContext(), "/tempZone/home/alice/project", "renamed-project")
+	if err != nil {
+		t.Fatalf("RenamePath returned error: %v", err)
+	}
+
+	if entry.Path != "/tempZone/home/alice/renamed-project" {
+		t.Fatalf("expected renamed collection path, got %q", entry.Path)
+	}
+	if _, ok := filesystem.entriesByPath["/tempZone/home/alice/project"]; ok {
+		t.Fatal("expected original collection path to be removed")
 	}
 }
 
@@ -575,6 +709,172 @@ func (f *catalogTestFileSystem) List(irodsPath string) ([]*irodsfs.Entry, error)
 	return f.childrenByPath[irodsPath], nil
 }
 
+func (f *catalogTestFileSystem) MakeDir(irodsPath string, recurse bool) error {
+	if irodsPath == "/tempZone/home/alice/forbidden" {
+		return irodstypes.NewIRODSError(irodscommon.CAT_NO_ACCESS_PERMISSION)
+	}
+
+	cleaned := path.Clean(irodsPath)
+	parentPath := path.Dir(cleaned)
+	if recurse {
+		current := parentPath
+		for current != "." && current != "/" && current != cleaned {
+			if _, ok := f.entriesByPath[current]; ok {
+				break
+			}
+			segments := []string{current}
+			for {
+				next := path.Dir(current)
+				if next == "." || next == "/" || next == current {
+					break
+				}
+				if _, ok := f.entriesByPath[next]; ok {
+					break
+				}
+				segments = append(segments, next)
+				current = next
+			}
+			for i := len(segments) - 1; i >= 0; i-- {
+				if err := f.MakeDir(segments[i], false); err != nil {
+					return err
+				}
+			}
+			break
+		}
+	}
+
+	if parentPath != "." && parentPath != "/" {
+		parentEntry, ok := f.entriesByPath[parentPath]
+		if !ok || !parentEntry.IsDir() {
+			return irodstypes.NewFileNotFoundError(parentPath)
+		}
+	}
+
+	now := time.Unix(1_700_000_002, 0)
+	entry := &irodsfs.Entry{
+		ID:         int64(len(f.entriesByPath) + 200),
+		Type:       irodsfs.DirectoryEntry,
+		Name:       path.Base(cleaned),
+		Path:       cleaned,
+		CreateTime: now,
+		ModifyTime: now,
+	}
+	f.entriesByPath[cleaned] = entry
+	if _, ok := f.childrenByPath[cleaned]; !ok {
+		f.childrenByPath[cleaned] = []*irodsfs.Entry{}
+	}
+	if parentPath != "." && parentPath != "/" {
+		f.childrenByPath[parentPath] = append(f.childrenByPath[parentPath], entry)
+	}
+	return nil
+}
+
+func (f *catalogTestFileSystem) CreateFile(irodsPath string, _ string, _ string) (CatalogFileHandle, error) {
+	if irodsPath == "/tempZone/home/alice/forbidden" {
+		return nil, irodstypes.NewIRODSError(irodscommon.CAT_NO_ACCESS_PERMISSION)
+	}
+
+	cleaned := path.Clean(irodsPath)
+	parentPath := path.Dir(cleaned)
+	parentEntry, ok := f.entriesByPath[parentPath]
+	if !ok || !parentEntry.IsDir() {
+		return nil, irodstypes.NewFileNotFoundError(parentPath)
+	}
+
+	now := time.Unix(1_700_000_002, 0)
+	entry := &irodsfs.Entry{
+		ID:         int64(len(f.entriesByPath) + 200),
+		Type:       irodsfs.FileEntry,
+		Name:       path.Base(cleaned),
+		Path:       cleaned,
+		Owner:      "alice",
+		Size:       0,
+		DataType:   "generic",
+		CreateTime: now,
+		ModifyTime: now,
+	}
+	f.entriesByPath[cleaned] = entry
+	f.childrenByPath[parentPath] = append(f.childrenByPath[parentPath], entry)
+	f.contentByPath[cleaned] = nil
+
+	return &catalogTestFileHandle{reader: bytes.NewReader(nil)}, nil
+}
+
+func (f *catalogTestFileSystem) RemoveDir(irodsPath string, recurse bool, _ bool) error {
+	if irodsPath == "/tempZone/home/alice/forbidden" {
+		return irodstypes.NewIRODSError(irodscommon.CAT_NO_ACCESS_PERMISSION)
+	}
+
+	entry, ok := f.entriesByPath[irodsPath]
+	if !ok || !entry.IsDir() {
+		return irodstypes.NewFileNotFoundError(irodsPath)
+	}
+	if !recurse {
+		if children := f.childrenByPath[irodsPath]; len(children) > 0 {
+			return errors.New("collection not empty")
+		}
+	}
+	f.removeDirRecursive(path.Clean(irodsPath))
+	return nil
+}
+
+func (f *catalogTestFileSystem) RemoveFile(irodsPath string, _ bool) error {
+	if irodsPath == "/tempZone/home/alice/forbidden" {
+		return irodstypes.NewIRODSError(irodscommon.CAT_NO_ACCESS_PERMISSION)
+	}
+
+	entry, ok := f.entriesByPath[irodsPath]
+	if !ok || entry.IsDir() {
+		return irodstypes.NewFileNotFoundError(irodsPath)
+	}
+
+	delete(f.entriesByPath, path.Clean(irodsPath))
+	delete(f.contentByPath, path.Clean(irodsPath))
+	delete(f.metadataByPath, path.Clean(irodsPath))
+	parentPath := path.Dir(path.Clean(irodsPath))
+	f.childrenByPath[parentPath] = filterCatalogChildEntry(f.childrenByPath[parentPath], path.Clean(irodsPath))
+	return nil
+}
+
+func (f *catalogTestFileSystem) RenameDir(srcPath string, destPath string) error {
+	entry, ok := f.entriesByPath[srcPath]
+	if !ok || !entry.IsDir() {
+		return irodstypes.NewFileNotFoundError(srcPath)
+	}
+	f.renameDirRecursive(path.Clean(srcPath), path.Clean(destPath))
+	return nil
+}
+
+func (f *catalogTestFileSystem) RenameFile(srcPath string, destPath string) error {
+	entry, ok := f.entriesByPath[srcPath]
+	if !ok || entry.IsDir() {
+		return irodstypes.NewFileNotFoundError(srcPath)
+	}
+
+	cleanSrc := path.Clean(srcPath)
+	cleanDest := path.Clean(destPath)
+	parentSrc := path.Dir(cleanSrc)
+	parentDest := path.Dir(cleanDest)
+
+	entry.Path = cleanDest
+	entry.Name = path.Base(cleanDest)
+	f.entriesByPath[cleanDest] = entry
+	delete(f.entriesByPath, cleanSrc)
+
+	if data, ok := f.contentByPath[cleanSrc]; ok {
+		f.contentByPath[cleanDest] = data
+		delete(f.contentByPath, cleanSrc)
+	}
+	if metas, ok := f.metadataByPath[cleanSrc]; ok {
+		f.metadataByPath[cleanDest] = metas
+		delete(f.metadataByPath, cleanSrc)
+	}
+
+	f.childrenByPath[parentSrc] = filterCatalogChildEntry(f.childrenByPath[parentSrc], cleanSrc)
+	f.childrenByPath[parentDest] = append(f.childrenByPath[parentDest], entry)
+	return nil
+}
+
 func (f *catalogTestFileSystem) ListMetadata(irodsPath string) ([]*irodstypes.IRODSMeta, error) {
 	if irodsPath == "/tempZone/home/alice/forbidden" {
 		return nil, irodstypes.NewIRODSError(irodscommon.CAT_NO_ACCESS_PERMISSION)
@@ -741,6 +1041,93 @@ func (f *catalogTestFileSystem) ModifyTicketExpirationTime(ticketName string, ex
 
 func (f *catalogTestFileSystem) ClearTicketExpirationTime(ticketName string) error {
 	return f.ModifyTicketExpirationTime(ticketName, time.Time{})
+}
+
+func (f *catalogTestFileSystem) removeDirRecursive(irodsPath string) {
+	for _, child := range f.childrenByPath[irodsPath] {
+		if child == nil {
+			continue
+		}
+		if child.IsDir() {
+			f.removeDirRecursive(child.Path)
+			continue
+		}
+		delete(f.entriesByPath, child.Path)
+		delete(f.contentByPath, child.Path)
+		delete(f.metadataByPath, child.Path)
+	}
+
+	delete(f.childrenByPath, irodsPath)
+	delete(f.entriesByPath, irodsPath)
+	delete(f.metadataByPath, irodsPath)
+
+	parentPath := path.Dir(irodsPath)
+	if parentPath != "." && parentPath != "/" && parentPath != irodsPath {
+		f.childrenByPath[parentPath] = filterCatalogChildEntry(f.childrenByPath[parentPath], irodsPath)
+	}
+}
+
+func (f *catalogTestFileSystem) renameDirRecursive(srcPath string, destPath string) {
+	entry := f.entriesByPath[srcPath]
+	parentSrc := path.Dir(srcPath)
+	parentDest := path.Dir(destPath)
+
+	entry.Path = destPath
+	entry.Name = path.Base(destPath)
+	f.entriesByPath[destPath] = entry
+	delete(f.entriesByPath, srcPath)
+
+	children := f.childrenByPath[srcPath]
+	delete(f.childrenByPath, srcPath)
+	f.childrenByPath[destPath] = children
+
+	if metas, ok := f.metadataByPath[srcPath]; ok {
+		f.metadataByPath[destPath] = metas
+		delete(f.metadataByPath, srcPath)
+	}
+
+	f.childrenByPath[parentSrc] = filterCatalogChildEntry(f.childrenByPath[parentSrc], srcPath)
+	f.childrenByPath[parentDest] = append(f.childrenByPath[parentDest], entry)
+
+	for _, child := range children {
+		if child == nil {
+			continue
+		}
+		childDest := path.Join(destPath, path.Base(child.Path))
+		if child.IsDir() {
+			f.renameDirRecursive(child.Path, childDest)
+			continue
+		}
+		f.renameFileWithinDir(child.Path, childDest)
+	}
+}
+
+func (f *catalogTestFileSystem) renameFileWithinDir(srcPath string, destPath string) {
+	entry := f.entriesByPath[srcPath]
+	entry.Path = destPath
+	entry.Name = path.Base(destPath)
+	f.entriesByPath[destPath] = entry
+	delete(f.entriesByPath, srcPath)
+
+	if data, ok := f.contentByPath[srcPath]; ok {
+		f.contentByPath[destPath] = data
+		delete(f.contentByPath, srcPath)
+	}
+	if metas, ok := f.metadataByPath[srcPath]; ok {
+		f.metadataByPath[destPath] = metas
+		delete(f.metadataByPath, srcPath)
+	}
+}
+
+func filterCatalogChildEntry(entries []*irodsfs.Entry, targetPath string) []*irodsfs.Entry {
+	filtered := entries[:0]
+	for _, entry := range entries {
+		if entry == nil || path.Clean(entry.Path) == targetPath {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
 }
 
 type catalogTestFileHandle struct {
