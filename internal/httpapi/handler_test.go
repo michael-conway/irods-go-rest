@@ -249,6 +249,7 @@ func TestGetPathAcceptsValidBearerToken(t *testing.T) {
 		body,
 		`"avus":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"}`,
 		`"create_avu":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"}`,
+		`"resource_link":{"href":"/api/v1/resource/demoResc","method":"GET"}`,
 	) {
 		t.Fatalf("expected AVU HATEOAS link in response body: %q", body)
 	}
@@ -273,6 +274,7 @@ func TestGetPathVerboseReturnsReplicaLongFormat(t *testing.T) {
 		`"number":0`,
 		`"owner":"rods"`,
 		`"resource_name":"demoResc"`,
+		`"resource_link":{"href":"/api/v1/resource/demoResc","method":"GET"}`,
 		`"resource_hierarchy":"demoResc"`,
 		`"status":"1"`,
 		`"status_symbol":"\u0026"`,
@@ -344,8 +346,9 @@ func TestGetPathReturnsCollectionShape(t *testing.T) {
 		`"path_segments"`,
 		`"display_name":"project"`,
 		`"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject"`,
-		`"create_child_collection":{"href":"/api/v1/path/children?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"POST"}`,
-		`"create_child_data_object":{"href":"/api/v1/path/children?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"POST"}`,
+		`"resources":{"href":"/api/v1/resource","method":"GET"}`,
+		`"create_child_collection":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"POST"}`,
+		`"create_child_data_object":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"POST"}`,
 	) {
 		t.Fatalf("expected path segments in collection response body: %q", body)
 	}
@@ -404,7 +407,7 @@ func TestDeletePathDeletesCollectionRecursivelyWhenForced(t *testing.T) {
 func TestPostPathMoveRenamesDataObject(t *testing.T) {
 	handler := testHandler(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/actions/move?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(`{"new_name":"renamed.txt"}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/path?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(`{"new_name":"renamed.txt"}`))
 	req.Header.Set("Authorization", "Bearer token123")
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -423,7 +426,7 @@ func TestPostPathMoveRenamesDataObject(t *testing.T) {
 func TestPostPathMoveRenamesCollection(t *testing.T) {
 	handler := testHandler(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/actions/move?irods_path=/tempZone/home/test1/project", strings.NewReader(`{"new_name":"renamed-project"}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/path?irods_path=/tempZone/home/test1/project", strings.NewReader(`{"new_name":"renamed-project"}`))
 	req.Header.Set("Authorization", "Bearer token123")
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -478,7 +481,7 @@ func TestGetPathChildrenReturnsCollectionChildren(t *testing.T) {
 func TestPostPathChildrenCreatesCollection(t *testing.T) {
 	handler := testHandler(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/children?irods_path=/tempZone/home/test1/project", strings.NewReader(`{"child_name":"new-folder","kind":"collection"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/path?irods_path=/tempZone/home/test1/project", strings.NewReader(`{"child_name":"new-folder","kind":"collection"}`))
 	req.Header.Set("Authorization", "Bearer token123")
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -493,7 +496,7 @@ func TestPostPathChildrenCreatesCollection(t *testing.T) {
 		body,
 		`"path":"/tempZone/home/test1/project/new-folder"`,
 		`"kind":"collection"`,
-		`"create_child_collection":{"href":"/api/v1/path/children?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject%2Fnew-folder","method":"POST"}`,
+		`"create_child_collection":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject%2Fnew-folder","method":"POST"}`,
 	) {
 		t.Fatalf("unexpected create collection response body: %q", body)
 	}
@@ -502,7 +505,7 @@ func TestPostPathChildrenCreatesCollection(t *testing.T) {
 func TestPostPathChildrenCreatesZeroByteFile(t *testing.T) {
 	handler := testHandler(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/children?irods_path=/tempZone/home/test1/project", strings.NewReader(`{"child_name":"empty.txt","kind":"data_object"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/path?irods_path=/tempZone/home/test1/project", strings.NewReader(`{"child_name":"empty.txt","kind":"data_object"}`))
 	req.Header.Set("Authorization", "Bearer token123")
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -526,7 +529,7 @@ func TestPostPathChildrenCreatesZeroByteFile(t *testing.T) {
 func TestPostPathChildrenRejectsMkdirsForDataObject(t *testing.T) {
 	handler := testHandler(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/children?irods_path=/tempZone/home/test1/project", strings.NewReader(`{"child_name":"nested/empty.txt","kind":"data_object","mkdirs":true}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/path?irods_path=/tempZone/home/test1/project", strings.NewReader(`{"child_name":"nested/empty.txt","kind":"data_object","mkdirs":true}`))
 	req.Header.Set("Authorization", "Bearer token123")
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -562,7 +565,7 @@ func TestGetPathAVUsReturnsAVUList(t *testing.T) {
 		`"attrib":"source"`,
 		`"value":"test"`,
 		`"unit":"fixture"`,
-		`"links":{"avus":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"},"create_avu":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"},"create_ticket":{"href":"/api/v1/path/ticket?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"}}`,
+		`"links":{"avus":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"},"create_avu":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"},"create_ticket":{"href":"/api/v1/path/ticket?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"},"resources":{"href":"/api/v1/resource","method":"GET"}}`,
 		`"update":{"href":"/api/v1/path/avu/701?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"PUT"}`,
 		`"delete":{"href":"/api/v1/path/avu/701?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"DELETE"}`,
 		`"count":1`,
@@ -1063,6 +1066,7 @@ func testHandler(t *testing.T) *Handler {
 	return NewHandler(
 		*cfg,
 		restservice.NewPathService(irods.NewCatalogServiceWithFactory(*cfg, factory)),
+		restservice.NewResourceService(irods.NewResourceServiceWithFactory(*cfg, factory)),
 		restservice.NewTicketService(irods.NewTicketServiceWithFactory(*cfg, factory)),
 		stubAuthService{},
 		stubAuthService{},
@@ -1076,6 +1080,7 @@ type testCatalogFileSystem struct {
 	metadataByPath map[string][]*irodstypes.IRODSMeta
 	contentByPath  map[string][]byte
 	ticketsByName  map[string]*irodstypes.IRODSTicket
+	resources      []*irodstypes.IRODSResource
 }
 
 func newTestCatalogFileSystem() *testCatalogFileSystem {
@@ -1191,6 +1196,20 @@ func newTestCatalogFileSystem() *testCatalogFileSystem {
 				UsesCount:      1,
 				WriteFileLimit: 10,
 				ExpirationTime: now.Add(30 * time.Minute),
+			},
+		},
+		resources: []*irodstypes.IRODSResource{
+			{
+				RescID:     500,
+				Name:       "demoResc",
+				Zone:       "tempZone",
+				Type:       "unixfilesystem",
+				Class:      "cache",
+				Location:   "irods.example.org",
+				Path:       "/var/lib/irods/Vault",
+				Context:    "",
+				CreateTime: now,
+				ModifyTime: now,
 			},
 		},
 	}
@@ -1420,6 +1439,19 @@ func (f *testCatalogFileSystem) OpenFile(irodsPath string, _ string, _ string) (
 	return &testCatalogFileHandle{reader: bytes.NewReader(data)}, nil
 }
 
+func (f *testCatalogFileSystem) ListResources() ([]*irodstypes.IRODSResource, error) {
+	return f.resources, nil
+}
+
+func (f *testCatalogFileSystem) GetResource(resourceName string) (*irodstypes.IRODSResource, error) {
+	for _, resource := range f.resources {
+		if resource != nil && resource.Name == resourceName {
+			return resource, nil
+		}
+	}
+	return nil, irodstypes.NewResourceNotFoundError(resourceName)
+}
+
 func (f *testCatalogFileSystem) Release() {}
 
 func (f *testCatalogFileSystem) GetTicket(ticketName string) (*irodstypes.IRODSTicket, error) {
@@ -1597,4 +1629,78 @@ func containsAll(s string, parts ...string) bool {
 		}
 	}
 	return true
+}
+
+func TestGetResourcesReturnsZoneResources(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/resource", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"resources":[`,
+		`"name":"demoResc"`,
+		`"scope":"top"`,
+		`"zone":"tempZone"`,
+		`"location":"irods.example.org"`,
+		`"self":{"href":"/api/v1/resource/demoResc","method":"GET"}`,
+		`"self":{"href":"/api/v1/resource?scope=top","method":"GET"}`,
+	) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestGetResourceReturnsResourceDetails(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/resource/demoResc", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"resource":{"id":500`, `"name":"demoResc"`, `"self":{"href":"/api/v1/resource/demoResc","method":"GET"}`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestGetResourcesAcceptsAllScope(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/resource?scope=all", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"scope":"all"`, `"self":{"href":"/api/v1/resource?scope=all","method":"GET"}`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestGetResourcesRejectsInvalidScope(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/resource?scope=bogus", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
 }

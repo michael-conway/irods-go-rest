@@ -571,6 +571,7 @@ type catalogTestFileSystem struct {
 	metadataByPath map[string][]*irodstypes.IRODSMeta
 	contentByPath  map[string][]byte
 	ticketsByName  map[string]*irodstypes.IRODSTicket
+	resources      []*irodstypes.IRODSResource
 	released       bool
 }
 
@@ -1140,4 +1141,17 @@ func (f *catalogTestFileHandle) ReadAt(buffer []byte, offset int64) (int, error)
 
 func (f *catalogTestFileHandle) Close() error {
 	return nil
+}
+
+func (f *catalogTestFileSystem) ListResources() ([]*irodstypes.IRODSResource, error) {
+	return f.resources, nil
+}
+
+func (f *catalogTestFileSystem) GetResource(resourceName string) (*irodstypes.IRODSResource, error) {
+	for _, resource := range f.resources {
+		if resource != nil && resource.Name == resourceName {
+			return resource, nil
+		}
+	}
+	return nil, irodstypes.NewResourceNotFoundError(resourceName)
 }

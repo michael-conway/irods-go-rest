@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"mime"
+	"net/url"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -73,6 +74,8 @@ type CatalogFileSystem interface {
 	DeleteMetadata(irodsPath string, avuID int64) error
 	ComputeChecksum(irodsPath string, resource string) (*irodstypes.IRODSChecksum, error)
 	OpenFile(irodsPath string, resource string, mode string) (CatalogFileHandle, error)
+	ListResources() ([]*irodstypes.IRODSResource, error)
+	GetResource(resourceName string) (*irodstypes.IRODSResource, error)
 	GetTicket(ticketName string) (*irodstypes.IRODSTicket, error)
 	ListTickets() ([]*irodstypes.IRODSTicket, error)
 	CreateTicket(ticketName string, ticketType irodstypes.TicketType, path string) error
@@ -202,7 +205,7 @@ func (s *catalogService) GetPathChildren(_ context.Context, requestContext *Requ
 	return results, nil
 }
 
-func (s *catalogService) CreatePathChild(_ context.Context, requestContext *RequestContext, absolutePath string, options PathCreateOptions) (domain.PathEntry, error) {
+func (s *catalogService) CreatePathChild(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathCreateOptions) (domain.PathEntry, error) {
 	absolutePath = strings.TrimSpace(absolutePath)
 	if absolutePath == "" {
 		return domain.PathEntry{}, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
@@ -261,20 +264,21 @@ func (s *catalogService) CreatePathChild(_ context.Context, requestContext *Requ
 		}
 	}
 
-	entry, err := filesystem.Stat(childPath)
+	verifyFS, entry, err := s.waitForObservedPath(ctx, requestContext, childPath, true, "irods-go-rest-create-path-child-verify")
 	if err != nil {
-		logIRODSError("catalog CreatePathChild child stat failed", err, "path", absolutePath, "child_path", childPath, "kind", kind, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
-		return domain.PathEntry{}, normalizePathAccessError("stat path", childPath, err)
+		logIRODSError("catalog CreatePathChild child verification failed", err, "path", absolutePath, "child_path", childPath, "kind", kind, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathEntry{}, err
 	}
+	defer verifyFS.Release()
 
-	metadata, err := filesystem.ListMetadata(childPath)
+	metadata, err := verifyFS.ListMetadata(childPath)
 	if err != nil {
 		logIRODSError("catalog CreatePathChild child metadata failed", err, "path", absolutePath, "child_path", childPath, "kind", kind, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 		return domain.PathEntry{}, normalizePathAccessError("list metadata", childPath, err)
 	}
 
 	if entry.IsDir() {
-		children, err := filesystem.List(childPath)
+		children, err := verifyFS.List(childPath)
 		if err != nil {
 			logIRODSError("catalog CreatePathChild child list failed", err, "path", absolutePath, "child_path", childPath, "kind", kind, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 			return domain.PathEntry{}, normalizePathAccessError("list children", childPath, err)
@@ -286,7 +290,7 @@ func (s *catalogService) CreatePathChild(_ context.Context, requestContext *Requ
 	return dataObjectPathEntry(s.cfg.IrodsZone, entry, metadata, PathLookupOptions{}), nil
 }
 
-func (s *catalogService) DeletePath(_ context.Context, requestContext *RequestContext, absolutePath string, force bool) error {
+func (s *catalogService) DeletePath(ctx context.Context, requestContext *RequestContext, absolutePath string, force bool) error {
 	absolutePath = strings.TrimSpace(absolutePath)
 	if absolutePath == "" {
 		return fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
@@ -323,6 +327,11 @@ func (s *catalogService) DeletePath(_ context.Context, requestContext *RequestCo
 			logIRODSError("catalog DeletePath remove dir failed", err, "path", absolutePath, "force", force, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 			return normalizePathAccessError("delete collection", absolutePath, err)
 		}
+		_, _, err := s.waitForObservedPath(ctx, requestContext, absolutePath, false, "irods-go-rest-delete-path-verify")
+		if err != nil {
+			logIRODSError("catalog DeletePath verification failed", err, "path", absolutePath, "force", force, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			return err
+		}
 		return nil
 	}
 
@@ -330,10 +339,15 @@ func (s *catalogService) DeletePath(_ context.Context, requestContext *RequestCo
 		logIRODSError("catalog DeletePath remove file failed", err, "path", absolutePath, "force", force, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 		return normalizePathAccessError("delete data object", absolutePath, err)
 	}
+	_, _, err = s.waitForObservedPath(ctx, requestContext, absolutePath, false, "irods-go-rest-delete-path-verify")
+	if err != nil {
+		logIRODSError("catalog DeletePath verification failed", err, "path", absolutePath, "force", force, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return err
+	}
 	return nil
 }
 
-func (s *catalogService) RenamePath(_ context.Context, requestContext *RequestContext, absolutePath string, newName string) (domain.PathEntry, error) {
+func (s *catalogService) RenamePath(ctx context.Context, requestContext *RequestContext, absolutePath string, newName string) (domain.PathEntry, error) {
 	absolutePath = strings.TrimSpace(absolutePath)
 	newName = strings.TrimSpace(newName)
 	if absolutePath == "" {
@@ -375,20 +389,26 @@ func (s *catalogService) RenamePath(_ context.Context, requestContext *RequestCo
 		}
 	}
 
-	renamedEntry, err := filesystem.Stat(destPath)
+	verifyFS, renamedEntry, err := s.waitForObservedPath(ctx, requestContext, destPath, true, "irods-go-rest-rename-path-verify")
 	if err != nil {
-		logIRODSError("catalog RenamePath stat renamed failed", err, "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
-		return domain.PathEntry{}, normalizePathAccessError("stat path", destPath, err)
+		logIRODSError("catalog RenamePath verification failed", err, "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathEntry{}, err
+	}
+	defer verifyFS.Release()
+
+	if _, _, err := s.waitForObservedPath(ctx, requestContext, absolutePath, false, "irods-go-rest-rename-path-source-verify"); err != nil {
+		logIRODSError("catalog RenamePath source verification failed", err, "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathEntry{}, err
 	}
 
-	metadata, err := filesystem.ListMetadata(destPath)
+	metadata, err := verifyFS.ListMetadata(destPath)
 	if err != nil {
 		logIRODSError("catalog RenamePath metadata failed", err, "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 		return domain.PathEntry{}, normalizePathAccessError("list metadata", destPath, err)
 	}
 
 	if renamedEntry.IsDir() {
-		children, err := filesystem.List(destPath)
+		children, err := verifyFS.List(destPath)
 		if err != nil {
 			logIRODSError("catalog RenamePath list children failed", err, "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 			return domain.PathEntry{}, normalizePathAccessError("list children", destPath, err)
@@ -720,6 +740,68 @@ func (s *catalogService) filesystemForRequest(requestContext *RequestContext, ap
 	return filesystem, nil
 }
 
+func (s *catalogService) waitForObservedPath(ctx context.Context, requestContext *RequestContext, irodsPath string, shouldExist bool, applicationName string) (CatalogFileSystem, *irodsfs.Entry, error) {
+	const (
+		waitTimeout = 3 * time.Second
+		waitStep    = 100 * time.Millisecond
+	)
+
+	deadline := time.Now().Add(waitTimeout)
+	var lastErr error
+
+	for {
+		select {
+		case <-ctx.Done():
+			if lastErr != nil {
+				return nil, nil, lastErr
+			}
+			return nil, nil, ctx.Err()
+		default:
+		}
+
+		filesystem, err := s.filesystemForRequest(requestContext, applicationName)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		entry, statErr := filesystem.Stat(irodsPath)
+		if shouldExist {
+			if statErr == nil {
+				return filesystem, entry, nil
+			}
+
+			filesystem.Release()
+			lastErr = normalizePathAccessError("stat path", irodsPath, statErr)
+			if !errors.Is(lastErr, ErrNotFound) {
+				return nil, nil, lastErr
+			}
+		} else {
+			filesystem.Release()
+			if statErr != nil {
+				lastErr = normalizePathAccessError("stat path", irodsPath, statErr)
+				if errors.Is(lastErr, ErrNotFound) {
+					return nil, nil, nil
+				}
+				return nil, nil, lastErr
+			}
+
+			lastErr = fmt.Errorf("path %q is still visible after mutation", irodsPath)
+		}
+
+		if time.Now().After(deadline) {
+			if shouldExist && lastErr == nil {
+				lastErr = fmt.Errorf("%w: path %q", ErrNotFound, irodsPath)
+			}
+			if !shouldExist && lastErr == nil {
+				lastErr = fmt.Errorf("timed out waiting for path %q to disappear", irodsPath)
+			}
+			return nil, nil, lastErr
+		}
+
+		time.Sleep(waitStep)
+	}
+}
+
 func (s *catalogService) accountForRequest(requestContext *RequestContext) (*irodstypes.IRODSAccount, error) {
 	if requestContext == nil {
 		logIRODSError("catalog accountForRequest missing request context", fmt.Errorf("missing request context"))
@@ -891,6 +973,26 @@ func (a *catalogFileSystemAdapter) ComputeChecksum(irodsPath string, resource st
 
 func (a *catalogFileSystemAdapter) OpenFile(irodsPath string, resource string, mode string) (CatalogFileHandle, error) {
 	return a.filesystem.OpenFile(irodsPath, resource, mode)
+}
+
+func (a *catalogFileSystemAdapter) ListResources() ([]*irodstypes.IRODSResource, error) {
+	conn, err := a.filesystem.GetMetadataConnection(false)
+	if err != nil {
+		return nil, err
+	}
+	defer a.filesystem.ReturnMetadataConnection(conn) //nolint:errcheck
+
+	return irodslibfs.ListResources(conn)
+}
+
+func (a *catalogFileSystemAdapter) GetResource(resourceName string) (*irodstypes.IRODSResource, error) {
+	conn, err := a.filesystem.GetMetadataConnection(false)
+	if err != nil {
+		return nil, err
+	}
+	defer a.filesystem.ReturnMetadataConnection(conn) //nolint:errcheck
+
+	return irodslibfs.GetResource(conn, resourceName)
 }
 
 func (a *catalogFileSystemAdapter) GetTicket(ticketName string) (*irodstypes.IRODSTicket, error) {
@@ -1184,20 +1286,22 @@ func collectionPathEntry(zone string, entry *irodsfs.Entry, metadata []*irodstyp
 }
 
 func dataObjectPathEntry(zone string, entry *irodsfs.Entry, metadata []*irodstypes.IRODSMeta, options PathLookupOptions) domain.PathEntry {
+	resourceName := firstReplicaResource(entry)
 	return domain.PathEntry{
-		ID:          entry.Path,
-		Path:        entry.Path,
-		Kind:        "data_object",
-		Checksum:    pathChecksumPointerFromEntry(entry),
-		MimeType:    inferredMimeType(entry),
-		Size:        entry.Size,
-		DisplaySize: humanReadableSize(entry.Size),
-		Zone:        zone,
-		Resource:    firstReplicaResource(entry),
-		CreatedAt:   timePointer(entry.CreateTime),
-		UpdatedAt:   timePointer(entry.ModifyTime),
-		Replicas:    pathReplicas(entry, options),
-		Metadata:    metadataMap(metadata),
+		ID:           entry.Path,
+		Path:         entry.Path,
+		Kind:         "data_object",
+		Checksum:     pathChecksumPointerFromEntry(entry),
+		MimeType:     inferredMimeType(entry),
+		Size:         entry.Size,
+		DisplaySize:  humanReadableSize(entry.Size),
+		Zone:         zone,
+		Resource:     resourceName,
+		ResourceLink: resourceActionLink(resourceName),
+		CreatedAt:    timePointer(entry.CreateTime),
+		UpdatedAt:    timePointer(entry.ModifyTime),
+		Replicas:     pathReplicas(entry, options),
+		Metadata:     metadataMap(metadata),
 	}
 }
 
@@ -1279,6 +1383,7 @@ func pathReplicas(entry *irodsfs.Entry, options PathLookupOptions) []domain.Path
 			Number:            replica.Number,
 			Owner:             strings.TrimSpace(replica.Owner),
 			ResourceName:      strings.TrimSpace(replica.ResourceName),
+			ResourceLink:      resourceActionLink(replica.ResourceName),
 			ResourceHierarchy: strings.TrimSpace(replica.ResourceHierarchy),
 			Size:              entry.Size,
 			DisplaySize:       humanReadableSize(entry.Size),
@@ -1298,6 +1403,18 @@ func pathReplicas(entry *irodsfs.Entry, options PathLookupOptions) []domain.Path
 	}
 
 	return replicas
+}
+
+func resourceActionLink(resourceName string) *domain.ActionLink {
+	resourceName = strings.TrimSpace(resourceName)
+	if resourceName == "" {
+		return nil
+	}
+
+	return &domain.ActionLink{
+		Href:   "/api/v1/resource/" + url.PathEscape(resourceName),
+		Method: "GET",
+	}
 }
 
 func irodsChecksumString(checksum *irodstypes.IRODSChecksum) string {

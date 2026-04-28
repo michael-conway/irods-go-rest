@@ -18,6 +18,7 @@ type PathEntry struct {
 	Size         int64             `json:"size,omitempty"`
 	DisplaySize  string            `json:"display_size,omitempty"`
 	Resource     string            `json:"resource,omitempty"`
+	ResourceLink *ActionLink       `json:"resource_link,omitempty"`
 	CreatedAt    *time.Time        `json:"created_at,omitempty"`
 	UpdatedAt    *time.Time        `json:"updated_at,omitempty"`
 	Replicas     []PathReplica     `json:"replicas,omitempty"`
@@ -32,19 +33,20 @@ type PathChecksum struct {
 }
 
 type PathReplica struct {
-	Number            int64      `json:"number"`
-	Owner             string     `json:"owner,omitempty"`
-	ResourceName      string     `json:"resource_name,omitempty"`
-	ResourceHierarchy string     `json:"resource_hierarchy,omitempty"`
-	Size              int64      `json:"size,omitempty"`
-	DisplaySize       string     `json:"display_size,omitempty"`
-	UpdatedAt         *time.Time `json:"updated_at,omitempty"`
-	Status            string     `json:"status,omitempty"`
-	StatusSymbol      string     `json:"status_symbol,omitempty"`
-	StatusDescription string     `json:"status_description,omitempty"`
-	Checksum          string     `json:"checksum,omitempty"`
-	DataType          string     `json:"data_type,omitempty"`
-	PhysicalPath      string     `json:"physical_path,omitempty"`
+	Number            int64       `json:"number"`
+	Owner             string      `json:"owner,omitempty"`
+	ResourceName      string      `json:"resource_name,omitempty"`
+	ResourceLink      *ActionLink `json:"resource_link,omitempty"`
+	ResourceHierarchy string      `json:"resource_hierarchy,omitempty"`
+	Size              int64       `json:"size,omitempty"`
+	DisplaySize       string      `json:"display_size,omitempty"`
+	UpdatedAt         *time.Time  `json:"updated_at,omitempty"`
+	Status            string      `json:"status,omitempty"`
+	StatusSymbol      string      `json:"status_symbol,omitempty"`
+	StatusDescription string      `json:"status_description,omitempty"`
+	Checksum          string      `json:"checksum,omitempty"`
+	DataType          string      `json:"data_type,omitempty"`
+	PhysicalPath      string      `json:"physical_path,omitempty"`
 }
 
 type AVUMetadata struct {
@@ -61,6 +63,7 @@ type PathLinks struct {
 	AVUs                  *ActionLink `json:"avus,omitempty"`
 	CreateAVU             *ActionLink `json:"create_avu,omitempty"`
 	CreateTicket          *ActionLink `json:"create_ticket,omitempty"`
+	Resources             *ActionLink `json:"resources,omitempty"`
 	CreateChildCollection *ActionLink `json:"create_child_collection,omitempty"`
 	CreateChildDataObject *ActionLink `json:"create_child_data_object,omitempty"`
 }
