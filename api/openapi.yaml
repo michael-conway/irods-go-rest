@@ -463,6 +463,15 @@ paths:
           schema:
             type: string
           description: Full iRODS absolute logical path to a file.
+        - in: query
+          name: ticket_id
+          required: false
+          schema:
+            type: string
+          description: |
+            Optional iRODS ticket name for anonymous access. When supplied, this
+            takes precedence over any bearer token and allows browser-friendly
+            ticketed downloads without an `Authorization` header.
         - in: header
           name: Range
           required: false
@@ -504,6 +513,8 @@ paths:
       summary: Stream bytes for an iRODS logical path
       description: |
         Accepts Basic auth, an OAuth bearer token, or a bearer token prefixed as `irods-ticket:<ticket>`.
+        Optionally accepts `ticket_id` as a query parameter, which takes precedence
+        over any bearer ticket and supports anonymous browser download links.
         Supports single-range byte restarts via the `Range` header.
         Responses include download-oriented headers such as `Content-Disposition`,
         `Last-Modified`, `ETag` when a checksum is already stored, and
@@ -518,6 +529,15 @@ paths:
           schema:
             type: string
           description: Full iRODS absolute logical path to a file.
+        - in: query
+          name: ticket_id
+          required: false
+          schema:
+            type: string
+          description: |
+            Optional iRODS ticket name for anonymous access. When supplied, this
+            takes precedence over any bearer token and allows browser-friendly
+            ticketed downloads without an `Authorization` header.
         - in: header
           name: Range
           required: false
@@ -648,6 +668,241 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/path/ticket:
+    post:
+      operationId: postPathTicket
+      tags: [ticket]
+      summary: Create an anonymous read ticket for an iRODS path
+      description: |
+        Creates an anonymous read ticket scoped to the supplied `irods_path`.
+        The response includes the raw ticket name, a bearer token formatted as
+        `irods-ticket:<ticket>`, ticket restriction values, and HATEOAS links.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path for the ticket target.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TicketCreateRequest"
+      responses:
+        "201":
+          description: Ticket created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketResponse"
+        "400":
+          description: Missing irods_path or invalid ticket parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Object not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/ticket:
+    get:
+      operationId: getTickets
+      tags: [ticket]
+      summary: List tickets owned by the authenticated iRODS user
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      responses:
+        "200":
+          description: Ticket list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketCollectionResponse"
+        "401":
+          description: Missing or invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: postTicket
+      tags: [ticket]
+      summary: Create an anonymous read ticket for a supplied iRODS path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/TicketCreateRequest"
+                - type: object
+                  required: [irods_path]
+                  properties:
+                    irods_path:
+                      type: string
+      responses:
+        "201":
+          description: Ticket created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketResponse"
+        "400":
+          description: Missing irods_path or invalid ticket parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Path not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/ticket/{ticket_name}:
+    get:
+      operationId: getTicket
+      tags: [ticket]
+      summary: Show one ticket by ticket name
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: ticket_name
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Ticket details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketResponse"
+        "401":
+          description: Missing or invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ticket not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      operationId: patchTicket
+      tags: [ticket]
+      summary: Update mutable ticket restrictions
+      description: |
+        `maximum_uses: 0` clears the use limit.
+        `lifetime_minutes: 0` clears the expiration time.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: ticket_name
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TicketUpdateRequest"
+      responses:
+        "200":
+          description: Ticket updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketResponse"
+        "400":
+          description: Invalid request body or parameter values
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ticket not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteTicket
+      tags: [ticket]
+      summary: Delete a ticket by ticket name
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: ticket_name
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Ticket deleted
+        "401":
+          description: Missing or invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ticket not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
   securitySchemes:
     BearerAuth:
@@ -767,6 +1022,8 @@ components:
         avus:
           $ref: "#/components/schemas/ActionLink"
         create_avu:
+          $ref: "#/components/schemas/ActionLink"
+        create_ticket:
           $ref: "#/components/schemas/ActionLink"
     ParentLink:
       type: object
@@ -1012,6 +1269,103 @@ components:
         href:
           type: string
           description: Relative REST link for the related resource.
+    Ticket:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        bearer_token:
+          type: string
+        type:
+          type: string
+        owner:
+          type: string
+        owner_zone:
+          type: string
+        object_type:
+          type: string
+        irods_path:
+          type: string
+        uses_limit:
+          type: integer
+          format: int64
+        uses_count:
+          type: integer
+          format: int64
+        write_file_limit:
+          type: integer
+          format: int64
+        write_file_count:
+          type: integer
+          format: int64
+        write_byte_limit:
+          type: integer
+          format: int64
+        write_byte_count:
+          type: integer
+          format: int64
+        expiration_time:
+          type: string
+          format: date-time
+        links:
+          $ref: "#/components/schemas/TicketLinks"
+    TicketLinks:
+      type: object
+      properties:
+        self:
+          $ref: "#/components/schemas/ActionLink"
+        update:
+          $ref: "#/components/schemas/ActionLink"
+        delete:
+          $ref: "#/components/schemas/ActionLink"
+        path:
+          $ref: "#/components/schemas/ActionLink"
+        download:
+          $ref: "#/components/schemas/ActionLink"
+    TicketCreateRequest:
+      type: object
+      properties:
+        maximum_uses:
+          type: integer
+          format: int64
+          minimum: 0
+        lifetime_minutes:
+          type: integer
+          minimum: 0
+    TicketUpdateRequest:
+      type: object
+      properties:
+        maximum_uses:
+          type: integer
+          format: int64
+          minimum: 0
+        lifetime_minutes:
+          type: integer
+          minimum: 0
+    TicketResponse:
+      type: object
+      required: [ticket]
+      properties:
+        ticket:
+          $ref: "#/components/schemas/Ticket"
+    TicketCollectionResponse:
+      type: object
+      required: [tickets, count, links]
+      properties:
+        tickets:
+          type: array
+          items:
+            $ref: "#/components/schemas/Ticket"
+        count:
+          type: integer
+        links:
+          type: object
+          properties:
+            self:
+              $ref: "#/components/schemas/ActionLink"
+            create:
+              $ref: "#/components/schemas/ActionLink"
     Error:
       type: object
       required: [code, message]
