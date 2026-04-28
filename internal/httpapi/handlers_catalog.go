@@ -82,7 +82,15 @@ func (h *Handler) deletePath(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *Handler) patchPath(w http.ResponseWriter, r *http.Request) {
+	h.renamePath(w, r)
+}
+
 func (h *Handler) postPathMove(w http.ResponseWriter, r *http.Request) {
+	h.renamePath(w, r)
+}
+
+func (h *Handler) renamePath(w http.ResponseWriter, r *http.Request) {
 	objectPath := queryIRODSPath(r)
 	if objectPath == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
@@ -149,7 +157,15 @@ func (h *Handler) getPathChildren(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) postPath(w http.ResponseWriter, r *http.Request) {
+	h.createPath(w, r)
+}
+
 func (h *Handler) postPathChildren(w http.ResponseWriter, r *http.Request) {
+	h.createPath(w, r)
+}
+
+func (h *Handler) createPath(w http.ResponseWriter, r *http.Request) {
 	objectPath := queryIRODSPath(r)
 	if objectPath == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
@@ -729,10 +745,14 @@ func pathLinksForEntry(irodsPath string, kind string) *domain.PathLinks {
 			Href:   "/api/v1/path/ticket?irods_path=" + url.QueryEscape(irodsPath),
 			Method: http.MethodPost,
 		},
+		Resources: &domain.ActionLink{
+			Href:   "/api/v1/resource",
+			Method: http.MethodGet,
+		},
 	}
 
 	if kind == "collection" {
-		createChildrenPath := "/api/v1/path/children?irods_path=" + url.QueryEscape(irodsPath)
+		createChildrenPath := "/api/v1/path?irods_path=" + url.QueryEscape(irodsPath)
 		links.CreateChildCollection = &domain.ActionLink{
 			Href:   createChildrenPath,
 			Method: http.MethodPost,

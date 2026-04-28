@@ -34,16 +34,18 @@ const swaggerUIHTML = `<!DOCTYPE html>
 type Handler struct {
 	cfg        config.RestConfig
 	paths      restservice.PathService
+	resources  restservice.ResourceService
 	tickets    restservice.TicketService
 	authFlow   auth.AuthFlowService
 	verifier   auth.TokenVerifier
 	webSession *auth.SessionStore
 }
 
-func NewHandler(cfg config.RestConfig, paths restservice.PathService, tickets restservice.TicketService, authFlow auth.AuthFlowService, verifier auth.TokenVerifier, webSession *auth.SessionStore) *Handler {
+func NewHandler(cfg config.RestConfig, paths restservice.PathService, resources restservice.ResourceService, tickets restservice.TicketService, authFlow auth.AuthFlowService, verifier auth.TokenVerifier, webSession *auth.SessionStore) *Handler {
 	return &Handler{
 		cfg:        cfg,
 		paths:      paths,
+		resources:  resources,
 		tickets:    tickets,
 		authFlow:   authFlow,
 		verifier:   verifier,
@@ -61,6 +63,8 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("GET /web/callback", h.webCallback)
 	mux.HandleFunc("POST /web/logout", h.webLogout)
 	mux.Handle("GET /api/v1/path", h.requireBearer(http.HandlerFunc(h.getPath)))
+	mux.Handle("POST /api/v1/path", h.requireBearer(http.HandlerFunc(h.postPath)))
+	mux.Handle("PATCH /api/v1/path", h.requireBearer(http.HandlerFunc(h.patchPath)))
 	mux.Handle("DELETE /api/v1/path", h.requireBearer(http.HandlerFunc(h.deletePath)))
 	mux.Handle("POST /api/v1/path/actions/move", h.requireBearer(http.HandlerFunc(h.postPathMove)))
 	mux.Handle("GET /api/v1/path/children", h.requireBearer(http.HandlerFunc(h.getPathChildren)))
@@ -72,6 +76,8 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("GET /api/v1/path/checksum", h.requireBearer(http.HandlerFunc(h.getPathChecksum)))
 	mux.Handle("POST /api/v1/path/checksum", h.requireBearer(http.HandlerFunc(h.postPathChecksum)))
 	mux.Handle("POST /api/v1/path/ticket", h.requireBearer(http.HandlerFunc(h.postPathTicket)))
+	mux.Handle("GET /api/v1/resource", h.requireBearer(http.HandlerFunc(h.getResources)))
+	mux.Handle("GET /api/v1/resource/{resource_id}", h.requireBearer(http.HandlerFunc(h.getResource)))
 	mux.Handle("HEAD /api/v1/path/contents", h.requireDownloadBearer(http.HandlerFunc(h.headPathContents)))
 	mux.Handle("GET /api/v1/path/contents", h.requireDownloadBearer(http.HandlerFunc(h.getPathContents)))
 	mux.Handle("GET /api/v1/ticket", h.requireBearer(http.HandlerFunc(h.getTickets)))

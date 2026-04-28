@@ -35,10 +35,11 @@ func listenAddr(publicURL string) string {
 func New(cfg config.RestConfig) *App {
 	catalog := irods.NewCatalogService(cfg)
 	paths := restservice.NewPathService(catalog)
+	resources := restservice.NewResourceService(irods.NewResourceService(cfg))
 	tickets := restservice.NewTicketService(irods.NewTicketService(cfg))
 	authService := auth.NewKeycloakService(cfg)
 	sessionStore := auth.NewSessionStore()
-	handler := httpapi.NewHandler(cfg, paths, tickets, authService, authService, sessionStore)
+	handler := httpapi.NewHandler(cfg, paths, resources, tickets, authService, authService, sessionStore)
 
 	return &App{
 		server: &http.Server{

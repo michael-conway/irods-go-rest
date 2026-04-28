@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	extension_tickets "github.com/michael-conway/go-irodsclient-extensions/tickets"
 )
@@ -312,7 +313,7 @@ func TestPathFileCreateRenameDeleteBasicAuthE2E(t *testing.T) {
 		}
 	}()
 
-	createReq := newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path/children", parentPath), strings.NewReader(`{"child_name":"new-file.txt","kind":"data_object"}`))
+	createReq := newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path", parentPath), strings.NewReader(`{"child_name":"new-file.txt","kind":"data_object"}`))
 	createReq.Header.Set("Content-Type", "application/json")
 	setBasicAuth(createReq)
 
@@ -344,11 +345,11 @@ func TestPathFileCreateRenameDeleteBasicAuthE2E(t *testing.T) {
 	if created.DisplaySize != "0 B" {
 		t.Fatalf("expected zero-byte display size, got %q", created.DisplaySize)
 	}
-	if !filesystem.Exists(createdPath) {
+	if !waitForIRODSPathFresh(t, createdPath, 3*time.Second) {
 		t.Fatalf("expected created file %q to exist", createdPath)
 	}
 
-	moveReq := newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path/actions/move", createdPath), strings.NewReader(`{"new_name":"renamed-file.txt"}`))
+	moveReq := newE2ERequest(t, http.MethodPatch, pathURL(baseURL, "/api/v1/path", createdPath), strings.NewReader(`{"new_name":"renamed-file.txt"}`))
 	moveReq.Header.Set("Content-Type", "application/json")
 	setBasicAuth(moveReq)
 
@@ -376,10 +377,10 @@ func TestPathFileCreateRenameDeleteBasicAuthE2E(t *testing.T) {
 	if renamed.Kind != "data_object" {
 		t.Fatalf("expected data_object kind after rename, got %q", renamed.Kind)
 	}
-	if !filesystem.Exists(renamedPath) {
+	if !waitForIRODSPathFresh(t, renamedPath, 3*time.Second) {
 		t.Fatalf("expected renamed file %q to exist", renamedPath)
 	}
-	if filesystem.Exists(createdPath) {
+	if waitForIRODSPathFresh(t, createdPath, 500*time.Millisecond) {
 		t.Fatalf("expected original file %q to be absent after rename", createdPath)
 	}
 
@@ -396,7 +397,7 @@ func TestPathFileCreateRenameDeleteBasicAuthE2E(t *testing.T) {
 		body, _ := io.ReadAll(deleteResp.Body)
 		t.Fatalf("expected 204, got %d: %s", deleteResp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	if filesystem.Exists(renamedPath) {
+	if waitForIRODSPathFresh(t, renamedPath, 500*time.Millisecond) {
 		t.Fatalf("expected file %q to be deleted", renamedPath)
 	}
 }
@@ -420,7 +421,7 @@ func TestPathCollectionCreateDeleteForceBasicAuthE2E(t *testing.T) {
 		}
 	}()
 
-	createCollectionReq := newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path/children", parentPath), strings.NewReader(`{"child_name":"child-collection","kind":"collection"}`))
+	createCollectionReq := newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path", parentPath), strings.NewReader(`{"child_name":"child-collection","kind":"collection"}`))
 	createCollectionReq.Header.Set("Content-Type", "application/json")
 	setBasicAuth(createCollectionReq)
 
@@ -445,11 +446,11 @@ func TestPathCollectionCreateDeleteForceBasicAuthE2E(t *testing.T) {
 	if createdCollection.Path != collectionPath || createdCollection.Kind != "collection" {
 		t.Fatalf("unexpected created collection payload %+v", createdCollection)
 	}
-	if !filesystem.Exists(collectionPath) {
+	if !waitForIRODSPathFresh(t, collectionPath, 3*time.Second) {
 		t.Fatalf("expected collection %q to exist", collectionPath)
 	}
 
-	createChildFileReq := newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path/children", collectionPath), strings.NewReader(`{"child_name":"child.txt","kind":"data_object"}`))
+	createChildFileReq := newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path", collectionPath), strings.NewReader(`{"child_name":"child.txt","kind":"data_object"}`))
 	createChildFileReq.Header.Set("Content-Type", "application/json")
 	setBasicAuth(createChildFileReq)
 
@@ -465,7 +466,7 @@ func TestPathCollectionCreateDeleteForceBasicAuthE2E(t *testing.T) {
 	}
 
 	childFilePath := collectionPath + "/child.txt"
-	if !filesystem.Exists(childFilePath) {
+	if !waitForIRODSPathFresh(t, childFilePath, 3*time.Second) {
 		t.Fatalf("expected child file %q to exist", childFilePath)
 	}
 
@@ -491,7 +492,7 @@ func TestPathCollectionCreateDeleteForceBasicAuthE2E(t *testing.T) {
 	if conflictPayload.Code != "conflict" || !strings.Contains(conflictPayload.Message, "force=true") {
 		t.Fatalf("unexpected conflict payload %+v", conflictPayload)
 	}
-	if !filesystem.Exists(collectionPath) {
+	if !waitForIRODSPathFresh(t, collectionPath, 500*time.Millisecond) {
 		t.Fatalf("expected collection %q to still exist after non-force delete", collectionPath)
 	}
 
@@ -508,10 +509,10 @@ func TestPathCollectionCreateDeleteForceBasicAuthE2E(t *testing.T) {
 		body, _ := io.ReadAll(forceDeleteResp.Body)
 		t.Fatalf("expected 204, got %d: %s", forceDeleteResp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	if filesystem.Exists(collectionPath) {
+	if waitForIRODSPathFresh(t, collectionPath, 500*time.Millisecond) {
 		t.Fatalf("expected collection %q to be deleted by force", collectionPath)
 	}
-	if filesystem.Exists(childFilePath) {
+	if waitForIRODSPathFresh(t, childFilePath, 500*time.Millisecond) {
 		t.Fatalf("expected child file %q to be deleted by force", childFilePath)
 	}
 }
@@ -1448,6 +1449,24 @@ func TestGetPathWithBearerTokenE2E(t *testing.T) {
 
 func pathURL(baseURL string, route string, irodsPath string) string {
 	return strings.TrimRight(baseURL, "/") + route + "?irods_path=" + url.QueryEscape(irodsPath)
+}
+
+func waitForIRODSPathFresh(t *testing.T, irodsPath string, timeout time.Duration) bool {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for {
+		filesystem := newE2EIRODSFilesystem(t)
+		exists := filesystem.Exists(irodsPath)
+		filesystem.Release()
+		if exists {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func pathURLWithQuery(baseURL string, route string, irodsPath string, extraQuery string) string {

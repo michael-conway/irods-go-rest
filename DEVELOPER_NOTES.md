@@ -94,6 +94,7 @@ docker compose up
 - Prefer one generic path lookup plus subresources over separate top-level file and collection endpoints.
 - Add HATEOAS links when they improve navigation.
 - If `go-irodsclient` gets in the way, record the gap here instead of hiding it in commit history.
+- Be aware of cross-session read-after-write visibility when one session mutates iRODS and a different session immediately reads it back. `irods-go-rest` currently absorbs this for create, rename, and delete by doing short fresh-session postcondition checks before returning success. Keep this workaround in the service layer, not in `starbase` or other clients.
 
 ## Go client notes
 
@@ -101,3 +102,4 @@ Current gap:
 
 - Checksum operations still require dropping below the high-level `fs.FileSystem` API and calling lower-level iRODS functions with a metadata connection. A first-class checksum API in `go-irodsclient/fs.FileSystem` would simplify this service.
 - Ticket parsing, ticket creation helpers, and other reusable client workflows should be monitored for extraction into `go-irodsclient-extensions` when they are not HTTP-specific.
+- `go-irodsclient/fs.FileSystem` currently exposes caching but not a true public no-cache mode or explicit fresh-read APIs for path existence/lookups. This can surface as immediate cross-session visibility lag after create, rename, or delete. Track this upstream so the long-term fix can move down into `go-irodsclient` rather than staying as polling logic in service repositories.
