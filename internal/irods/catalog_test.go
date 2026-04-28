@@ -217,6 +217,64 @@ func TestCatalogCreatePathChildDataObjectReturnsZeroByteEntry(t *testing.T) {
 	}
 }
 
+func TestCatalogUploadPathContentsCreatesDataObjectWithChecksum(t *testing.T) {
+	filesystem := newCatalogTestFileSystem()
+	service := newTestCatalogService(t, filesystem)
+
+	uploaded, err := service.UploadPathContents(context.Background(), bearerRequestContext(), "/tempZone/home/alice/project", PathContentsUploadOptions{
+		FileName: "upload.txt",
+		Content:  bytes.NewBufferString("upload payload"),
+		Checksum: true,
+	})
+	if err != nil {
+		t.Fatalf("UploadPathContents returned error: %v", err)
+	}
+
+	if uploaded.Path != "/tempZone/home/alice/project/upload.txt" {
+		t.Fatalf("expected uploaded path, got %q", uploaded.Path)
+	}
+	if uploaded.Action != "created" {
+		t.Fatalf("expected action created, got %q", uploaded.Action)
+	}
+	if uploaded.Size != int64(len("upload payload")) {
+		t.Fatalf("expected uploaded size %d, got %d", len("upload payload"), uploaded.Size)
+	}
+	if uploaded.Checksum == nil || !uploaded.Checksum.Requested || !uploaded.Checksum.Verified {
+		t.Fatalf("expected checksum verification info, got %+v", uploaded.Checksum)
+	}
+	if got := string(filesystem.contentByPath["/tempZone/home/alice/project/upload.txt"]); got != "upload payload" {
+		t.Fatalf("expected stored payload, got %q", got)
+	}
+}
+
+func TestCatalogUploadPathContentsReplacesExistingDataObjectWhenOverwriteEnabled(t *testing.T) {
+	filesystem := newCatalogTestFileSystem()
+	service := newTestCatalogService(t, filesystem)
+
+	uploaded, err := service.UploadPathContents(context.Background(), bearerRequestContext(), "/tempZone/home/alice/project", PathContentsUploadOptions{
+		FileName:  "child.txt",
+		Content:   bytes.NewBufferString("replacement payload"),
+		Overwrite: true,
+	})
+	if err != nil {
+		t.Fatalf("UploadPathContents returned error: %v", err)
+	}
+
+	if uploaded.Action != "replaced" {
+		t.Fatalf("expected action replaced, got %q", uploaded.Action)
+	}
+	if got := string(filesystem.contentByPath["/tempZone/home/alice/project/child.txt"]); got != "replacement payload" {
+		t.Fatalf("expected replaced payload, got %q", got)
+	}
+}
+
+func TestNormalizePathAccessErrorMapsDuplicateNameToConflict(t *testing.T) {
+	err := normalizePathAccessError("create data object", "/tempZone/home/alice/project/file.txt", irodstypes.NewIRODSError(irodscommon.CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME))
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("expected ErrConflict, got %v", err)
+	}
+}
+
 func TestCatalogDeletePathRemovesDataObject(t *testing.T) {
 	filesystem := newCatalogTestFileSystem()
 	service := newTestCatalogService(t, filesystem)
@@ -798,7 +856,14 @@ func (f *catalogTestFileSystem) CreateFile(irodsPath string, _ string, _ string)
 	f.childrenByPath[parentPath] = append(f.childrenByPath[parentPath], entry)
 	f.contentByPath[cleaned] = nil
 
-	return &catalogTestFileHandle{reader: bytes.NewReader(nil)}, nil
+	return &catalogTestFileHandle{
+		reader: bytes.NewReader(nil),
+		writer: bytes.NewBuffer(nil),
+		onClose: func(data []byte) {
+			f.contentByPath[cleaned] = append([]byte(nil), data...)
+			entry.Size = int64(len(data))
+		},
+	}, nil
 }
 
 func (f *catalogTestFileSystem) RemoveDir(irodsPath string, recurse bool, _ bool) error {
@@ -1132,14 +1197,27 @@ func filterCatalogChildEntry(entries []*irodsfs.Entry, targetPath string) []*iro
 }
 
 type catalogTestFileHandle struct {
-	reader *bytes.Reader
+	reader  *bytes.Reader
+	writer  *bytes.Buffer
+	onClose func([]byte)
 }
 
 func (f *catalogTestFileHandle) ReadAt(buffer []byte, offset int64) (int, error) {
 	return f.reader.ReadAt(buffer, offset)
 }
 
+func (f *catalogTestFileHandle) Write(data []byte) (int, error) {
+	if f.writer == nil {
+		return 0, errors.New("file handle is not writable")
+	}
+
+	return f.writer.Write(data)
+}
+
 func (f *catalogTestFileHandle) Close() error {
+	if f.onClose != nil && f.writer != nil {
+		f.onClose(f.writer.Bytes())
+	}
 	return nil
 }
 

@@ -86,10 +86,6 @@ func (h *Handler) patchPath(w http.ResponseWriter, r *http.Request) {
 	h.renamePath(w, r)
 }
 
-func (h *Handler) postPathMove(w http.ResponseWriter, r *http.Request) {
-	h.renamePath(w, r)
-}
-
 func (h *Handler) renamePath(w http.ResponseWriter, r *http.Request) {
 	objectPath := queryIRODSPath(r)
 	if objectPath == "" {
@@ -214,6 +210,72 @@ func (h *Handler) createPath(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, pathEntryResponse(r, created))
 }
 
+func (h *Handler) postPathContents(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type"))), "multipart/form-data") {
+		writeError(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "request must use multipart/form-data")
+		return
+	}
+
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid multipart/form-data")
+		return
+	}
+
+	parentPath := strings.TrimSpace(r.FormValue("parent_path"))
+	if parentPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "parent_path is required")
+		return
+	}
+
+	fileName := strings.TrimSpace(r.FormValue("file_name"))
+	if fileName == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "file_name is required")
+		return
+	}
+
+	checksum, err := multipartFormBool(r, "checksum")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	overwrite, err := multipartFormBool(r, "overwrite")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	content, _, err := r.FormFile("content")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "content is required")
+		return
+	}
+	defer content.Close()
+
+	uploaded, err := h.paths.UploadPathContents(r.Context(), parentPath, irods.PathContentsUploadOptions{
+		FileName:  fileName,
+		Content:   content,
+		Checksum:  checksum,
+		Overwrite: overwrite,
+	})
+	if err != nil {
+		lowerErr := strings.ToLower(err.Error())
+		if strings.Contains(lowerErr, "file_name is required") || strings.Contains(lowerErr, "content is required") {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		writePathError(w, err)
+		return
+	}
+
+	status := http.StatusCreated
+	if uploaded.Action == "replaced" {
+		status = http.StatusOK
+	}
+
+	writeJSON(w, status, pathContentsUploadResponse(uploaded))
+}
+
 func (h *Handler) getPathAVUs(w http.ResponseWriter, r *http.Request) {
 	objectPath := queryIRODSPath(r)
 	if objectPath == "" {
@@ -254,6 +316,25 @@ func (h *Handler) getPathAVUs(w http.ResponseWriter, r *http.Request) {
 		"offset":        options.Offset,
 		"limit":         options.Limit,
 	})
+}
+
+func pathContentsUploadResponse(result domain.PathContentsUploadResult) domain.PathContentsUploadResult {
+	result.Links = &domain.PathContentsUploadLinks{
+		Path: &domain.ActionLink{
+			Href:   "/api/v1/path?irods_path=" + url.QueryEscape(result.Path),
+			Method: http.MethodGet,
+		},
+		Contents: &domain.ActionLink{
+			Href:   "/api/v1/path/contents?irods_path=" + url.QueryEscape(result.Path),
+			Method: http.MethodGet,
+		},
+		Parent: &domain.ActionLink{
+			Href:   "/api/v1/path?irods_path=" + url.QueryEscape(result.ParentPath),
+			Method: http.MethodGet,
+		},
+	}
+
+	return result
 }
 
 func (h *Handler) postPathAVU(w http.ResponseWriter, r *http.Request) {
@@ -493,6 +574,20 @@ func queryForceFlag(r *http.Request) (bool, error) {
 	default:
 		return false, fmt.Errorf("force query parameter must be a boolean")
 	}
+}
+
+func multipartFormBool(r *http.Request, fieldName string) (bool, error) {
+	raw := strings.TrimSpace(r.FormValue(fieldName))
+	if raw == "" {
+		return false, nil
+	}
+
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean", fieldName)
+	}
+
+	return value, nil
 }
 
 func writePathError(w http.ResponseWriter, err error) {

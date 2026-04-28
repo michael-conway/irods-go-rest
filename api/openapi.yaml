@@ -415,61 +415,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
-  /api/v1/path/actions/move:
-    post:
-      deprecated: true
-      operationId: postPathMove
-      tags: [path]
-      summary: Compatibility alias for same-parent rename
-      description: |
-        Deprecated compatibility alias for `PATCH /api/v1/path`.
-      security:
-        - BearerAuth: []
-        - BasicAuth: []
-      parameters:
-        - in: query
-          name: irods_path
-          required: true
-          schema:
-            type: string
-          description: Full iRODS absolute logical path to the source file or collection.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PathMoveRequest"
-      responses:
-        "200":
-          description: Renamed path entry at the new location
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PathEntry"
-        "400":
-          description: Missing path or invalid rename request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: Path not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "403":
-          description: Access denied for the requested path
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: Missing or invalid bearer token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
   /api/v1/path/avu:
     get:
       operationId: getPathAVUs

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -399,6 +400,117 @@ func TestPathFileCreateRenameDeleteBasicAuthE2E(t *testing.T) {
 	}
 	if waitForIRODSPathFresh(t, renamedPath, 500*time.Millisecond) {
 		t.Fatalf("expected file %q to be deleted", renamedPath)
+	}
+}
+
+func TestPathContentsUploadBasicAuthE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	client := newE2EHTTPClient()
+	filesystem := newE2EIRODSFilesystem(t)
+	defer filesystem.Release()
+
+	parentPath := irodsJoin(
+		"/"+e2eIRODSZone(t)+"/home/"+e2eBasicUsername(t),
+		"e2e-path-upload-"+randomToken(nil, 8),
+	)
+	if err := filesystem.MakeDir(parentPath, true); err != nil {
+		t.Fatalf("make parent collection %q: %v", parentPath, err)
+	}
+	defer func() {
+		if err := filesystem.RemoveDir(parentPath, true, true); err != nil && filesystem.Exists(parentPath) {
+			t.Errorf("cleanup parent collection %q: %v", parentPath, err)
+		}
+	}()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("parent_path", parentPath); err != nil {
+		t.Fatalf("write parent_path: %v", err)
+	}
+	if err := writer.WriteField("file_name", "uploaded.txt"); err != nil {
+		t.Fatalf("write file_name: %v", err)
+	}
+	if err := writer.WriteField("checksum", "true"); err != nil {
+		t.Fatalf("write checksum: %v", err)
+	}
+	part, err := writer.CreateFormFile("content", "uploaded.txt")
+	if err != nil {
+		t.Fatalf("create content part: %v", err)
+	}
+	if _, err := part.Write([]byte("uploaded e2e payload\n")); err != nil {
+		t.Fatalf("write content part: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := newE2ERequest(t, http.MethodPost, strings.TrimRight(baseURL, "/")+"/api/v1/path/contents", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	setBasicAuth(req)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("perform upload request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 201, got %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var uploaded struct {
+		Path       string `json:"path"`
+		ParentPath string `json:"parent_path"`
+		FileName   string `json:"file_name"`
+		Action     string `json:"action"`
+		Size       int64  `json:"size"`
+		Checksum   struct {
+			Requested bool   `json:"requested"`
+			Verified  bool   `json:"verified"`
+			Algorithm string `json:"algorithm"`
+			Value     string `json:"value"`
+		} `json:"checksum"`
+	}
+	decodeJSON(t, resp.Body, &uploaded)
+
+	uploadedPath := parentPath + "/uploaded.txt"
+	if uploaded.Path != uploadedPath || uploaded.ParentPath != parentPath || uploaded.FileName != "uploaded.txt" {
+		t.Fatalf("unexpected upload payload %+v", uploaded)
+	}
+	if uploaded.Action != "created" {
+		t.Fatalf("expected action created, got %q", uploaded.Action)
+	}
+	if uploaded.Size != int64(len("uploaded e2e payload\n")) {
+		t.Fatalf("expected upload size %d, got %d", len("uploaded e2e payload\n"), uploaded.Size)
+	}
+	if !uploaded.Checksum.Requested || !uploaded.Checksum.Verified {
+		t.Fatalf("expected checksum verification, got %+v", uploaded.Checksum)
+	}
+	if !waitForIRODSPathFresh(t, uploadedPath, 3*time.Second) {
+		t.Fatalf("expected uploaded file %q to exist", uploadedPath)
+	}
+
+	downloadReq := newE2ERequest(t, http.MethodGet, pathURL(baseURL, "/api/v1/path/contents", uploadedPath), nil)
+	setBasicAuth(downloadReq)
+
+	downloadResp, err := client.Do(downloadReq)
+	if err != nil {
+		t.Fatalf("perform upload verification download request: %v", err)
+	}
+	defer downloadResp.Body.Close()
+
+	if downloadResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(downloadResp.Body)
+		t.Fatalf("expected 200, got %d: %s", downloadResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	downloaded, err := io.ReadAll(downloadResp.Body)
+	if err != nil {
+		t.Fatalf("read downloaded payload: %v", err)
+	}
+	if string(downloaded) != "uploaded e2e payload\n" {
+		t.Fatalf("expected uploaded payload %q, got %q", "uploaded e2e payload\n", string(downloaded))
 	}
 }
 

@@ -45,9 +45,17 @@ type PathCreateOptions struct {
 	Mkdirs    bool
 }
 
+type PathContentsUploadOptions struct {
+	FileName  string
+	Content   io.Reader
+	Checksum  bool
+	Overwrite bool
+}
+
 type CatalogService interface {
 	GetPath(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathLookupOptions) (domain.PathEntry, error)
 	GetPathChildren(ctx context.Context, requestContext *RequestContext, absolutePath string) ([]domain.PathEntry, error)
+	UploadPathContents(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathContentsUploadOptions) (domain.PathContentsUploadResult, error)
 	CreatePathChild(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathCreateOptions) (domain.PathEntry, error)
 	DeletePath(ctx context.Context, requestContext *RequestContext, absolutePath string, force bool) error
 	RenamePath(ctx context.Context, requestContext *RequestContext, absolutePath string, newName string) (domain.PathEntry, error)
@@ -89,6 +97,7 @@ type CatalogFileSystem interface {
 
 type CatalogFileHandle interface {
 	ReadAt(buffer []byte, offset int64) (int, error)
+	Write(data []byte) (int, error)
 	Close() error
 }
 
@@ -288,6 +297,122 @@ func (s *catalogService) CreatePathChild(ctx context.Context, requestContext *Re
 	}
 
 	return dataObjectPathEntry(s.cfg.IrodsZone, entry, metadata, PathLookupOptions{}), nil
+}
+
+func (s *catalogService) UploadPathContents(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathContentsUploadOptions) (domain.PathContentsUploadResult, error) {
+	absolutePath = strings.TrimSpace(absolutePath)
+	if absolutePath == "" {
+		return domain.PathContentsUploadResult{}, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
+	}
+
+	fileName := strings.TrimSpace(options.FileName)
+	if fileName == "" {
+		return domain.PathContentsUploadResult{}, fmt.Errorf("file_name is required")
+	}
+	if options.Content == nil {
+		return domain.PathContentsUploadResult{}, fmt.Errorf("content is required")
+	}
+
+	objectPath, err := resolveChildPath(absolutePath, fileName)
+	if err != nil {
+		return domain.PathContentsUploadResult{}, err
+	}
+
+	slog.Debug("catalog UploadPathContents start", "path", absolutePath, "object_path", objectPath, "overwrite", options.Overwrite, "checksum", options.Checksum, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-upload-path-contents")
+	if err != nil {
+		logIRODSError("catalog UploadPathContents filesystem setup failed", err, "path", absolutePath, "object_path", objectPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathContentsUploadResult{}, err
+	}
+	defer filesystem.Release()
+
+	parentEntry, err := filesystem.Stat(absolutePath)
+	if err != nil {
+		logIRODSError("catalog UploadPathContents parent stat failed", err, "path", absolutePath, "object_path", objectPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathContentsUploadResult{}, normalizePathAccessError("stat path", absolutePath, err)
+	}
+	if !parentEntry.IsDir() {
+		return domain.PathContentsUploadResult{}, fmt.Errorf("%w: path %q is not a collection", ErrNotFound, absolutePath)
+	}
+
+	action := "created"
+	if existingEntry, statErr := filesystem.Stat(objectPath); statErr == nil {
+		if existingEntry.IsDir() {
+			return domain.PathContentsUploadResult{}, fmt.Errorf("%w: target path %q is an existing collection", ErrConflict, objectPath)
+		}
+		if !options.Overwrite {
+			return domain.PathContentsUploadResult{}, fmt.Errorf("%w: target data object %q already exists; pass overwrite=true to replace it", ErrConflict, objectPath)
+		}
+		if err := filesystem.RemoveFile(objectPath, true); err != nil {
+			logIRODSError("catalog UploadPathContents remove existing file failed", err, "path", absolutePath, "object_path", objectPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			return domain.PathContentsUploadResult{}, normalizePathAccessError("delete data object", objectPath, err)
+		}
+		if _, _, err := s.waitForObservedPath(ctx, requestContext, objectPath, false, "irods-go-rest-upload-path-contents-overwrite-verify"); err != nil {
+			logIRODSError("catalog UploadPathContents overwrite verification failed", err, "path", absolutePath, "object_path", objectPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			return domain.PathContentsUploadResult{}, err
+		}
+		action = "replaced"
+	} else if normalizedErr := normalizePathAccessError("stat path", objectPath, statErr); !errors.Is(normalizedErr, ErrNotFound) {
+		logIRODSError("catalog UploadPathContents existing stat failed", statErr, "path", absolutePath, "object_path", objectPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathContentsUploadResult{}, normalizedErr
+	}
+
+	handle, err := filesystem.CreateFile(objectPath, "", string(irodstypes.FileOpenModeWriteOnly))
+	if err != nil {
+		logIRODSError("catalog UploadPathContents create file failed", err, "path", absolutePath, "object_path", objectPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathContentsUploadResult{}, normalizePathAccessError("create data object", objectPath, err)
+	}
+
+	bytesWritten, copyErr := io.Copy(handle, options.Content)
+	closeErr := handle.Close()
+	if copyErr != nil {
+		_ = filesystem.RemoveFile(objectPath, true)
+		logIRODSError("catalog UploadPathContents write failed", copyErr, "path", absolutePath, "object_path", objectPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathContentsUploadResult{}, fmt.Errorf("write uploaded content %q: %w", objectPath, copyErr)
+	}
+	if closeErr != nil {
+		logIRODSError("catalog UploadPathContents close file failed", closeErr, "path", absolutePath, "object_path", objectPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathContentsUploadResult{}, normalizePathAccessError("close data object", objectPath, closeErr)
+	}
+
+	verifyFS, _, err := s.waitForObservedPath(ctx, requestContext, objectPath, true, "irods-go-rest-upload-path-contents-verify")
+	if err != nil {
+		logIRODSError("catalog UploadPathContents verification failed", err, "path", absolutePath, "object_path", objectPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathContentsUploadResult{}, err
+	}
+	defer verifyFS.Release()
+
+	var checksumInfo *domain.UploadChecksumInfo
+	if options.Checksum {
+		checksum, err := verifyFS.ComputeChecksum(objectPath, "")
+		if err != nil {
+			logIRODSError("catalog UploadPathContents checksum failed", err, "path", absolutePath, "object_path", objectPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			return domain.PathContentsUploadResult{}, normalizePathAccessError("compute checksum", objectPath, err)
+		}
+
+		mappedChecksum := pathChecksumFromIRODSChecksum(checksum)
+		checksumInfo = &domain.UploadChecksumInfo{
+			Requested: true,
+			Verified:  true,
+			Algorithm: mappedChecksum.Type,
+			Value:     mappedChecksum.Checksum,
+		}
+	} else {
+		checksumInfo = &domain.UploadChecksumInfo{
+			Requested: false,
+			Verified:  false,
+		}
+	}
+
+	return domain.PathContentsUploadResult{
+		Path:       objectPath,
+		ParentPath: absolutePath,
+		FileName:   path.Base(objectPath),
+		Action:     action,
+		Size:       bytesWritten,
+		Checksum:   checksumInfo,
+	}, nil
 }
 
 func (s *catalogService) DeletePath(ctx context.Context, requestContext *RequestContext, absolutePath string, force bool) error {
@@ -1066,6 +1191,8 @@ func normalizePathAccessError(operation string, absolutePath string, err error) 
 	switch irodstypes.GetIRODSErrorCode(err) {
 	case irodscommon.CAT_NO_ACCESS_PERMISSION, irodscommon.SYS_NO_API_PRIV:
 		return fmt.Errorf("%w: path %q", ErrPermissionDenied, absolutePath)
+	case irodscommon.CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME:
+		return fmt.Errorf("%w: path %q already exists", ErrConflict, absolutePath)
 	}
 
 	if irodstypes.IsFileNotFoundError(err) {
@@ -1078,6 +1205,9 @@ func normalizePathAccessError(operation string, absolutePath string, err error) 
 	}
 	if strings.Contains(message, "no access permission") || strings.Contains(message, "permission denied") {
 		return fmt.Errorf("%w: path %q", ErrPermissionDenied, absolutePath)
+	}
+	if strings.Contains(message, "already has item by that name") || strings.Contains(message, "already exists") {
+		return fmt.Errorf("%w: path %q already exists", ErrConflict, absolutePath)
 	}
 
 	return fmt.Errorf("%s %q: %w", operation, absolutePath, err)

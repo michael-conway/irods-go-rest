@@ -10,6 +10,7 @@ import (
 type PathService interface {
 	GetPath(ctx context.Context, absolutePath string, options irods.PathLookupOptions) (domain.PathEntry, error)
 	GetPathChildren(ctx context.Context, absolutePath string) ([]domain.PathEntry, error)
+	UploadPathContents(ctx context.Context, absolutePath string, options irods.PathContentsUploadOptions) (domain.PathContentsUploadResult, error)
 	CreatePathChild(ctx context.Context, absolutePath string, options irods.PathCreateOptions) (domain.PathEntry, error)
 	DeletePath(ctx context.Context, absolutePath string, force bool) error
 	RenamePath(ctx context.Context, absolutePath string, newName string) (domain.PathEntry, error)
@@ -46,6 +47,15 @@ func (s *pathService) GetPathChildren(ctx context.Context, absolutePath string) 
 	}
 
 	return s.catalog.GetPathChildren(ctx, irodsRequestContext(requestContext), absolutePath)
+}
+
+func (s *pathService) UploadPathContents(ctx context.Context, absolutePath string, options irods.PathContentsUploadOptions) (domain.PathContentsUploadResult, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return domain.PathContentsUploadResult{}, err
+	}
+
+	return s.catalog.UploadPathContents(ctx, irodsRequestContext(requestContext), absolutePath, options)
 }
 
 func (s *pathService) CreatePathChild(ctx context.Context, absolutePath string, options irods.PathCreateOptions) (domain.PathEntry, error) {
