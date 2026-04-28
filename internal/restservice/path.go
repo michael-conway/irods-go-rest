@@ -10,6 +10,9 @@ import (
 type PathService interface {
 	GetPath(ctx context.Context, absolutePath string, options irods.PathLookupOptions) (domain.PathEntry, error)
 	GetPathChildren(ctx context.Context, absolutePath string) ([]domain.PathEntry, error)
+	CreatePathChild(ctx context.Context, absolutePath string, options irods.PathCreateOptions) (domain.PathEntry, error)
+	DeletePath(ctx context.Context, absolutePath string, force bool) error
+	RenamePath(ctx context.Context, absolutePath string, newName string) (domain.PathEntry, error)
 	GetPathMetadata(ctx context.Context, absolutePath string) ([]domain.AVUMetadata, error)
 	AddPathMetadata(ctx context.Context, absolutePath string, attrib string, value string, unit string) (domain.AVUMetadata, error)
 	UpdatePathMetadata(ctx context.Context, absolutePath string, avuID string, attrib string, value string, unit string) (domain.AVUMetadata, error)
@@ -43,6 +46,33 @@ func (s *pathService) GetPathChildren(ctx context.Context, absolutePath string) 
 	}
 
 	return s.catalog.GetPathChildren(ctx, irodsRequestContext(requestContext), absolutePath)
+}
+
+func (s *pathService) CreatePathChild(ctx context.Context, absolutePath string, options irods.PathCreateOptions) (domain.PathEntry, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return domain.PathEntry{}, err
+	}
+
+	return s.catalog.CreatePathChild(ctx, irodsRequestContext(requestContext), absolutePath, options)
+}
+
+func (s *pathService) DeletePath(ctx context.Context, absolutePath string, force bool) error {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.catalog.DeletePath(ctx, irodsRequestContext(requestContext), absolutePath, force)
+}
+
+func (s *pathService) RenamePath(ctx context.Context, absolutePath string, newName string) (domain.PathEntry, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return domain.PathEntry{}, err
+	}
+
+	return s.catalog.RenamePath(ctx, irodsRequestContext(requestContext), absolutePath, newName)
 }
 
 func (s *pathService) GetPathMetadata(ctx context.Context, absolutePath string) ([]domain.AVUMetadata, error) {

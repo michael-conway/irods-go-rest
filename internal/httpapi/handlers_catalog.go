@@ -57,6 +57,64 @@ func (h *Handler) getPath(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, pathEntryResponse(r, object))
 }
 
+func (h *Handler) deletePath(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
+	if objectPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
+		return
+	}
+
+	force, err := queryForceFlag(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	if err := h.paths.DeletePath(r.Context(), objectPath, force); err != nil {
+		if errors.Is(err, irods.ErrConflict) {
+			writeError(w, http.StatusConflict, "conflict", err.Error())
+			return
+		}
+		writePathError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) postPathMove(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
+	if objectPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
+		return
+	}
+
+	var request struct {
+		NewName string `json:"new_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
+		return
+	}
+	if strings.TrimSpace(request.NewName) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "new_name is required")
+		return
+	}
+
+	renamed, err := h.paths.RenamePath(r.Context(), objectPath, request.NewName)
+	if err != nil {
+		lowerErr := strings.ToLower(err.Error())
+		if strings.Contains(lowerErr, "new_name") {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		writePathError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, pathEntryResponse(r, renamed))
+}
+
 func (h *Handler) getPathChildren(w http.ResponseWriter, r *http.Request) {
 	objectPath := queryIRODSPath(r)
 	if objectPath == "" {
@@ -89,6 +147,55 @@ func (h *Handler) getPathChildren(w http.ResponseWriter, r *http.Request) {
 		"path_segments": buildPathSegments(objectPath),
 		"children":      mappedChildren,
 	})
+}
+
+func (h *Handler) postPathChildren(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
+	if objectPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
+		return
+	}
+
+	var request struct {
+		ChildName string `json:"child_name"`
+		Kind      string `json:"kind"`
+		Mkdirs    bool   `json:"mkdirs"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
+		return
+	}
+	if strings.TrimSpace(request.ChildName) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "child_name is required")
+		return
+	}
+	switch strings.TrimSpace(request.Kind) {
+	case "collection", "data_object":
+	default:
+		writeError(w, http.StatusBadRequest, "invalid_request", "kind must be collection or data_object")
+		return
+	}
+	if request.Mkdirs && request.Kind != "collection" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "mkdirs is only supported for collection creation")
+		return
+	}
+
+	created, err := h.paths.CreatePathChild(r.Context(), objectPath, irods.PathCreateOptions{
+		ChildName: request.ChildName,
+		Kind:      request.Kind,
+		Mkdirs:    request.Mkdirs,
+	})
+	if err != nil {
+		lowerErr := strings.ToLower(err.Error())
+		if strings.Contains(lowerErr, "child_name") || strings.Contains(lowerErr, "kind must be") || strings.Contains(lowerErr, "mkdirs is only supported") {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		writePathError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, pathEntryResponse(r, created))
 }
 
 func (h *Handler) getPathAVUs(w http.ResponseWriter, r *http.Request) {
@@ -124,7 +231,7 @@ func (h *Handler) getPathAVUs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"irods_path":    objectPath,
 		"path_segments": buildPathSegments(objectPath),
-		"links":         pathLinksForEntry(objectPath),
+		"links":         pathLinksForEntry(objectPath, ""),
 		"avus":          avuMetadataResponseList(r, objectPath, metadata),
 		"count":         len(metadata),
 		"total":         total,
@@ -356,6 +463,22 @@ func queryTicketID(r *http.Request) string {
 	return strings.TrimSpace(r.URL.Query().Get("ticket_id"))
 }
 
+func queryForceFlag(r *http.Request) (bool, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get("force"))
+	if raw == "" {
+		return false, nil
+	}
+
+	switch strings.ToLower(raw) {
+	case "1", "true", "yes", "on":
+		return true, nil
+	case "0", "false", "no", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("force query parameter must be a boolean")
+	}
+}
+
 func writePathError(w http.ResponseWriter, err error) {
 	if errors.Is(err, irods.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
@@ -363,6 +486,10 @@ func writePathError(w http.ResponseWriter, err error) {
 	}
 	if errors.Is(err, irods.ErrPermissionDenied) {
 		writeError(w, http.StatusForbidden, "permission_denied", err.Error())
+		return
+	}
+	if errors.Is(err, irods.ErrConflict) {
+		writeError(w, http.StatusConflict, "conflict", err.Error())
 		return
 	}
 
@@ -528,7 +655,7 @@ func avuValidationFields(attrib string, value string) map[string]string {
 }
 
 func pathEntryResponse(r *http.Request, entry domain.PathEntry) domain.PathEntry {
-	entry.Links = pathLinksForEntry(entry.Path)
+	entry.Links = pathLinksForEntry(entry.Path, entry.Kind)
 	entry.Parent = buildParentLink(r, entry.Path)
 	entry.PathSegments = buildPathSegments(entry.Path)
 	return entry
@@ -582,14 +709,14 @@ func buildParentLink(r *http.Request, irodsPath string) *domain.ParentLink {
 	}
 }
 
-func pathLinksForEntry(irodsPath string) *domain.PathLinks {
+func pathLinksForEntry(irodsPath string, kind string) *domain.PathLinks {
 	irodsPath = strings.TrimSpace(irodsPath)
 	if irodsPath == "" {
 		return nil
 	}
 
 	avuPath := "/api/v1/path/avu?irods_path=" + url.QueryEscape(irodsPath)
-	return &domain.PathLinks{
+	links := &domain.PathLinks{
 		AVUs: &domain.ActionLink{
 			Href:   avuPath,
 			Method: http.MethodGet,
@@ -603,6 +730,20 @@ func pathLinksForEntry(irodsPath string) *domain.PathLinks {
 			Method: http.MethodPost,
 		},
 	}
+
+	if kind == "collection" {
+		createChildrenPath := "/api/v1/path/children?irods_path=" + url.QueryEscape(irodsPath)
+		links.CreateChildCollection = &domain.ActionLink{
+			Href:   createChildrenPath,
+			Method: http.MethodPost,
+		}
+		links.CreateChildDataObject = &domain.ActionLink{
+			Href:   createChildrenPath,
+			Method: http.MethodPost,
+		}
+	}
+
+	return links
 }
 
 func avuLinksForEntry(irodsPath string, avuID string) *domain.AVULinks {

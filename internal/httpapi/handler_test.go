@@ -344,12 +344,98 @@ func TestGetPathReturnsCollectionShape(t *testing.T) {
 		`"path_segments"`,
 		`"display_name":"project"`,
 		`"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject"`,
+		`"create_child_collection":{"href":"/api/v1/path/children?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"POST"}`,
+		`"create_child_data_object":{"href":"/api/v1/path/children?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"POST"}`,
 	) {
 		t.Fatalf("expected path segments in collection response body: %q", body)
 	}
 
 	if body := rec.Body.String(); !containsAll(body, `"parent":{"irods_path":"/tempZone/home/test1"`) {
 		t.Fatalf("expected parent link in collection response body: %q", body)
+	}
+}
+
+func TestDeletePathDeletesDataObject(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/path?irods_path=/tempZone/home/test1/file.txt", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDeletePathRejectsNonEmptyCollectionWithoutForce(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/path?irods_path=/tempZone/home/test1/project", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"code":"conflict"`, `force=true`) {
+		t.Fatalf("unexpected conflict response body: %q", body)
+	}
+}
+
+func TestDeletePathDeletesCollectionRecursivelyWhenForced(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/path?irods_path=/tempZone/home/test1/project&force=true", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPostPathMoveRenamesDataObject(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/actions/move?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(`{"new_name":"renamed.txt"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"path":"/tempZone/home/test1/renamed.txt"`, `"kind":"data_object"`) {
+		t.Fatalf("unexpected rename response body: %q", body)
+	}
+}
+
+func TestPostPathMoveRenamesCollection(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/actions/move?irods_path=/tempZone/home/test1/project", strings.NewReader(`{"new_name":"renamed-project"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"path":"/tempZone/home/test1/renamed-project"`, `"kind":"collection"`) {
+		t.Fatalf("unexpected rename collection response body: %q", body)
 	}
 }
 
@@ -386,6 +472,73 @@ func TestGetPathChildrenReturnsCollectionChildren(t *testing.T) {
 
 	if body := rec.Body.String(); !containsAll(body, `"parent":{"irods_path":"/tempZone/home/test1/project"`) {
 		t.Fatalf("expected child parent links in response body: %q", body)
+	}
+}
+
+func TestPostPathChildrenCreatesCollection(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/children?irods_path=/tempZone/home/test1/project", strings.NewReader(`{"child_name":"new-folder","kind":"collection"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"path":"/tempZone/home/test1/project/new-folder"`,
+		`"kind":"collection"`,
+		`"create_child_collection":{"href":"/api/v1/path/children?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject%2Fnew-folder","method":"POST"}`,
+	) {
+		t.Fatalf("unexpected create collection response body: %q", body)
+	}
+}
+
+func TestPostPathChildrenCreatesZeroByteFile(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/children?irods_path=/tempZone/home/test1/project", strings.NewReader(`{"child_name":"empty.txt","kind":"data_object"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"path":"/tempZone/home/test1/project/empty.txt"`,
+		`"kind":"data_object"`,
+		`"display_size":"0 B"`,
+	) {
+		t.Fatalf("unexpected create data object response body: %q", body)
+	}
+}
+
+func TestPostPathChildrenRejectsMkdirsForDataObject(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/children?irods_path=/tempZone/home/test1/project", strings.NewReader(`{"child_name":"nested/empty.txt","kind":"data_object","mkdirs":true}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"message":"mkdirs is only supported for collection creation"`) {
+		t.Fatalf("unexpected validation response body: %q", body)
 	}
 }
 
@@ -724,7 +877,35 @@ func TestGetTicketsReturnsOwnedTickets(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
-	if body := rec.Body.String(); !containsAll(body, `"tickets":[`, `"name":"ticket-existing"`, `"self":{"href":"/api/v1/ticket/ticket-existing","method":"GET"}`, `"create":{"href":"/api/v1/ticket","method":"POST"}`) {
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"tickets":[`,
+		`"name":"ticket-existing"`,
+		`"self":{"href":"/api/v1/ticket/ticket-existing","method":"GET"}`,
+		`"path":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"}`,
+		`"create":{"href":"/api/v1/ticket","method":"POST"}`,
+	) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestGetTicketReturnsPathHATEOASLink(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/ticket/ticket-existing", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"name":"ticket-existing"`,
+		`"path":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"}`,
+	) {
 		t.Fatalf("unexpected response body: %q", body)
 	}
 }
@@ -1034,6 +1215,123 @@ func (f *testCatalogFileSystem) List(irodsPath string) ([]*irodsfs.Entry, error)
 	return entries, nil
 }
 
+func (f *testCatalogFileSystem) MakeDir(irodsPath string, _ bool) error {
+	parentPath := path.Dir(path.Clean(irodsPath))
+	if parentPath != "." && parentPath != "/" {
+		if _, ok := f.entriesByPath[parentPath]; !ok {
+			return errors.New("not found")
+		}
+	}
+
+	now := time.Unix(1_700_000_002, 0)
+	entry := &irodsfs.Entry{
+		ID:         int64(len(f.entriesByPath) + 200),
+		Type:       irodsfs.DirectoryEntry,
+		Name:       path.Base(irodsPath),
+		Path:       path.Clean(irodsPath),
+		CreateTime: now,
+		ModifyTime: now,
+	}
+	f.entriesByPath[entry.Path] = entry
+	f.childrenByPath[entry.Path] = []*irodsfs.Entry{}
+	if parentPath != "." && parentPath != "/" {
+		f.childrenByPath[parentPath] = append(f.childrenByPath[parentPath], entry)
+	}
+	return nil
+}
+
+func (f *testCatalogFileSystem) CreateFile(irodsPath string, _ string, _ string) (irods.CatalogFileHandle, error) {
+	parentPath := path.Dir(path.Clean(irodsPath))
+	if _, ok := f.entriesByPath[parentPath]; !ok {
+		return nil, errors.New("not found")
+	}
+
+	now := time.Unix(1_700_000_002, 0)
+	entry := &irodsfs.Entry{
+		ID:         int64(len(f.entriesByPath) + 200),
+		Type:       irodsfs.FileEntry,
+		Name:       path.Base(irodsPath),
+		Path:       path.Clean(irodsPath),
+		Owner:      "alice",
+		Size:       0,
+		DataType:   "generic",
+		CreateTime: now,
+		ModifyTime: now,
+	}
+	f.entriesByPath[entry.Path] = entry
+	f.childrenByPath[parentPath] = append(f.childrenByPath[parentPath], entry)
+	f.contentByPath[entry.Path] = nil
+
+	return &testCatalogFileHandle{reader: bytes.NewReader(nil)}, nil
+}
+
+func (f *testCatalogFileSystem) RemoveDir(irodsPath string, recurse bool, _ bool) error {
+	entry, ok := f.entriesByPath[irodsPath]
+	if !ok || !entry.IsDir() {
+		return errors.New("not found")
+	}
+	if !recurse {
+		if children := f.childrenByPath[irodsPath]; len(children) > 0 {
+			return errors.New("collection not empty")
+		}
+	}
+	f.removeDirRecursive(path.Clean(irodsPath))
+	return nil
+}
+
+func (f *testCatalogFileSystem) RemoveFile(irodsPath string, _ bool) error {
+	entry, ok := f.entriesByPath[irodsPath]
+	if !ok || entry.IsDir() {
+		return errors.New("not found")
+	}
+
+	delete(f.entriesByPath, path.Clean(irodsPath))
+	delete(f.contentByPath, path.Clean(irodsPath))
+	delete(f.metadataByPath, path.Clean(irodsPath))
+	parentPath := path.Dir(path.Clean(irodsPath))
+	f.childrenByPath[parentPath] = filterChildEntry(f.childrenByPath[parentPath], path.Clean(irodsPath))
+	return nil
+}
+
+func (f *testCatalogFileSystem) RenameDir(srcPath string, destPath string) error {
+	entry, ok := f.entriesByPath[srcPath]
+	if !ok || !entry.IsDir() {
+		return errors.New("not found")
+	}
+	f.renameDirRecursive(path.Clean(srcPath), path.Clean(destPath))
+	return nil
+}
+
+func (f *testCatalogFileSystem) RenameFile(srcPath string, destPath string) error {
+	entry, ok := f.entriesByPath[srcPath]
+	if !ok || entry.IsDir() {
+		return errors.New("not found")
+	}
+
+	cleanSrc := path.Clean(srcPath)
+	cleanDest := path.Clean(destPath)
+	parentSrc := path.Dir(cleanSrc)
+	parentDest := path.Dir(cleanDest)
+
+	entry.Path = cleanDest
+	entry.Name = path.Base(cleanDest)
+	f.entriesByPath[cleanDest] = entry
+	delete(f.entriesByPath, cleanSrc)
+
+	if data, ok := f.contentByPath[cleanSrc]; ok {
+		f.contentByPath[cleanDest] = data
+		delete(f.contentByPath, cleanSrc)
+	}
+	if metas, ok := f.metadataByPath[cleanSrc]; ok {
+		f.metadataByPath[cleanDest] = metas
+		delete(f.metadataByPath, cleanSrc)
+	}
+
+	f.childrenByPath[parentSrc] = filterChildEntry(f.childrenByPath[parentSrc], cleanSrc)
+	f.childrenByPath[parentDest] = append(f.childrenByPath[parentDest], entry)
+	return nil
+}
+
 func (f *testCatalogFileSystem) ListMetadata(irodsPath string) ([]*irodstypes.IRODSMeta, error) {
 	return f.metadataByPath[irodsPath], nil
 }
@@ -1191,6 +1489,93 @@ func (f *testCatalogFileSystem) ModifyTicketExpirationTime(ticketName string, ex
 
 func (f *testCatalogFileSystem) ClearTicketExpirationTime(ticketName string) error {
 	return f.ModifyTicketExpirationTime(ticketName, time.Time{})
+}
+
+func (f *testCatalogFileSystem) removeDirRecursive(irodsPath string) {
+	for _, child := range f.childrenByPath[irodsPath] {
+		if child == nil {
+			continue
+		}
+		if child.IsDir() {
+			f.removeDirRecursive(child.Path)
+			continue
+		}
+		delete(f.entriesByPath, child.Path)
+		delete(f.contentByPath, child.Path)
+		delete(f.metadataByPath, child.Path)
+	}
+
+	delete(f.childrenByPath, irodsPath)
+	delete(f.entriesByPath, irodsPath)
+	delete(f.metadataByPath, irodsPath)
+
+	parentPath := path.Dir(irodsPath)
+	if parentPath != "." && parentPath != "/" && parentPath != irodsPath {
+		f.childrenByPath[parentPath] = filterChildEntry(f.childrenByPath[parentPath], irodsPath)
+	}
+}
+
+func (f *testCatalogFileSystem) renameDirRecursive(srcPath string, destPath string) {
+	entry := f.entriesByPath[srcPath]
+	parentSrc := path.Dir(srcPath)
+	parentDest := path.Dir(destPath)
+
+	entry.Path = destPath
+	entry.Name = path.Base(destPath)
+	f.entriesByPath[destPath] = entry
+	delete(f.entriesByPath, srcPath)
+
+	children := f.childrenByPath[srcPath]
+	delete(f.childrenByPath, srcPath)
+	f.childrenByPath[destPath] = children
+
+	if metas, ok := f.metadataByPath[srcPath]; ok {
+		f.metadataByPath[destPath] = metas
+		delete(f.metadataByPath, srcPath)
+	}
+
+	f.childrenByPath[parentSrc] = filterChildEntry(f.childrenByPath[parentSrc], srcPath)
+	f.childrenByPath[parentDest] = append(f.childrenByPath[parentDest], entry)
+
+	for _, child := range children {
+		if child == nil {
+			continue
+		}
+		childDest := path.Join(destPath, path.Base(child.Path))
+		if child.IsDir() {
+			f.renameDirRecursive(child.Path, childDest)
+			continue
+		}
+		f.renameFileWithinDir(child.Path, childDest)
+	}
+}
+
+func (f *testCatalogFileSystem) renameFileWithinDir(srcPath string, destPath string) {
+	entry := f.entriesByPath[srcPath]
+	entry.Path = destPath
+	entry.Name = path.Base(destPath)
+	f.entriesByPath[destPath] = entry
+	delete(f.entriesByPath, srcPath)
+
+	if data, ok := f.contentByPath[srcPath]; ok {
+		f.contentByPath[destPath] = data
+		delete(f.contentByPath, srcPath)
+	}
+	if metas, ok := f.metadataByPath[srcPath]; ok {
+		f.metadataByPath[destPath] = metas
+		delete(f.metadataByPath, srcPath)
+	}
+}
+
+func filterChildEntry(entries []*irodsfs.Entry, targetPath string) []*irodsfs.Entry {
+	filtered := entries[:0]
+	for _, entry := range entries {
+		if entry == nil || path.Clean(entry.Path) == targetPath {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
 }
 
 type testCatalogFileHandle struct {

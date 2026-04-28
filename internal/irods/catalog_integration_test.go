@@ -146,6 +146,136 @@ func TestCatalogGetPathChildrenIntegration(t *testing.T) {
 	}
 }
 
+func TestCatalogCreatePathChildCollectionIntegration(t *testing.T) {
+	service := newIntegrationCatalogService(t)
+	fixture := newCatalogIntegrationFixture(t)
+
+	entry, err := service.CreatePathChild(context.Background(), integrationCatalogRequestContext(t), fixture.rootPath, PathCreateOptions{
+		ChildName: "created-collection",
+		Kind:      "collection",
+	})
+	if err != nil {
+		t.Fatalf("CreatePathChild returned error: %v", err)
+	}
+
+	expectedPath := fixture.rootPath + "/created-collection"
+	if entry.Path != expectedPath {
+		t.Fatalf("expected path %q, got %q", expectedPath, entry.Path)
+	}
+	if entry.Kind != "collection" {
+		t.Fatalf("expected collection kind, got %q", entry.Kind)
+	}
+}
+
+func TestCatalogCreatePathChildDataObjectIntegration(t *testing.T) {
+	service := newIntegrationCatalogService(t)
+	fixture := newCatalogIntegrationFixture(t)
+
+	entry, err := service.CreatePathChild(context.Background(), integrationCatalogRequestContext(t), fixture.rootPath, PathCreateOptions{
+		ChildName: "created-file.txt",
+		Kind:      "data_object",
+	})
+	if err != nil {
+		t.Fatalf("CreatePathChild returned error: %v", err)
+	}
+
+	expectedPath := fixture.rootPath + "/created-file.txt"
+	if entry.Path != expectedPath {
+		t.Fatalf("expected path %q, got %q", expectedPath, entry.Path)
+	}
+	if entry.Kind != "data_object" {
+		t.Fatalf("expected data_object kind, got %q", entry.Kind)
+	}
+	if entry.Size != 0 {
+		t.Fatalf("expected zero-byte file, got %d", entry.Size)
+	}
+}
+
+func TestCatalogDeletePathDataObjectIntegration(t *testing.T) {
+	service := newIntegrationCatalogService(t)
+	fixture := newCatalogIntegrationFixture(t)
+
+	deletePath := fixture.rootPath + "/delete-me.txt"
+	filesystem := newIntegrationIRODSFilesystem(t)
+	defer filesystem.Release()
+	if _, err := filesystem.CreateFile(deletePath, "", "w"); err != nil {
+		t.Fatalf("create file %q: %v", deletePath, err)
+	}
+
+	if err := service.DeletePath(context.Background(), integrationCatalogRequestContext(t), deletePath, false); err != nil {
+		t.Fatalf("DeletePath returned error: %v", err)
+	}
+
+	if filesystem.Exists(deletePath) {
+		t.Fatalf("expected file %q to be deleted", deletePath)
+	}
+}
+
+func TestCatalogDeletePathNonEmptyCollectionRequiresForceIntegration(t *testing.T) {
+	service := newIntegrationCatalogService(t)
+	fixture := newCatalogIntegrationFixture(t)
+
+	err := service.DeletePath(context.Background(), integrationCatalogRequestContext(t), fixture.rootPath, false)
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("expected ErrConflict, got %v", err)
+	}
+}
+
+func TestCatalogDeletePathCollectionForceIntegration(t *testing.T) {
+	service := newIntegrationCatalogService(t)
+	fixture := newCatalogIntegrationFixture(t)
+	filesystem := newIntegrationIRODSFilesystem(t)
+	defer filesystem.Release()
+
+	if err := service.DeletePath(context.Background(), integrationCatalogRequestContext(t), fixture.rootPath, true); err != nil {
+		t.Fatalf("DeletePath returned error: %v", err)
+	}
+
+	if filesystem.Exists(fixture.rootPath) {
+		t.Fatalf("expected collection %q to be deleted", fixture.rootPath)
+	}
+}
+
+func TestCatalogRenamePathDataObjectIntegration(t *testing.T) {
+	service := newIntegrationCatalogService(t)
+	fixture := newCatalogIntegrationFixture(t)
+	filesystem := newIntegrationIRODSFilesystem(t)
+	defer filesystem.Release()
+
+	entry, err := service.RenamePath(context.Background(), integrationCatalogRequestContext(t), fixture.objectPath, "renamed.txt")
+	if err != nil {
+		t.Fatalf("RenamePath returned error: %v", err)
+	}
+
+	expectedPath := fixture.rootPath + "/renamed.txt"
+	if entry.Path != expectedPath {
+		t.Fatalf("expected path %q, got %q", expectedPath, entry.Path)
+	}
+	if !filesystem.Exists(expectedPath) {
+		t.Fatalf("expected renamed file %q to exist", expectedPath)
+	}
+}
+
+func TestCatalogRenamePathCollectionIntegration(t *testing.T) {
+	service := newIntegrationCatalogService(t)
+	fixture := newCatalogIntegrationFixture(t)
+	filesystem := newIntegrationIRODSFilesystem(t)
+	defer filesystem.Release()
+
+	entry, err := service.RenamePath(context.Background(), integrationCatalogRequestContext(t), fixture.childCollectionPath, "renamed-nested")
+	if err != nil {
+		t.Fatalf("RenamePath returned error: %v", err)
+	}
+
+	expectedPath := fixture.rootPath + "/renamed-nested"
+	if entry.Path != expectedPath {
+		t.Fatalf("expected path %q, got %q", expectedPath, entry.Path)
+	}
+	if !filesystem.Exists(expectedPath) {
+		t.Fatalf("expected renamed collection %q to exist", expectedPath)
+	}
+}
+
 func TestCatalogPathMetadataAddDeleteIntegration(t *testing.T) {
 	service := newIntegrationCatalogService(t)
 	fixture := newCatalogIntegrationFixture(t)

@@ -293,6 +293,229 @@ func TestGetPathChildrenBasicAuthE2E(t *testing.T) {
 	}
 }
 
+func TestPathFileCreateRenameDeleteBasicAuthE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	client := newE2EHTTPClient()
+	filesystem := newE2EIRODSFilesystem(t)
+	defer filesystem.Release()
+
+	parentPath := irodsJoin(
+		"/"+e2eIRODSZone(t)+"/home/"+e2eBasicUsername(t),
+		"e2e-path-file-"+randomToken(nil, 8),
+	)
+	if err := filesystem.MakeDir(parentPath, true); err != nil {
+		t.Fatalf("make parent collection %q: %v", parentPath, err)
+	}
+	defer func() {
+		if err := filesystem.RemoveDir(parentPath, true, true); err != nil && filesystem.Exists(parentPath) {
+			t.Errorf("cleanup parent collection %q: %v", parentPath, err)
+		}
+	}()
+
+	createReq := newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path/children", parentPath), strings.NewReader(`{"child_name":"new-file.txt","kind":"data_object"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	setBasicAuth(createReq)
+
+	createResp, err := client.Do(createReq)
+	if err != nil {
+		t.Fatalf("perform create file request: %v", err)
+	}
+	defer createResp.Body.Close()
+
+	if createResp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(createResp.Body)
+		t.Fatalf("expected 201, got %d: %s", createResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var created struct {
+		Path        string `json:"path"`
+		Kind        string `json:"kind"`
+		DisplaySize string `json:"display_size"`
+	}
+	decodeJSON(t, createResp.Body, &created)
+
+	createdPath := parentPath + "/new-file.txt"
+	if created.Path != createdPath {
+		t.Fatalf("expected path %q, got %q", createdPath, created.Path)
+	}
+	if created.Kind != "data_object" {
+		t.Fatalf("expected data_object kind, got %q", created.Kind)
+	}
+	if created.DisplaySize != "0 B" {
+		t.Fatalf("expected zero-byte display size, got %q", created.DisplaySize)
+	}
+	if !filesystem.Exists(createdPath) {
+		t.Fatalf("expected created file %q to exist", createdPath)
+	}
+
+	moveReq := newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path/actions/move", createdPath), strings.NewReader(`{"new_name":"renamed-file.txt"}`))
+	moveReq.Header.Set("Content-Type", "application/json")
+	setBasicAuth(moveReq)
+
+	moveResp, err := client.Do(moveReq)
+	if err != nil {
+		t.Fatalf("perform rename file request: %v", err)
+	}
+	defer moveResp.Body.Close()
+
+	if moveResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(moveResp.Body)
+		t.Fatalf("expected 200, got %d: %s", moveResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var renamed struct {
+		Path string `json:"path"`
+		Kind string `json:"kind"`
+	}
+	decodeJSON(t, moveResp.Body, &renamed)
+
+	renamedPath := parentPath + "/renamed-file.txt"
+	if renamed.Path != renamedPath {
+		t.Fatalf("expected renamed path %q, got %q", renamedPath, renamed.Path)
+	}
+	if renamed.Kind != "data_object" {
+		t.Fatalf("expected data_object kind after rename, got %q", renamed.Kind)
+	}
+	if !filesystem.Exists(renamedPath) {
+		t.Fatalf("expected renamed file %q to exist", renamedPath)
+	}
+	if filesystem.Exists(createdPath) {
+		t.Fatalf("expected original file %q to be absent after rename", createdPath)
+	}
+
+	deleteReq := newE2ERequest(t, http.MethodDelete, pathURL(baseURL, "/api/v1/path", renamedPath), nil)
+	setBasicAuth(deleteReq)
+
+	deleteResp, err := client.Do(deleteReq)
+	if err != nil {
+		t.Fatalf("perform delete file request: %v", err)
+	}
+	defer deleteResp.Body.Close()
+
+	if deleteResp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(deleteResp.Body)
+		t.Fatalf("expected 204, got %d: %s", deleteResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if filesystem.Exists(renamedPath) {
+		t.Fatalf("expected file %q to be deleted", renamedPath)
+	}
+}
+
+func TestPathCollectionCreateDeleteForceBasicAuthE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	client := newE2EHTTPClient()
+	filesystem := newE2EIRODSFilesystem(t)
+	defer filesystem.Release()
+
+	parentPath := irodsJoin(
+		"/"+e2eIRODSZone(t)+"/home/"+e2eBasicUsername(t),
+		"e2e-path-collection-"+randomToken(nil, 8),
+	)
+	if err := filesystem.MakeDir(parentPath, true); err != nil {
+		t.Fatalf("make parent collection %q: %v", parentPath, err)
+	}
+	defer func() {
+		if err := filesystem.RemoveDir(parentPath, true, true); err != nil && filesystem.Exists(parentPath) {
+			t.Errorf("cleanup parent collection %q: %v", parentPath, err)
+		}
+	}()
+
+	createCollectionReq := newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path/children", parentPath), strings.NewReader(`{"child_name":"child-collection","kind":"collection"}`))
+	createCollectionReq.Header.Set("Content-Type", "application/json")
+	setBasicAuth(createCollectionReq)
+
+	createCollectionResp, err := client.Do(createCollectionReq)
+	if err != nil {
+		t.Fatalf("perform create collection request: %v", err)
+	}
+	defer createCollectionResp.Body.Close()
+
+	if createCollectionResp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(createCollectionResp.Body)
+		t.Fatalf("expected 201, got %d: %s", createCollectionResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var createdCollection struct {
+		Path string `json:"path"`
+		Kind string `json:"kind"`
+	}
+	decodeJSON(t, createCollectionResp.Body, &createdCollection)
+
+	collectionPath := parentPath + "/child-collection"
+	if createdCollection.Path != collectionPath || createdCollection.Kind != "collection" {
+		t.Fatalf("unexpected created collection payload %+v", createdCollection)
+	}
+	if !filesystem.Exists(collectionPath) {
+		t.Fatalf("expected collection %q to exist", collectionPath)
+	}
+
+	createChildFileReq := newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path/children", collectionPath), strings.NewReader(`{"child_name":"child.txt","kind":"data_object"}`))
+	createChildFileReq.Header.Set("Content-Type", "application/json")
+	setBasicAuth(createChildFileReq)
+
+	createChildFileResp, err := client.Do(createChildFileReq)
+	if err != nil {
+		t.Fatalf("perform create child file request: %v", err)
+	}
+	defer createChildFileResp.Body.Close()
+
+	if createChildFileResp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(createChildFileResp.Body)
+		t.Fatalf("expected 201, got %d: %s", createChildFileResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	childFilePath := collectionPath + "/child.txt"
+	if !filesystem.Exists(childFilePath) {
+		t.Fatalf("expected child file %q to exist", childFilePath)
+	}
+
+	deleteCollectionReq := newE2ERequest(t, http.MethodDelete, pathURL(baseURL, "/api/v1/path", collectionPath), nil)
+	setBasicAuth(deleteCollectionReq)
+
+	deleteCollectionResp, err := client.Do(deleteCollectionReq)
+	if err != nil {
+		t.Fatalf("perform non-force delete collection request: %v", err)
+	}
+	defer deleteCollectionResp.Body.Close()
+
+	if deleteCollectionResp.StatusCode != http.StatusConflict {
+		body, _ := io.ReadAll(deleteCollectionResp.Body)
+		t.Fatalf("expected 409, got %d: %s", deleteCollectionResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var conflictPayload struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	decodeJSON(t, deleteCollectionResp.Body, &conflictPayload)
+	if conflictPayload.Code != "conflict" || !strings.Contains(conflictPayload.Message, "force=true") {
+		t.Fatalf("unexpected conflict payload %+v", conflictPayload)
+	}
+	if !filesystem.Exists(collectionPath) {
+		t.Fatalf("expected collection %q to still exist after non-force delete", collectionPath)
+	}
+
+	forceDeleteReq := newE2ERequest(t, http.MethodDelete, pathURLWithQuery(baseURL, "/api/v1/path", collectionPath, "force=true"), nil)
+	setBasicAuth(forceDeleteReq)
+
+	forceDeleteResp, err := client.Do(forceDeleteReq)
+	if err != nil {
+		t.Fatalf("perform force delete collection request: %v", err)
+	}
+	defer forceDeleteResp.Body.Close()
+
+	if forceDeleteResp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(forceDeleteResp.Body)
+		t.Fatalf("expected 204, got %d: %s", forceDeleteResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if filesystem.Exists(collectionPath) {
+		t.Fatalf("expected collection %q to be deleted by force", collectionPath)
+	}
+	if filesystem.Exists(childFilePath) {
+		t.Fatalf("expected child file %q to be deleted by force", childFilePath)
+	}
+}
+
 func TestGetPathAVUsBasicAuthE2E(t *testing.T) {
 	baseURL := requireE2EBaseURL(t)
 	fixture := requireE2EFixture(t)

@@ -58,9 +58,11 @@ type AVUMetadata struct {
 }
 
 type PathLinks struct {
-	AVUs         *ActionLink `json:"avus,omitempty"`
-	CreateAVU    *ActionLink `json:"create_avu,omitempty"`
-	CreateTicket *ActionLink `json:"create_ticket,omitempty"`
+	AVUs                  *ActionLink `json:"avus,omitempty"`
+	CreateAVU             *ActionLink `json:"create_avu,omitempty"`
+	CreateTicket          *ActionLink `json:"create_ticket,omitempty"`
+	CreateChildCollection *ActionLink `json:"create_child_collection,omitempty"`
+	CreateChildDataObject *ActionLink `json:"create_child_data_object,omitempty"`
 }
 
 type AVULinks struct {

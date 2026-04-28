@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"mime"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ import (
 
 var ErrNotFound = errors.New("resource not found")
 var ErrPermissionDenied = errors.New("permission denied")
+var ErrConflict = errors.New("conflict")
 
 type RequestContext struct {
 	AuthScheme    string
@@ -36,9 +38,18 @@ type PathLookupOptions struct {
 	VerboseLevel int
 }
 
+type PathCreateOptions struct {
+	ChildName string
+	Kind      string
+	Mkdirs    bool
+}
+
 type CatalogService interface {
 	GetPath(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathLookupOptions) (domain.PathEntry, error)
 	GetPathChildren(ctx context.Context, requestContext *RequestContext, absolutePath string) ([]domain.PathEntry, error)
+	CreatePathChild(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathCreateOptions) (domain.PathEntry, error)
+	DeletePath(ctx context.Context, requestContext *RequestContext, absolutePath string, force bool) error
+	RenamePath(ctx context.Context, requestContext *RequestContext, absolutePath string, newName string) (domain.PathEntry, error)
 	GetPathMetadata(ctx context.Context, requestContext *RequestContext, absolutePath string) ([]domain.AVUMetadata, error)
 	AddPathMetadata(ctx context.Context, requestContext *RequestContext, absolutePath string, attrib string, value string, unit string) (domain.AVUMetadata, error)
 	UpdatePathMetadata(ctx context.Context, requestContext *RequestContext, absolutePath string, avuID string, attrib string, value string, unit string) (domain.AVUMetadata, error)
@@ -51,6 +62,12 @@ type CatalogService interface {
 type CatalogFileSystem interface {
 	Stat(irodsPath string) (*irodsfs.Entry, error)
 	List(irodsPath string) ([]*irodsfs.Entry, error)
+	MakeDir(irodsPath string, recurse bool) error
+	CreateFile(irodsPath string, resource string, mode string) (CatalogFileHandle, error)
+	RemoveDir(irodsPath string, recurse bool, force bool) error
+	RemoveFile(irodsPath string, force bool) error
+	RenameDir(srcPath string, destPath string) error
+	RenameFile(srcPath string, destPath string) error
 	ListMetadata(irodsPath string) ([]*irodstypes.IRODSMeta, error)
 	AddMetadata(irodsPath string, attName string, attValue string, attUnits string) error
 	DeleteMetadata(irodsPath string, avuID int64) error
@@ -183,6 +200,203 @@ func (s *catalogService) GetPathChildren(_ context.Context, requestContext *Requ
 	}
 
 	return results, nil
+}
+
+func (s *catalogService) CreatePathChild(_ context.Context, requestContext *RequestContext, absolutePath string, options PathCreateOptions) (domain.PathEntry, error) {
+	absolutePath = strings.TrimSpace(absolutePath)
+	if absolutePath == "" {
+		return domain.PathEntry{}, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
+	}
+
+	childName := strings.TrimSpace(options.ChildName)
+	kind := strings.TrimSpace(options.Kind)
+	if childName == "" {
+		return domain.PathEntry{}, fmt.Errorf("child_name is required")
+	}
+	if kind != "collection" && kind != "data_object" {
+		return domain.PathEntry{}, fmt.Errorf("kind must be collection or data_object")
+	}
+	if options.Mkdirs && kind != "collection" {
+		return domain.PathEntry{}, fmt.Errorf("mkdirs is only supported for collection creation")
+	}
+
+	childPath, err := resolveChildPath(absolutePath, childName)
+	if err != nil {
+		return domain.PathEntry{}, err
+	}
+
+	slog.Debug("catalog CreatePathChild start", "path", absolutePath, "child_path", childPath, "kind", kind, "mkdirs", options.Mkdirs, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-create-path-child")
+	if err != nil {
+		logIRODSError("catalog CreatePathChild filesystem setup failed", err, "path", absolutePath, "child_path", childPath, "kind", kind, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathEntry{}, err
+	}
+	defer filesystem.Release()
+
+	parentEntry, err := filesystem.Stat(absolutePath)
+	if err != nil {
+		logIRODSError("catalog CreatePathChild parent stat failed", err, "path", absolutePath, "child_path", childPath, "kind", kind, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathEntry{}, normalizePathAccessError("stat path", absolutePath, err)
+	}
+	if !parentEntry.IsDir() {
+		return domain.PathEntry{}, fmt.Errorf("%w: path %q is not a collection", ErrNotFound, absolutePath)
+	}
+
+	switch kind {
+	case "collection":
+		if err := filesystem.MakeDir(childPath, options.Mkdirs); err != nil {
+			logIRODSError("catalog CreatePathChild mkdir failed", err, "path", absolutePath, "child_path", childPath, "mkdirs", options.Mkdirs, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			return domain.PathEntry{}, normalizePathAccessError("create collection", childPath, err)
+		}
+	case "data_object":
+		handle, err := filesystem.CreateFile(childPath, "", string(irodstypes.FileOpenModeWriteOnly))
+		if err != nil {
+			logIRODSError("catalog CreatePathChild create file failed", err, "path", absolutePath, "child_path", childPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			return domain.PathEntry{}, normalizePathAccessError("create data object", childPath, err)
+		}
+		if err := handle.Close(); err != nil {
+			logIRODSError("catalog CreatePathChild close created file failed", err, "path", absolutePath, "child_path", childPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			return domain.PathEntry{}, normalizePathAccessError("close data object", childPath, err)
+		}
+	}
+
+	entry, err := filesystem.Stat(childPath)
+	if err != nil {
+		logIRODSError("catalog CreatePathChild child stat failed", err, "path", absolutePath, "child_path", childPath, "kind", kind, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathEntry{}, normalizePathAccessError("stat path", childPath, err)
+	}
+
+	metadata, err := filesystem.ListMetadata(childPath)
+	if err != nil {
+		logIRODSError("catalog CreatePathChild child metadata failed", err, "path", absolutePath, "child_path", childPath, "kind", kind, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathEntry{}, normalizePathAccessError("list metadata", childPath, err)
+	}
+
+	if entry.IsDir() {
+		children, err := filesystem.List(childPath)
+		if err != nil {
+			logIRODSError("catalog CreatePathChild child list failed", err, "path", absolutePath, "child_path", childPath, "kind", kind, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			return domain.PathEntry{}, normalizePathAccessError("list children", childPath, err)
+		}
+
+		return collectionPathEntry(s.cfg.IrodsZone, entry, metadata, len(children), PathLookupOptions{}), nil
+	}
+
+	return dataObjectPathEntry(s.cfg.IrodsZone, entry, metadata, PathLookupOptions{}), nil
+}
+
+func (s *catalogService) DeletePath(_ context.Context, requestContext *RequestContext, absolutePath string, force bool) error {
+	absolutePath = strings.TrimSpace(absolutePath)
+	if absolutePath == "" {
+		return fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
+	}
+
+	slog.Debug("catalog DeletePath start", "path", absolutePath, "force", force, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-delete-path")
+	if err != nil {
+		logIRODSError("catalog DeletePath filesystem setup failed", err, "path", absolutePath, "force", force, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return err
+	}
+	defer filesystem.Release()
+
+	entry, err := filesystem.Stat(absolutePath)
+	if err != nil {
+		logIRODSError("catalog DeletePath stat failed", err, "path", absolutePath, "force", force, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return normalizePathAccessError("stat path", absolutePath, err)
+	}
+
+	if entry.IsDir() {
+		if !force {
+			children, err := filesystem.List(absolutePath)
+			if err != nil {
+				logIRODSError("catalog DeletePath list failed", err, "path", absolutePath, "force", force, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+				return normalizePathAccessError("list children", absolutePath, err)
+			}
+			if len(children) > 0 {
+				return fmt.Errorf("%w: collection %q is not empty; pass force=true for recursive delete", ErrConflict, absolutePath)
+			}
+		}
+
+		if err := filesystem.RemoveDir(absolutePath, force, force); err != nil {
+			logIRODSError("catalog DeletePath remove dir failed", err, "path", absolutePath, "force", force, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			return normalizePathAccessError("delete collection", absolutePath, err)
+		}
+		return nil
+	}
+
+	if err := filesystem.RemoveFile(absolutePath, force); err != nil {
+		logIRODSError("catalog DeletePath remove file failed", err, "path", absolutePath, "force", force, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return normalizePathAccessError("delete data object", absolutePath, err)
+	}
+	return nil
+}
+
+func (s *catalogService) RenamePath(_ context.Context, requestContext *RequestContext, absolutePath string, newName string) (domain.PathEntry, error) {
+	absolutePath = strings.TrimSpace(absolutePath)
+	newName = strings.TrimSpace(newName)
+	if absolutePath == "" {
+		return domain.PathEntry{}, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
+	}
+	if newName == "" {
+		return domain.PathEntry{}, fmt.Errorf("new_name is required")
+	}
+
+	destPath, err := resolveRenameDestination(absolutePath, newName)
+	if err != nil {
+		return domain.PathEntry{}, err
+	}
+
+	slog.Debug("catalog RenamePath start", "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-rename-path")
+	if err != nil {
+		logIRODSError("catalog RenamePath filesystem setup failed", err, "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathEntry{}, err
+	}
+	defer filesystem.Release()
+
+	entry, err := filesystem.Stat(absolutePath)
+	if err != nil {
+		logIRODSError("catalog RenamePath stat failed", err, "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathEntry{}, normalizePathAccessError("stat path", absolutePath, err)
+	}
+
+	if entry.IsDir() {
+		if err := filesystem.RenameDir(absolutePath, destPath); err != nil {
+			logIRODSError("catalog RenamePath rename dir failed", err, "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			return domain.PathEntry{}, normalizePathAccessError("rename collection", absolutePath, err)
+		}
+	} else {
+		if err := filesystem.RenameFile(absolutePath, destPath); err != nil {
+			logIRODSError("catalog RenamePath rename file failed", err, "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			return domain.PathEntry{}, normalizePathAccessError("rename data object", absolutePath, err)
+		}
+	}
+
+	renamedEntry, err := filesystem.Stat(destPath)
+	if err != nil {
+		logIRODSError("catalog RenamePath stat renamed failed", err, "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathEntry{}, normalizePathAccessError("stat path", destPath, err)
+	}
+
+	metadata, err := filesystem.ListMetadata(destPath)
+	if err != nil {
+		logIRODSError("catalog RenamePath metadata failed", err, "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathEntry{}, normalizePathAccessError("list metadata", destPath, err)
+	}
+
+	if renamedEntry.IsDir() {
+		children, err := filesystem.List(destPath)
+		if err != nil {
+			logIRODSError("catalog RenamePath list children failed", err, "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			return domain.PathEntry{}, normalizePathAccessError("list children", destPath, err)
+		}
+		return collectionPathEntry(s.cfg.IrodsZone, renamedEntry, metadata, len(children), PathLookupOptions{}), nil
+	}
+
+	return dataObjectPathEntry(s.cfg.IrodsZone, renamedEntry, metadata, PathLookupOptions{}), nil
 }
 
 func (s *catalogService) GetPathMetadata(_ context.Context, requestContext *RequestContext, absolutePath string) ([]domain.AVUMetadata, error) {
@@ -629,6 +843,30 @@ func (a *catalogFileSystemAdapter) List(irodsPath string) ([]*irodsfs.Entry, err
 	return a.filesystem.List(irodsPath)
 }
 
+func (a *catalogFileSystemAdapter) MakeDir(irodsPath string, recurse bool) error {
+	return a.filesystem.MakeDir(irodsPath, recurse)
+}
+
+func (a *catalogFileSystemAdapter) CreateFile(irodsPath string, resource string, mode string) (CatalogFileHandle, error) {
+	return a.filesystem.CreateFile(irodsPath, resource, mode)
+}
+
+func (a *catalogFileSystemAdapter) RemoveDir(irodsPath string, recurse bool, force bool) error {
+	return a.filesystem.RemoveDir(irodsPath, recurse, force)
+}
+
+func (a *catalogFileSystemAdapter) RemoveFile(irodsPath string, force bool) error {
+	return a.filesystem.RemoveFile(irodsPath, force)
+}
+
+func (a *catalogFileSystemAdapter) RenameDir(srcPath string, destPath string) error {
+	return a.filesystem.RenameDir(srcPath, destPath)
+}
+
+func (a *catalogFileSystemAdapter) RenameFile(srcPath string, destPath string) error {
+	return a.filesystem.RenameFile(srcPath, destPath)
+}
+
 func (a *catalogFileSystemAdapter) ListMetadata(irodsPath string) ([]*irodstypes.IRODSMeta, error) {
 	return a.filesystem.ListMetadata(irodsPath)
 }
@@ -741,6 +979,59 @@ func normalizePathAccessError(operation string, absolutePath string, err error) 
 	}
 
 	return fmt.Errorf("%s %q: %w", operation, absolutePath, err)
+}
+
+func resolveChildPath(parentPath string, childName string) (string, error) {
+	parentPath = strings.TrimSpace(parentPath)
+	childName = strings.TrimSpace(childName)
+	if parentPath == "" {
+		return "", fmt.Errorf("%w: path %q", ErrNotFound, parentPath)
+	}
+	if childName == "" {
+		return "", fmt.Errorf("child_name is required")
+	}
+	if path.IsAbs(childName) {
+		return "", fmt.Errorf("child_name must be relative to the parent path")
+	}
+
+	cleaned := path.Clean(childName)
+	if cleaned == "." || cleaned == "" {
+		return "", fmt.Errorf("child_name is required")
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("child_name must remain within the parent path")
+	}
+
+	return path.Clean(path.Join(parentPath, cleaned)), nil
+}
+
+func resolveRenameDestination(sourcePath string, newName string) (string, error) {
+	sourcePath = strings.TrimSpace(sourcePath)
+	newName = strings.TrimSpace(newName)
+	if sourcePath == "" {
+		return "", fmt.Errorf("%w: path %q", ErrNotFound, sourcePath)
+	}
+	if newName == "" {
+		return "", fmt.Errorf("new_name is required")
+	}
+	if path.IsAbs(newName) {
+		return "", fmt.Errorf("new_name must not be an absolute path")
+	}
+
+	cleaned := path.Clean(newName)
+	if cleaned == "." || cleaned == "" {
+		return "", fmt.Errorf("new_name is required")
+	}
+	if strings.Contains(cleaned, "/") || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("new_name must be a single path segment")
+	}
+
+	parentPath := path.Dir(path.Clean(sourcePath))
+	if parentPath == "." || parentPath == "" {
+		return "", fmt.Errorf("path %q cannot be renamed", sourcePath)
+	}
+
+	return path.Clean(path.Join(parentPath, cleaned)), nil
 }
 
 func metadataMap(metas []*irodstypes.IRODSMeta) map[string]string {
