@@ -3,6 +3,7 @@ package restservice
 import (
 	"context"
 
+	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
 	"github.com/michael-conway/irods-go-rest/internal/domain"
 	"github.com/michael-conway/irods-go-rest/internal/irods"
 )
@@ -18,6 +19,11 @@ type PathService interface {
 	AddPathMetadata(ctx context.Context, absolutePath string, attrib string, value string, unit string) (domain.AVUMetadata, error)
 	UpdatePathMetadata(ctx context.Context, absolutePath string, avuID string, attrib string, value string, unit string) (domain.AVUMetadata, error)
 	DeletePathMetadata(ctx context.Context, absolutePath string, avuID string) error
+	GetPathACL(ctx context.Context, absolutePath string) (domain.PathACL, error)
+	AddPathACL(ctx context.Context, absolutePath string, acl irodstypes.IRODSAccess, recursive bool) (domain.PathACLEntry, error)
+	UpdatePathACL(ctx context.Context, absolutePath string, aclID string, accessLevel string, recursive bool) (domain.PathACLEntry, error)
+	DeletePathACL(ctx context.Context, absolutePath string, aclID string) error
+	SetPathACLInheritance(ctx context.Context, absolutePath string, enabled bool, recursive bool) error
 	GetPathChecksum(ctx context.Context, absolutePath string) (domain.PathChecksum, error)
 	ComputePathChecksum(ctx context.Context, absolutePath string) (domain.PathChecksum, error)
 	GetObjectContentByPath(ctx context.Context, absolutePath string) (domain.ObjectContent, error)
@@ -119,6 +125,51 @@ func (s *pathService) DeletePathMetadata(ctx context.Context, absolutePath strin
 	}
 
 	return s.catalog.DeletePathMetadata(ctx, irodsRequestContext(requestContext), absolutePath, avuID)
+}
+
+func (s *pathService) GetPathACL(ctx context.Context, absolutePath string) (domain.PathACL, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return domain.PathACL{}, err
+	}
+
+	return s.catalog.GetPathACL(ctx, irodsRequestContext(requestContext), absolutePath)
+}
+
+func (s *pathService) AddPathACL(ctx context.Context, absolutePath string, acl irodstypes.IRODSAccess, recursive bool) (domain.PathACLEntry, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return domain.PathACLEntry{}, err
+	}
+
+	return s.catalog.AddPathACL(ctx, irodsRequestContext(requestContext), absolutePath, acl, recursive)
+}
+
+func (s *pathService) UpdatePathACL(ctx context.Context, absolutePath string, aclID string, accessLevel string, recursive bool) (domain.PathACLEntry, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return domain.PathACLEntry{}, err
+	}
+
+	return s.catalog.UpdatePathACL(ctx, irodsRequestContext(requestContext), absolutePath, aclID, accessLevel, recursive)
+}
+
+func (s *pathService) DeletePathACL(ctx context.Context, absolutePath string, aclID string) error {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.catalog.DeletePathACL(ctx, irodsRequestContext(requestContext), absolutePath, aclID)
+}
+
+func (s *pathService) SetPathACLInheritance(ctx context.Context, absolutePath string, enabled bool, recursive bool) error {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.catalog.SetPathACLInheritance(ctx, irodsRequestContext(requestContext), absolutePath, enabled, recursive)
 }
 
 func (s *pathService) GetPathChecksum(ctx context.Context, absolutePath string) (domain.PathChecksum, error) {

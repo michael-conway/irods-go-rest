@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -63,6 +64,11 @@ type CatalogService interface {
 	AddPathMetadata(ctx context.Context, requestContext *RequestContext, absolutePath string, attrib string, value string, unit string) (domain.AVUMetadata, error)
 	UpdatePathMetadata(ctx context.Context, requestContext *RequestContext, absolutePath string, avuID string, attrib string, value string, unit string) (domain.AVUMetadata, error)
 	DeletePathMetadata(ctx context.Context, requestContext *RequestContext, absolutePath string, avuID string) error
+	GetPathACL(ctx context.Context, requestContext *RequestContext, absolutePath string) (domain.PathACL, error)
+	AddPathACL(ctx context.Context, requestContext *RequestContext, absolutePath string, acl irodstypes.IRODSAccess, recursive bool) (domain.PathACLEntry, error)
+	UpdatePathACL(ctx context.Context, requestContext *RequestContext, absolutePath string, aclID string, accessLevel string, recursive bool) (domain.PathACLEntry, error)
+	DeletePathACL(ctx context.Context, requestContext *RequestContext, absolutePath string, aclID string) error
+	SetPathACLInheritance(ctx context.Context, requestContext *RequestContext, absolutePath string, enabled bool, recursive bool) error
 	GetPathChecksum(ctx context.Context, requestContext *RequestContext, absolutePath string) (domain.PathChecksum, error)
 	ComputePathChecksum(ctx context.Context, requestContext *RequestContext, absolutePath string) (domain.PathChecksum, error)
 	GetObjectContentByPath(ctx context.Context, requestContext *RequestContext, absolutePath string) (domain.ObjectContent, error)
@@ -80,10 +86,23 @@ type CatalogFileSystem interface {
 	ListMetadata(irodsPath string) ([]*irodstypes.IRODSMeta, error)
 	AddMetadata(irodsPath string, attName string, attValue string, attUnits string) error
 	DeleteMetadata(irodsPath string, avuID int64) error
+	ListACLs(irodsPath string) ([]*irodstypes.IRODSAccess, error)
+	GetDirACLInheritance(path string) (*irodstypes.IRODSAccessInheritance, error)
+	ChangeACLs(path string, access irodstypes.IRODSAccessLevelType, userName string, zoneName string, recurse bool, adminFlag bool) error
+	ChangeDirACLInheritance(path string, inherit bool, recurse bool, adminFlag bool) error
 	ComputeChecksum(irodsPath string, resource string) (*irodstypes.IRODSChecksum, error)
 	OpenFile(irodsPath string, resource string, mode string) (CatalogFileHandle, error)
 	ListResources() ([]*irodstypes.IRODSResource, error)
 	GetResource(resourceName string) (*irodstypes.IRODSResource, error)
+	GetUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error)
+	ListUsers(zoneName string, userType irodstypes.IRODSUserType) ([]*irodstypes.IRODSUser, error)
+	ListGroupMembers(zoneName string, groupName string) ([]*irodstypes.IRODSUser, error)
+	CreateUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error)
+	ChangeUserPassword(username string, zoneName string, newPassword string) error
+	ChangeUserType(username string, zoneName string, newType irodstypes.IRODSUserType) error
+	RemoveUser(username string, zoneName string, userType irodstypes.IRODSUserType) error
+	AddGroupMember(groupName string, username string, zoneName string) error
+	RemoveGroupMember(groupName string, username string, zoneName string) error
 	GetTicket(ticketName string) (*irodstypes.IRODSTicket, error)
 	ListTickets() ([]*irodstypes.IRODSTicket, error)
 	CreateTicket(ticketName string, ticketType irodstypes.TicketType, path string) error
@@ -730,6 +749,246 @@ func (s *catalogService) DeletePathMetadata(_ context.Context, requestContext *R
 	return nil
 }
 
+func (s *catalogService) GetPathACL(_ context.Context, requestContext *RequestContext, absolutePath string) (domain.PathACL, error) {
+	absolutePath = strings.TrimSpace(absolutePath)
+	if absolutePath == "" {
+		return domain.PathACL{}, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
+	}
+
+	slog.Debug("catalog GetPathACL start", "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-get-path-acl")
+	if err != nil {
+		logIRODSError("catalog GetPathACL filesystem setup failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathACL{}, err
+	}
+	defer filesystem.Release()
+
+	entry, err := filesystem.Stat(absolutePath)
+	if err != nil {
+		logIRODSError("catalog GetPathACL stat failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathACL{}, normalizePathAccessError("stat path", absolutePath, err)
+	}
+
+	accesses, err := filesystem.ListACLs(absolutePath)
+	if err != nil {
+		logIRODSError("catalog GetPathACL list ACLs failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathACL{}, normalizePathAccessError("list ACLs", absolutePath, err)
+	}
+
+	acl := pathACLFromAccesses(absolutePath, pathKindFromEntry(entry), accesses)
+	if entry.IsDir() {
+		inheritance, err := filesystem.GetDirACLInheritance(absolutePath)
+		if err != nil {
+			logIRODSError("catalog GetPathACL get inheritance failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			return domain.PathACL{}, normalizePathAccessError("get ACL inheritance", absolutePath, err)
+		}
+		if inheritance != nil {
+			acl.InheritanceEnabled = boolPointer(inheritance.Inheritance)
+		}
+	}
+
+	return acl, nil
+}
+
+func (s *catalogService) AddPathACL(_ context.Context, requestContext *RequestContext, absolutePath string, acl irodstypes.IRODSAccess, recursive bool) (domain.PathACLEntry, error) {
+	absolutePath = strings.TrimSpace(absolutePath)
+	if absolutePath == "" {
+		return domain.PathACLEntry{}, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
+	}
+
+	userName := strings.TrimSpace(acl.UserName)
+	userZone := strings.TrimSpace(acl.UserZone)
+	if userZone == "" {
+		userZone = strings.TrimSpace(s.cfg.IrodsZone)
+	}
+	if userName == "" {
+		return domain.PathACLEntry{}, fmt.Errorf("name is required")
+	}
+
+	accessLevel := normalizedACLAccessLevel(string(acl.AccessLevel))
+	if accessLevel == irodstypes.IRODSAccessLevelNull {
+		return domain.PathACLEntry{}, fmt.Errorf("access_level is required")
+	}
+
+	slog.Debug("catalog AddPathACL start", "path", absolutePath, "name", userName, "zone", userZone, "access_level", accessLevel, "recursive", recursive, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-add-path-acl")
+	if err != nil {
+		logIRODSError("catalog AddPathACL filesystem setup failed", err, "path", absolutePath, "name", userName, "zone", userZone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathACLEntry{}, err
+	}
+	defer filesystem.Release()
+
+	if _, err := filesystem.Stat(absolutePath); err != nil {
+		logIRODSError("catalog AddPathACL stat failed", err, "path", absolutePath, "name", userName, "zone", userZone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathACLEntry{}, normalizePathAccessError("stat path", absolutePath, err)
+	}
+
+	if err := filesystem.ChangeACLs(absolutePath, accessLevel, userName, userZone, recursive, false); err != nil {
+		logIRODSError("catalog AddPathACL change ACL failed", err, "path", absolutePath, "name", userName, "zone", userZone, "access_level", accessLevel, "recursive", recursive, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathACLEntry{}, normalizePathAccessError("change ACL", absolutePath, err)
+	}
+
+	accesses, err := filesystem.ListACLs(absolutePath)
+	if err != nil {
+		logIRODSError("catalog AddPathACL list ACLs failed", err, "path", absolutePath, "name", userName, "zone", userZone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathACLEntry{}, normalizePathAccessError("list ACLs", absolutePath, err)
+	}
+
+	for _, access := range accesses {
+		if access == nil {
+			continue
+		}
+		if strings.TrimSpace(access.UserName) != userName || strings.TrimSpace(access.UserZone) != userZone {
+			continue
+		}
+
+		entry := pathACLEntry(access)
+		if entry.ID != "" {
+			return entry, nil
+		}
+	}
+
+	return domain.PathACLEntry{
+		ID:            aclID("user", userZone, userName),
+		Name:          userName,
+		Zone:          userZone,
+		Type:          "user",
+		IRODSUserType: string(irodstypes.IRODSUserRodsUser),
+		AccessLevel:   string(accessLevel),
+	}, nil
+}
+
+func (s *catalogService) UpdatePathACL(_ context.Context, requestContext *RequestContext, absolutePath string, aclEntryID string, accessLevel string, recursive bool) (domain.PathACLEntry, error) {
+	absolutePath = strings.TrimSpace(absolutePath)
+	if absolutePath == "" {
+		return domain.PathACLEntry{}, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
+	}
+
+	principal, err := parseACLPrincipal(aclEntryID)
+	if err != nil {
+		return domain.PathACLEntry{}, err
+	}
+	if principal.Zone == "" {
+		principal.Zone = strings.TrimSpace(s.cfg.IrodsZone)
+	}
+
+	normalizedAccess := normalizedACLAccessLevel(accessLevel)
+	if normalizedAccess == irodstypes.IRODSAccessLevelNull {
+		return domain.PathACLEntry{}, fmt.Errorf("access_level is required")
+	}
+
+	slog.Debug("catalog UpdatePathACL start", "path", absolutePath, "acl_id", aclEntryID, "access_level", normalizedAccess, "recursive", recursive, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-update-path-acl")
+	if err != nil {
+		logIRODSError("catalog UpdatePathACL filesystem setup failed", err, "path", absolutePath, "acl_id", aclEntryID, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathACLEntry{}, err
+	}
+	defer filesystem.Release()
+
+	if _, err := filesystem.Stat(absolutePath); err != nil {
+		logIRODSError("catalog UpdatePathACL stat failed", err, "path", absolutePath, "acl_id", aclEntryID, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathACLEntry{}, normalizePathAccessError("stat path", absolutePath, err)
+	}
+
+	if err := filesystem.ChangeACLs(absolutePath, normalizedAccess, principal.Name, principal.Zone, recursive, false); err != nil {
+		logIRODSError("catalog UpdatePathACL change ACL failed", err, "path", absolutePath, "acl_id", aclEntryID, "access_level", normalizedAccess, "recursive", recursive, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathACLEntry{}, normalizePathAccessError("change ACL", absolutePath, err)
+	}
+
+	accesses, err := filesystem.ListACLs(absolutePath)
+	if err != nil {
+		logIRODSError("catalog UpdatePathACL list ACLs failed", err, "path", absolutePath, "acl_id", aclEntryID, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.PathACLEntry{}, normalizePathAccessError("list ACLs", absolutePath, err)
+	}
+
+	targetID := aclID(principal.Type, principal.Zone, principal.Name)
+	for _, access := range accesses {
+		entry := pathACLEntry(access)
+		if entry.ID == targetID {
+			return entry, nil
+		}
+	}
+
+	return domain.PathACLEntry{
+		ID:          targetID,
+		Name:        principal.Name,
+		Zone:        principal.Zone,
+		Type:        principal.Type,
+		AccessLevel: string(normalizedAccess),
+	}, nil
+}
+
+func (s *catalogService) DeletePathACL(_ context.Context, requestContext *RequestContext, absolutePath string, aclEntryID string) error {
+	absolutePath = strings.TrimSpace(absolutePath)
+	if absolutePath == "" {
+		return fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
+	}
+
+	principal, err := parseACLPrincipal(aclEntryID)
+	if err != nil {
+		return err
+	}
+	if principal.Zone == "" {
+		principal.Zone = strings.TrimSpace(s.cfg.IrodsZone)
+	}
+
+	slog.Debug("catalog DeletePathACL start", "path", absolutePath, "acl_id", aclEntryID, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-delete-path-acl")
+	if err != nil {
+		logIRODSError("catalog DeletePathACL filesystem setup failed", err, "path", absolutePath, "acl_id", aclEntryID, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return err
+	}
+	defer filesystem.Release()
+
+	if _, err := filesystem.Stat(absolutePath); err != nil {
+		logIRODSError("catalog DeletePathACL stat failed", err, "path", absolutePath, "acl_id", aclEntryID, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return normalizePathAccessError("stat path", absolutePath, err)
+	}
+
+	if err := filesystem.ChangeACLs(absolutePath, irodstypes.IRODSAccessLevelNull, principal.Name, principal.Zone, false, false); err != nil {
+		logIRODSError("catalog DeletePathACL change ACL failed", err, "path", absolutePath, "acl_id", aclEntryID, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return normalizePathAccessError("change ACL", absolutePath, err)
+	}
+
+	return nil
+}
+
+func (s *catalogService) SetPathACLInheritance(_ context.Context, requestContext *RequestContext, absolutePath string, enabled bool, recursive bool) error {
+	absolutePath = strings.TrimSpace(absolutePath)
+	if absolutePath == "" {
+		return fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
+	}
+
+	slog.Debug("catalog SetPathACLInheritance start", "path", absolutePath, "enabled", enabled, "recursive", recursive, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-set-path-acl-inheritance")
+	if err != nil {
+		logIRODSError("catalog SetPathACLInheritance filesystem setup failed", err, "path", absolutePath, "enabled", enabled, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return err
+	}
+	defer filesystem.Release()
+
+	entry, err := filesystem.Stat(absolutePath)
+	if err != nil {
+		logIRODSError("catalog SetPathACLInheritance stat failed", err, "path", absolutePath, "enabled", enabled, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return normalizePathAccessError("stat path", absolutePath, err)
+	}
+	if !entry.IsDir() {
+		return fmt.Errorf("%w: path %q is not a collection", ErrNotFound, absolutePath)
+	}
+
+	if err := filesystem.ChangeDirACLInheritance(absolutePath, enabled, recursive, false); err != nil {
+		logIRODSError("catalog SetPathACLInheritance change failed", err, "path", absolutePath, "enabled", enabled, "recursive", recursive, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return normalizePathAccessError("change ACL inheritance", absolutePath, err)
+	}
+
+	return nil
+}
+
 func (s *catalogService) GetPathChecksum(_ context.Context, requestContext *RequestContext, absolutePath string) (domain.PathChecksum, error) {
 	absolutePath = strings.TrimSpace(absolutePath)
 	if absolutePath == "" {
@@ -1086,6 +1345,22 @@ func (a *catalogFileSystemAdapter) DeleteMetadata(irodsPath string, avuID int64)
 	return a.filesystem.DeleteMetadata(irodsPath, avuID)
 }
 
+func (a *catalogFileSystemAdapter) ListACLs(irodsPath string) ([]*irodstypes.IRODSAccess, error) {
+	return a.filesystem.ListACLs(irodsPath)
+}
+
+func (a *catalogFileSystemAdapter) GetDirACLInheritance(path string) (*irodstypes.IRODSAccessInheritance, error) {
+	return a.filesystem.GetDirACLInheritance(path)
+}
+
+func (a *catalogFileSystemAdapter) ChangeACLs(path string, access irodstypes.IRODSAccessLevelType, userName string, zoneName string, recurse bool, adminFlag bool) error {
+	return a.filesystem.ChangeACLs(path, access, userName, zoneName, recurse, adminFlag)
+}
+
+func (a *catalogFileSystemAdapter) ChangeDirACLInheritance(path string, inherit bool, recurse bool, adminFlag bool) error {
+	return a.filesystem.ChangeDirACLInheritance(path, inherit, recurse, adminFlag)
+}
+
 func (a *catalogFileSystemAdapter) ComputeChecksum(irodsPath string, resource string) (*irodstypes.IRODSChecksum, error) {
 	conn, err := a.filesystem.GetMetadataConnection(false)
 	if err != nil {
@@ -1118,6 +1393,42 @@ func (a *catalogFileSystemAdapter) GetResource(resourceName string) (*irodstypes
 	defer a.filesystem.ReturnMetadataConnection(conn) //nolint:errcheck
 
 	return irodslibfs.GetResource(conn, resourceName)
+}
+
+func (a *catalogFileSystemAdapter) GetUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error) {
+	return a.filesystem.GetUser(username, zoneName, userType)
+}
+
+func (a *catalogFileSystemAdapter) ListUsers(zoneName string, userType irodstypes.IRODSUserType) ([]*irodstypes.IRODSUser, error) {
+	return a.filesystem.ListUsers(zoneName, userType)
+}
+
+func (a *catalogFileSystemAdapter) ListGroupMembers(zoneName string, groupName string) ([]*irodstypes.IRODSUser, error) {
+	return a.filesystem.ListGroupMembers(zoneName, groupName)
+}
+
+func (a *catalogFileSystemAdapter) CreateUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error) {
+	return a.filesystem.CreateUser(username, zoneName, userType)
+}
+
+func (a *catalogFileSystemAdapter) ChangeUserPassword(username string, zoneName string, newPassword string) error {
+	return a.filesystem.ChangeUserPassword(username, zoneName, newPassword)
+}
+
+func (a *catalogFileSystemAdapter) ChangeUserType(username string, zoneName string, newType irodstypes.IRODSUserType) error {
+	return a.filesystem.ChangeUserType(username, zoneName, newType)
+}
+
+func (a *catalogFileSystemAdapter) RemoveUser(username string, zoneName string, userType irodstypes.IRODSUserType) error {
+	return a.filesystem.RemoveUser(username, zoneName, userType)
+}
+
+func (a *catalogFileSystemAdapter) AddGroupMember(groupName string, username string, zoneName string) error {
+	return a.filesystem.AddGroupMember(groupName, username, zoneName)
+}
+
+func (a *catalogFileSystemAdapter) RemoveGroupMember(groupName string, username string, zoneName string) error {
+	return a.filesystem.RemoveGroupMember(groupName, username, zoneName)
 }
 
 func (a *catalogFileSystemAdapter) GetTicket(ticketName string) (*irodstypes.IRODSTicket, error) {
@@ -1335,6 +1646,120 @@ func avuMetadataEntry(meta *irodstypes.IRODSMeta) domain.AVUMetadata {
 	}
 }
 
+func pathACLFromAccesses(irodsPath string, kind string, accesses []*irodstypes.IRODSAccess) domain.PathACL {
+	acl := domain.PathACL{
+		IRODSPath: strings.TrimSpace(irodsPath),
+		Kind:      kind,
+		Users:     []domain.PathACLEntry{},
+		Groups:    []domain.PathACLEntry{},
+	}
+
+	for _, access := range accesses {
+		entry := pathACLEntry(access)
+		if entry.ID == "" {
+			continue
+		}
+
+		if entry.Type == "group" {
+			acl.Groups = append(acl.Groups, entry)
+			continue
+		}
+
+		acl.Users = append(acl.Users, entry)
+	}
+
+	sortPathACLEntries(acl.Users)
+	sortPathACLEntries(acl.Groups)
+	return acl
+}
+
+func pathACLEntry(access *irodstypes.IRODSAccess) domain.PathACLEntry {
+	if access == nil {
+		return domain.PathACLEntry{}
+	}
+
+	name := strings.TrimSpace(access.UserName)
+	zone := strings.TrimSpace(access.UserZone)
+	principalType := principalTypeFromIRODSUserType(access.UserType)
+	accessLevel := strings.TrimSpace(string(access.AccessLevel))
+	if name == "" || accessLevel == "" {
+		return domain.PathACLEntry{}
+	}
+
+	return domain.PathACLEntry{
+		ID:            aclID(principalType, zone, name),
+		Name:          name,
+		Zone:          zone,
+		Type:          principalType,
+		IRODSUserType: strings.TrimSpace(string(access.UserType)),
+		AccessLevel:   accessLevel,
+	}
+}
+
+func principalTypeFromIRODSUserType(userType irodstypes.IRODSUserType) string {
+	switch userType {
+	case irodstypes.IRODSUserRodsGroup, irodstypes.IRODSUserGroupAdmin:
+		return "group"
+	default:
+		return "user"
+	}
+}
+
+func aclID(principalType string, zone string, name string) string {
+	parts := []string{strings.TrimSpace(principalType), strings.TrimSpace(zone), strings.TrimSpace(name)}
+	return strings.Join(parts, ":")
+}
+
+type aclPrincipal struct {
+	Type string
+	Zone string
+	Name string
+}
+
+func parseACLPrincipal(raw string) (aclPrincipal, error) {
+	parts := strings.Split(strings.TrimSpace(raw), ":")
+	if len(parts) != 3 {
+		return aclPrincipal{}, fmt.Errorf("invalid acl id %q", raw)
+	}
+
+	principalType := strings.TrimSpace(parts[0])
+	zone := strings.TrimSpace(parts[1])
+	name := strings.TrimSpace(parts[2])
+	if principalType != "user" && principalType != "group" {
+		return aclPrincipal{}, fmt.Errorf("invalid acl id %q", raw)
+	}
+	if name == "" {
+		return aclPrincipal{}, fmt.Errorf("invalid acl id %q", raw)
+	}
+
+	return aclPrincipal{
+		Type: principalType,
+		Zone: zone,
+		Name: name,
+	}, nil
+}
+
+func normalizedACLAccessLevel(raw string) irodstypes.IRODSAccessLevelType {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return irodstypes.IRODSAccessLevelNull
+	}
+
+	return irodstypes.GetIRODSAccessLevelType(trimmed)
+}
+
+func sortPathACLEntries(entries []domain.PathACLEntry) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].Name != entries[j].Name {
+			return entries[i].Name < entries[j].Name
+		}
+		if entries[i].Zone != entries[j].Zone {
+			return entries[i].Zone < entries[j].Zone
+		}
+		return entries[i].AccessLevel < entries[j].AccessLevel
+	})
+}
+
 func findLatestAVUMetadata(metas []*irodstypes.IRODSMeta, attrib string, value string, unit string) (domain.AVUMetadata, bool) {
 	var selected *irodstypes.IRODSMeta
 	for _, meta := range metas {
@@ -1398,6 +1823,13 @@ func firstReplicaResource(entry *irodsfs.Entry) string {
 	}
 
 	return entry.IRODSReplicas[0].ResourceName
+}
+
+func pathKindFromEntry(entry *irodsfs.Entry) string {
+	if entry != nil && entry.IsDir() {
+		return "collection"
+	}
+	return "data_object"
 }
 
 func collectionPathEntry(zone string, entry *irodsfs.Entry, metadata []*irodstypes.IRODSMeta, childCount int, options PathLookupOptions) domain.PathEntry {
@@ -1475,6 +1907,11 @@ func timePointer(value time.Time) *time.Time {
 
 	ts := value.UTC()
 	return &ts
+}
+
+func boolPointer(value bool) *bool {
+	b := value
+	return &b
 }
 
 func humanReadableSize(size int64) string {

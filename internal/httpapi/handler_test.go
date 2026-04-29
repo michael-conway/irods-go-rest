@@ -350,6 +350,8 @@ func TestGetPathReturnsCollectionShape(t *testing.T) {
 		`"resources":{"href":"/api/v1/resource","method":"GET"}`,
 		`"create_child_collection":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"POST"}`,
 		`"create_child_data_object":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"POST"}`,
+		`"set_inheritance":{"href":"/api/v1/path/acl/inheritance?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"PUT"}`,
+		`"delete_inheritance":{"href":"/api/v1/path/acl/inheritance?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"DELETE"}`,
 	) {
 		t.Fatalf("expected path segments in collection response body: %q", body)
 	}
@@ -599,6 +601,207 @@ func TestPostPathChildrenRejectsMkdirsForDataObject(t *testing.T) {
 	}
 }
 
+func TestGetPathACLReturnsUsersGroupsAndLinks(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/acl?irods_path=/tempZone/home/test1/file.txt", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"irods_path":"/tempZone/home/test1/file.txt"`,
+		`"kind":"data_object"`,
+		`"path_segments"`,
+		`"path":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"}`,
+		`"add_user":{"href":"/api/v1/path/acl?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"}`,
+		`"users":[`,
+		`"id":"user:tempZone:alice"`,
+		`"name":"alice"`,
+		`"type":"user"`,
+		`"irods_user_type":"rodsuser"`,
+		`"access_level":"own"`,
+		`"groups":[`,
+		`"id":"group:tempZone:research-team"`,
+		`"name":"research-team"`,
+		`"type":"group"`,
+		`"irods_user_type":"rodsgroup"`,
+		`"access_level":"read_object"`,
+		`"update":{"href":"/api/v1/path/acl/user:tempZone:alice?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"PUT"}`,
+		`"remove":{"href":"/api/v1/path/acl/group:tempZone:research-team?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"DELETE"}`,
+	) {
+		t.Fatalf("unexpected ACL response body: %q", body)
+	}
+}
+
+func TestGetPathACLRequiresIRODSPathQuery(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/acl", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestGetCollectionPathACLIncludesInheritanceControls(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/acl?irods_path=/tempZone/home/test1/project", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"kind":"collection"`,
+		`"inheritance_enabled":false`,
+		`"set_inheritance":{"href":"/api/v1/path/acl/inheritance?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"PUT"}`,
+	) {
+		t.Fatalf("unexpected collection ACL response body: %q", body)
+	}
+}
+
+func TestPutPathACLInheritanceEnablesCollectionInheritance(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/path/acl/inheritance?irods_path=/tempZone/home/test1/project", strings.NewReader(`{"enabled":true,"recursive":true}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/path/acl?irods_path=/tempZone/home/test1/project", nil)
+	getReq.Header.Set("Authorization", "Bearer token123")
+	getRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(getRec, getReq)
+
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+	if !strings.Contains(getRec.Body.String(), `"inheritance_enabled":true`) {
+		t.Fatalf("expected inheritance enabled in response, got %q", getRec.Body.String())
+	}
+}
+
+func TestDeletePathACLInheritanceDisablesCollectionInheritance(t *testing.T) {
+	handler := testHandler(t)
+
+	enableReq := httptest.NewRequest(http.MethodPut, "/api/v1/path/acl/inheritance?irods_path=/tempZone/home/test1/project", strings.NewReader(`{"enabled":true}`))
+	enableReq.Header.Set("Authorization", "Bearer token123")
+	enableReq.Header.Set("Content-Type", "application/json")
+	enableRec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(enableRec, enableReq)
+
+	if enableRec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 while enabling inheritance, got %d: %s", enableRec.Code, enableRec.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/path/acl/inheritance?irods_path=/tempZone/home/test1/project&recursive=true", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/path/acl?irods_path=/tempZone/home/test1/project", nil)
+	getReq.Header.Set("Authorization", "Bearer token123")
+	getRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(getRec, getReq)
+
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+	if !strings.Contains(getRec.Body.String(), `"inheritance_enabled":false`) {
+		t.Fatalf("expected inheritance disabled in response, got %q", getRec.Body.String())
+	}
+}
+
+func TestPostPathACLAddsPermission(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/acl?irods_path=/tempZone/home/test1/project", strings.NewReader(`{"name":"bob","type":"user","zone":"tempZone","access_level":"read_object"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !containsAll(body, `"acl":{"id":"user:tempZone:bob"`, `"name":"bob"`, `"access_level":"read_object"`) {
+		t.Fatalf("unexpected ACL create response body: %q", body)
+	}
+}
+
+func TestPutPathACLUpdatesPermission(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/path/acl/group:tempZone:research-team?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(`{"access_level":"modify_object","recursive":true}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !containsAll(body, `"acl":{"id":"group:tempZone:research-team"`, `"access_level":"modify_object"`) {
+		t.Fatalf("unexpected ACL update response body: %q", body)
+	}
+}
+
+func TestDeletePathACLRemovesPermission(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/path/acl/group:tempZone:research-team?irods_path=/tempZone/home/test1/file.txt", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/path/acl?irods_path=/tempZone/home/test1/file.txt", nil)
+	getReq.Header.Set("Authorization", "Bearer token123")
+	getRec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+	if strings.Contains(getRec.Body.String(), `"name":"research-team"`) {
+		t.Fatalf("expected research-team ACL to be removed, got %q", getRec.Body.String())
+	}
+}
+
 func TestGetPathAVUsReturnsAVUList(t *testing.T) {
 	handler := testHandler(t)
 
@@ -619,7 +822,7 @@ func TestGetPathAVUsReturnsAVUList(t *testing.T) {
 		`"attrib":"source"`,
 		`"value":"test"`,
 		`"unit":"fixture"`,
-		`"links":{"avus":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"},"create_avu":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"},"create_ticket":{"href":"/api/v1/path/ticket?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"},"resources":{"href":"/api/v1/resource","method":"GET"}}`,
+		`"links":{"avus":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"},"acls":{"href":"/api/v1/path/acl?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"},"create_avu":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"},"create_ticket":{"href":"/api/v1/path/ticket?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"},"resources":{"href":"/api/v1/resource","method":"GET"}}`,
 		`"update":{"href":"/api/v1/path/avu/701?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"PUT"}`,
 		`"delete":{"href":"/api/v1/path/avu/701?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"DELETE"}`,
 		`"count":1`,
@@ -1112,6 +1315,9 @@ func testHandler(t *testing.T) *Handler {
 	if err != nil {
 		t.Fatalf("read rest config: %v", err)
 	}
+	if strings.TrimSpace(cfg.IrodsZone) == "" {
+		cfg.IrodsZone = "tempZone"
+	}
 	filesystem := newTestCatalogFileSystem()
 	factory := func(_ *irodstypes.IRODSAccount, _ string) (irods.CatalogFileSystem, error) {
 		return filesystem, nil
@@ -1121,6 +1327,8 @@ func testHandler(t *testing.T) *Handler {
 		*cfg,
 		restservice.NewPathService(irods.NewCatalogServiceWithFactory(*cfg, factory)),
 		restservice.NewResourceService(irods.NewResourceServiceWithFactory(*cfg, factory)),
+		restservice.NewUserService(irods.NewUserServiceWithFactory(*cfg, factory)),
+		restservice.NewUserGroupService(irods.NewUserGroupServiceWithFactory(*cfg, factory)),
 		restservice.NewTicketService(irods.NewTicketServiceWithFactory(*cfg, factory)),
 		stubAuthService{},
 		stubAuthService{},
@@ -1132,9 +1340,13 @@ type testCatalogFileSystem struct {
 	entriesByPath  map[string]*irodsfs.Entry
 	childrenByPath map[string][]*irodsfs.Entry
 	metadataByPath map[string][]*irodstypes.IRODSMeta
+	aclByPath      map[string][]*irodstypes.IRODSAccess
+	inheritByPath  map[string]bool
 	contentByPath  map[string][]byte
 	ticketsByName  map[string]*irodstypes.IRODSTicket
 	resources      []*irodstypes.IRODSResource
+	usersByKey     map[string]*irodstypes.IRODSUser
+	groupMembers   map[string][]string
 }
 
 func newTestCatalogFileSystem() *testCatalogFileSystem {
@@ -1233,6 +1445,37 @@ func newTestCatalogFileSystem() *testCatalogFileSystem {
 				ModifyTime: now,
 			}},
 		},
+		aclByPath: map[string][]*irodstypes.IRODSAccess{
+			file.Path: {
+				{
+					Path:        file.Path,
+					UserName:    "alice",
+					UserZone:    "tempZone",
+					UserType:    irodstypes.IRODSUserRodsUser,
+					AccessLevel: irodstypes.IRODSAccessLevelOwner,
+				},
+				{
+					Path:        file.Path,
+					UserName:    "research-team",
+					UserZone:    "tempZone",
+					UserType:    irodstypes.IRODSUserRodsGroup,
+					AccessLevel: irodstypes.IRODSAccessLevelReadObject,
+				},
+			},
+			project.Path: {
+				{
+					Path:        project.Path,
+					UserName:    "alice",
+					UserZone:    "tempZone",
+					UserType:    irodstypes.IRODSUserRodsUser,
+					AccessLevel: irodstypes.IRODSAccessLevelOwner,
+				},
+			},
+		},
+		inheritByPath: map[string]bool{
+			project.Path: false,
+			nested.Path:  true,
+		},
 		contentByPath: map[string][]byte{
 			file.Path:  []byte("hello content payload"),
 			child.Path: []byte("child content payload"),
@@ -1265,6 +1508,47 @@ func newTestCatalogFileSystem() *testCatalogFileSystem {
 				CreateTime: now,
 				ModifyTime: now,
 			},
+		},
+		usersByKey: map[string]*irodstypes.IRODSUser{
+			userKey("alice", "tempZone"): {
+				ID:   300,
+				Name: "alice",
+				Zone: "tempZone",
+				Type: irodstypes.IRODSUserRodsUser,
+			},
+			userKey("alicia", "tempZone"): {
+				ID:   301,
+				Name: "alicia",
+				Zone: "tempZone",
+				Type: irodstypes.IRODSUserRodsUser,
+			},
+			userKey("bob", "tempZone"): {
+				ID:   302,
+				Name: "bob",
+				Zone: "tempZone",
+				Type: irodstypes.IRODSUserRodsUser,
+			},
+			userKey("rods", "tempZone"): {
+				ID:   303,
+				Name: "rods",
+				Zone: "tempZone",
+				Type: irodstypes.IRODSUserRodsAdmin,
+			},
+			userKey("groupadmin", "tempZone"): {
+				ID:   304,
+				Name: "groupadmin",
+				Zone: "tempZone",
+				Type: irodstypes.IRODSUserGroupAdmin,
+			},
+			userKey("research-team", "tempZone"): {
+				ID:   305,
+				Name: "research-team",
+				Zone: "tempZone",
+				Type: irodstypes.IRODSUserRodsGroup,
+			},
+		},
+		groupMembers: map[string][]string{
+			userKey("research-team", "tempZone"): {"alice"},
 		},
 	}
 }
@@ -1458,6 +1742,69 @@ func (f *testCatalogFileSystem) DeleteMetadata(irodsPath string, avuID int64) er
 	return nil
 }
 
+func (f *testCatalogFileSystem) ListACLs(irodsPath string) ([]*irodstypes.IRODSAccess, error) {
+	if _, ok := f.entriesByPath[irodsPath]; !ok {
+		return nil, errors.New("not found")
+	}
+	return f.aclByPath[irodsPath], nil
+}
+
+func (f *testCatalogFileSystem) ChangeACLs(irodsPath string, access irodstypes.IRODSAccessLevelType, userName string, zoneName string, _ bool, _ bool) error {
+	if _, ok := f.entriesByPath[irodsPath]; !ok {
+		return errors.New("not found")
+	}
+
+	current := f.aclByPath[irodsPath]
+	filtered := current[:0]
+	for _, acl := range current {
+		if acl != nil && acl.UserName == userName && acl.UserZone == zoneName {
+			continue
+		}
+		filtered = append(filtered, acl)
+	}
+	f.aclByPath[irodsPath] = filtered
+
+	if access == irodstypes.IRODSAccessLevelNull {
+		return nil
+	}
+
+	user, ok := f.usersByKey[userKey(userName, zoneName)]
+	userType := irodstypes.IRODSUserRodsUser
+	if ok && user != nil {
+		userType = user.Type
+	}
+
+	f.aclByPath[irodsPath] = append(f.aclByPath[irodsPath], &irodstypes.IRODSAccess{
+		Path:        irodsPath,
+		UserName:    userName,
+		UserZone:    zoneName,
+		UserType:    userType,
+		AccessLevel: access,
+	})
+	return nil
+}
+
+func (f *testCatalogFileSystem) ChangeDirACLInheritance(irodsPath string, inherit bool, _ bool, _ bool) error {
+	entry, ok := f.entriesByPath[irodsPath]
+	if !ok || !entry.IsDir() {
+		return errors.New("not found")
+	}
+	f.inheritByPath[irodsPath] = inherit
+	return nil
+}
+
+func (f *testCatalogFileSystem) GetDirACLInheritance(irodsPath string) (*irodstypes.IRODSAccessInheritance, error) {
+	entry, ok := f.entriesByPath[irodsPath]
+	if !ok || !entry.IsDir() {
+		return nil, errors.New("not found")
+	}
+	value := f.inheritByPath[irodsPath]
+	return &irodstypes.IRODSAccessInheritance{
+		Path:        irodsPath,
+		Inheritance: value,
+	}, nil
+}
+
 func (f *testCatalogFileSystem) ComputeChecksum(irodsPath string, _ string) (*irodstypes.IRODSChecksum, error) {
 	entry, ok := f.entriesByPath[irodsPath]
 	if !ok {
@@ -1511,6 +1858,134 @@ func (f *testCatalogFileSystem) GetResource(resourceName string) (*irodstypes.IR
 		}
 	}
 	return nil, irodstypes.NewResourceNotFoundError(resourceName)
+}
+
+func (f *testCatalogFileSystem) GetUser(username string, zoneName string, _ irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error) {
+	user, ok := f.usersByKey[userKey(username, zoneName)]
+	if !ok {
+		return nil, irodstypes.NewUserNotFoundError(username)
+	}
+	return user, nil
+}
+
+func (f *testCatalogFileSystem) ListUsers(zoneName string, userType irodstypes.IRODSUserType) ([]*irodstypes.IRODSUser, error) {
+	users := make([]*irodstypes.IRODSUser, 0, len(f.usersByKey))
+	for _, user := range f.usersByKey {
+		if user == nil || user.Zone != zoneName || user.Type != userType {
+			continue
+		}
+		users = append(users, user)
+	}
+	return users, nil
+}
+
+func (f *testCatalogFileSystem) ListGroupMembers(zoneName string, groupName string) ([]*irodstypes.IRODSUser, error) {
+	key := userKey(groupName, zoneName)
+	usernames := f.groupMembers[key]
+	members := make([]*irodstypes.IRODSUser, 0, len(usernames))
+	for _, username := range usernames {
+		user, ok := f.usersByKey[userKey(username, zoneName)]
+		if !ok {
+			continue
+		}
+		members = append(members, user)
+	}
+	return members, nil
+}
+
+func (f *testCatalogFileSystem) CreateUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error) {
+	key := userKey(username, zoneName)
+	if existing, ok := f.usersByKey[key]; ok {
+		return existing, errors.New("already exists")
+	}
+
+	user := &irodstypes.IRODSUser{
+		ID:   int64(len(f.usersByKey) + 500),
+		Name: username,
+		Zone: zoneName,
+		Type: userType,
+	}
+	f.usersByKey[key] = user
+	return user, nil
+}
+
+func (f *testCatalogFileSystem) ChangeUserPassword(username string, zoneName string, _ string) error {
+	if _, ok := f.usersByKey[userKey(username, zoneName)]; !ok {
+		return irodstypes.NewUserNotFoundError(username)
+	}
+	return nil
+}
+
+func (f *testCatalogFileSystem) ChangeUserType(username string, zoneName string, newType irodstypes.IRODSUserType) error {
+	user, ok := f.usersByKey[userKey(username, zoneName)]
+	if !ok {
+		return irodstypes.NewUserNotFoundError(username)
+	}
+	user.Type = newType
+	return nil
+}
+
+func (f *testCatalogFileSystem) RemoveUser(username string, zoneName string, _ irodstypes.IRODSUserType) error {
+	key := userKey(username, zoneName)
+	if _, ok := f.usersByKey[key]; !ok {
+		return irodstypes.NewUserNotFoundError(username)
+	}
+	delete(f.usersByKey, key)
+	delete(f.groupMembers, key)
+	for groupKey, members := range f.groupMembers {
+		filtered := members[:0]
+		for _, member := range members {
+			if member == username {
+				continue
+			}
+			filtered = append(filtered, member)
+		}
+		f.groupMembers[groupKey] = filtered
+	}
+	return nil
+}
+
+func (f *testCatalogFileSystem) AddGroupMember(groupName string, username string, zoneName string) error {
+	group, ok := f.usersByKey[userKey(groupName, zoneName)]
+	if !ok || group.Type != irodstypes.IRODSUserRodsGroup {
+		return irodstypes.NewUserNotFoundError(groupName)
+	}
+	if _, ok := f.usersByKey[userKey(username, zoneName)]; !ok {
+		return irodstypes.NewUserNotFoundError(username)
+	}
+
+	key := userKey(groupName, zoneName)
+	members := f.groupMembers[key]
+	for _, member := range members {
+		if member == username {
+			return nil
+		}
+	}
+	f.groupMembers[key] = append(members, username)
+	return nil
+}
+
+func (f *testCatalogFileSystem) RemoveGroupMember(groupName string, username string, zoneName string) error {
+	key := userKey(groupName, zoneName)
+	members, ok := f.groupMembers[key]
+	if !ok {
+		return irodstypes.NewUserNotFoundError(groupName)
+	}
+
+	filtered := members[:0]
+	removed := false
+	for _, member := range members {
+		if member == username {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, member)
+	}
+	if !removed {
+		return irodstypes.NewUserNotFoundError(username)
+	}
+	f.groupMembers[key] = filtered
+	return nil
 }
 
 func (f *testCatalogFileSystem) Release() {}
@@ -1671,6 +2146,10 @@ func filterChildEntry(entries []*irodsfs.Entry, targetPath string) []*irodsfs.En
 	return filtered
 }
 
+func userKey(username string, zone string) string {
+	return strings.TrimSpace(zone) + "/" + strings.TrimSpace(username)
+}
+
 type testCatalogFileHandle struct {
 	reader  *bytes.Reader
 	writer  *bytes.Buffer
@@ -1776,5 +2255,335 @@ func TestGetResourcesRejectsInvalidScope(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestGetUsersReturnsPrefixMatches(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/user?prefix=ali", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !containsAll(
+		body,
+		`"users":[`,
+		`"name":"alice"`,
+		`"name":"alicia"`,
+		`"zone":"tempZone"`,
+		`"type":"rodsuser"`,
+		`"prefix":"ali"`,
+		`"create":{"href":"/api/v1/user?zone=tempZone","method":"POST"}`,
+		`"self":{"href":"/api/v1/user/alice?zone=tempZone","method":"GET"}`,
+		`"update":{"href":"/api/v1/user/alice?zone=tempZone","method":"PUT"}`,
+		`"delete":{"href":"/api/v1/user/alice?zone=tempZone","method":"DELETE"}`,
+	) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+	if strings.Contains(body, `"name":"bob"`) {
+		t.Fatalf("expected prefix filter to exclude bob, got %q", body)
+	}
+}
+
+func TestGetUsersRejectsShortPrefix(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/user?prefix=al", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestGetUserReturnsUserDetails(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/user/alice", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"user":{"id":300`,
+		`"name":"alice"`,
+		`"zone":"tempZone"`,
+		`"type":"rodsuser"`,
+		`"self":{"href":"/api/v1/user/alice?zone=tempZone","method":"GET"}`,
+	) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestPutUserRequiresRodsAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/user/bob", strings.NewReader(`{"type":"rodsadmin"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rec.Code)
+	}
+}
+
+func TestPutUserUpdatesUserAsRodsAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/user/bob", strings.NewReader(`{"type":"rodsadmin"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("rods:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"name":"bob"`, `"type":"rodsadmin"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestPostUserRequiresAdminOrGroupAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/user", strings.NewReader(`{"name":"charlie","type":"rodsuser"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rec.Code)
+	}
+}
+
+func TestPostUserCreatesUserAsGroupAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/user", strings.NewReader(`{"name":"charlie","type":"rodsuser"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"name":"charlie"`, `"type":"rodsuser"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestDeleteUserRequiresRodsAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/user/bob", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rec.Code)
+	}
+}
+
+func TestDeleteUserRemovesUserAsRodsAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/user/bob", nil)
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("rods:secret")))
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rec.Code)
+	}
+}
+
+func TestDeleteUserRemovesUserAsGroupAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/user/bob", nil)
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rec.Code)
+	}
+}
+
+func TestGetUserGroupsReturnsPrefixMatches(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/usergroup?prefix=res", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !containsAll(
+		body,
+		`"groups":[`,
+		`"name":"research-team"`,
+		`"type":"rodsgroup"`,
+		`"prefix":"res"`,
+		`"create":{"href":"/api/v1/usergroup?zone=tempZone","method":"POST"}`,
+		`"self":{"href":"/api/v1/usergroup/research-team?zone=tempZone","method":"GET"}`,
+		`"delete":{"href":"/api/v1/usergroup/research-team?zone=tempZone","method":"DELETE"}`,
+		`"add_member":{"href":"/api/v1/usergroup/research-team/member?zone=tempZone","method":"POST"}`,
+	) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestGetUserGroupsRejectsShortPrefix(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/usergroup?prefix=re", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestGetUserGroupReturnsMembersAndLinks(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/usergroup/research-team", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !containsAll(
+		body,
+		`"group":{"id":305`,
+		`"name":"research-team"`,
+		`"type":"rodsgroup"`,
+		`"members":[{"id":300,"name":"alice","zone":"tempZone","type":"rodsuser"`,
+		`"self":{"href":"/api/v1/user/alice?zone=tempZone","method":"GET"}`,
+		`"remove_from_group":{"href":"/api/v1/usergroup/research-team/member/alice?zone=tempZone","method":"DELETE"}`,
+		`"add_member":{"href":"/api/v1/usergroup/research-team/member?zone=tempZone","method":"POST"}`,
+	) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestPostUserGroupRequiresAdminOrGroupAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/usergroup", strings.NewReader(`{"name":"science"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rec.Code)
+	}
+}
+
+func TestPostUserGroupCreatesAsGroupAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/usergroup", strings.NewReader(`{"name":"science"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"name":"science"`, `"type":"rodsgroup"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestDeleteUserGroupRemovesAsGroupAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/usergroup/research-team", nil)
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rec.Code)
+	}
+}
+
+func TestPostUserGroupMemberAddsUserAsGroupAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/usergroup/research-team/member", strings.NewReader(`{"user_name":"bob"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"name":"research-team"`, `"name":"bob"`, `"remove_from_group":{"href":"/api/v1/usergroup/research-team/member/bob?zone=tempZone","method":"DELETE"}`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestDeleteUserGroupMemberRemovesUserAsGroupAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/usergroup/research-team/member/alice", nil)
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); strings.Contains(body, `"name":"alice"`) {
+		t.Fatalf("expected alice to be removed, got %q", body)
 	}
 }

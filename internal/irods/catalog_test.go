@@ -375,6 +375,34 @@ func TestCatalogGetPathMetadataMapsAVUs(t *testing.T) {
 	}
 }
 
+func TestCatalogGetPathACLMapsUsersAndGroups(t *testing.T) {
+	service := newTestCatalogService(t, newCatalogTestFileSystem())
+
+	acl, err := service.GetPathACL(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt")
+	if err != nil {
+		t.Fatalf("GetPathACL returned error: %v", err)
+	}
+
+	if acl.IRODSPath != "/tempZone/home/alice/file.txt" {
+		t.Fatalf("expected ACL path to be populated, got %q", acl.IRODSPath)
+	}
+	if acl.Kind != "data_object" {
+		t.Fatalf("expected data_object ACL kind, got %q", acl.Kind)
+	}
+	if len(acl.Users) != 1 {
+		t.Fatalf("expected 1 user ACL, got %+v", acl.Users)
+	}
+	if acl.Users[0].ID != "user:tempZone:alice" || acl.Users[0].Name != "alice" || acl.Users[0].Type != "user" || acl.Users[0].AccessLevel != "own" {
+		t.Fatalf("unexpected user ACL entry: %+v", acl.Users[0])
+	}
+	if len(acl.Groups) != 1 {
+		t.Fatalf("expected 1 group ACL, got %+v", acl.Groups)
+	}
+	if acl.Groups[0].ID != "group:tempZone:research-team" || acl.Groups[0].Name != "research-team" || acl.Groups[0].Type != "group" || acl.Groups[0].AccessLevel != "read_object" {
+		t.Fatalf("unexpected group ACL entry: %+v", acl.Groups[0])
+	}
+}
+
 func TestCatalogAddPathMetadataReturnsCreatedAVU(t *testing.T) {
 	service := newTestCatalogService(t, newCatalogTestFileSystem())
 
@@ -627,9 +655,13 @@ type catalogTestFileSystem struct {
 	entriesByPath  map[string]*irodsfs.Entry
 	childrenByPath map[string][]*irodsfs.Entry
 	metadataByPath map[string][]*irodstypes.IRODSMeta
+	aclByPath      map[string][]*irodstypes.IRODSAccess
+	inheritByPath  map[string]bool
 	contentByPath  map[string][]byte
 	ticketsByName  map[string]*irodstypes.IRODSTicket
 	resources      []*irodstypes.IRODSResource
+	usersByKey     map[string]*irodstypes.IRODSUser
+	groupMembers   map[string][]string
 	released       bool
 }
 
@@ -727,6 +759,28 @@ func newCatalogTestFileSystem() *catalogTestFileSystem {
 				ModifyTime: now,
 			}},
 		},
+		aclByPath: map[string][]*irodstypes.IRODSAccess{
+			file.Path: {
+				{
+					Path:        file.Path,
+					UserName:    "alice",
+					UserZone:    "tempZone",
+					UserType:    irodstypes.IRODSUserRodsUser,
+					AccessLevel: irodstypes.IRODSAccessLevelOwner,
+				},
+				{
+					Path:        file.Path,
+					UserName:    "research-team",
+					UserZone:    "tempZone",
+					UserType:    irodstypes.IRODSUserRodsGroup,
+					AccessLevel: irodstypes.IRODSAccessLevelReadObject,
+				},
+			},
+		},
+		inheritByPath: map[string]bool{
+			project.Path: false,
+			nested.Path:  true,
+		},
 		contentByPath: map[string][]byte{
 			file.Path: []byte("hello content payload"),
 		},
@@ -744,6 +798,47 @@ func newCatalogTestFileSystem() *catalogTestFileSystem {
 				WriteFileLimit: 10,
 				ExpirationTime: now.Add(30 * time.Minute),
 			},
+		},
+		usersByKey: map[string]*irodstypes.IRODSUser{
+			catalogUserKey("alice", "tempZone"): {
+				ID:   300,
+				Name: "alice",
+				Zone: "tempZone",
+				Type: irodstypes.IRODSUserRodsUser,
+			},
+			catalogUserKey("alicia", "tempZone"): {
+				ID:   301,
+				Name: "alicia",
+				Zone: "tempZone",
+				Type: irodstypes.IRODSUserRodsUser,
+			},
+			catalogUserKey("bob", "tempZone"): {
+				ID:   302,
+				Name: "bob",
+				Zone: "tempZone",
+				Type: irodstypes.IRODSUserRodsUser,
+			},
+			catalogUserKey("rods", "tempZone"): {
+				ID:   303,
+				Name: "rods",
+				Zone: "tempZone",
+				Type: irodstypes.IRODSUserRodsAdmin,
+			},
+			catalogUserKey("groupadmin", "tempZone"): {
+				ID:   304,
+				Name: "groupadmin",
+				Zone: "tempZone",
+				Type: irodstypes.IRODSUserGroupAdmin,
+			},
+			catalogUserKey("research-team", "tempZone"): {
+				ID:   305,
+				Name: "research-team",
+				Zone: "tempZone",
+				Type: irodstypes.IRODSUserRodsGroup,
+			},
+		},
+		groupMembers: map[string][]string{
+			catalogUserKey("research-team", "tempZone"): {"alice"},
 		},
 	}
 }
@@ -997,6 +1092,81 @@ func (f *catalogTestFileSystem) DeleteMetadata(irodsPath string, avuID int64) er
 	return nil
 }
 
+func (f *catalogTestFileSystem) ListACLs(irodsPath string) ([]*irodstypes.IRODSAccess, error) {
+	if irodsPath == "/tempZone/home/alice/forbidden" {
+		return nil, irodstypes.NewIRODSError(irodscommon.CAT_NO_ACCESS_PERMISSION)
+	}
+	if _, ok := f.entriesByPath[irodsPath]; !ok {
+		return nil, irodstypes.NewFileNotFoundError(irodsPath)
+	}
+	return f.aclByPath[irodsPath], nil
+}
+
+func (f *catalogTestFileSystem) ChangeACLs(irodsPath string, access irodstypes.IRODSAccessLevelType, userName string, zoneName string, _ bool, _ bool) error {
+	if irodsPath == "/tempZone/home/alice/forbidden" {
+		return irodstypes.NewIRODSError(irodscommon.CAT_NO_ACCESS_PERMISSION)
+	}
+	if _, ok := f.entriesByPath[irodsPath]; !ok {
+		return irodstypes.NewFileNotFoundError(irodsPath)
+	}
+
+	current := f.aclByPath[irodsPath]
+	filtered := current[:0]
+	for _, acl := range current {
+		if acl != nil && acl.UserName == userName && acl.UserZone == zoneName {
+			continue
+		}
+		filtered = append(filtered, acl)
+	}
+	f.aclByPath[irodsPath] = filtered
+
+	if access == irodstypes.IRODSAccessLevelNull {
+		return nil
+	}
+
+	user, ok := f.usersByKey[catalogUserKey(userName, zoneName)]
+	userType := irodstypes.IRODSUserRodsUser
+	if ok && user != nil {
+		userType = user.Type
+	}
+
+	f.aclByPath[irodsPath] = append(f.aclByPath[irodsPath], &irodstypes.IRODSAccess{
+		Path:        irodsPath,
+		UserName:    userName,
+		UserZone:    zoneName,
+		UserType:    userType,
+		AccessLevel: access,
+	})
+	return nil
+}
+
+func (f *catalogTestFileSystem) ChangeDirACLInheritance(irodsPath string, inherit bool, _ bool, _ bool) error {
+	if irodsPath == "/tempZone/home/alice/forbidden" {
+		return irodstypes.NewIRODSError(irodscommon.CAT_NO_ACCESS_PERMISSION)
+	}
+	entry, ok := f.entriesByPath[irodsPath]
+	if !ok || !entry.IsDir() {
+		return irodstypes.NewFileNotFoundError(irodsPath)
+	}
+	f.inheritByPath[irodsPath] = inherit
+	return nil
+}
+
+func (f *catalogTestFileSystem) GetDirACLInheritance(irodsPath string) (*irodstypes.IRODSAccessInheritance, error) {
+	if irodsPath == "/tempZone/home/alice/forbidden" {
+		return nil, irodstypes.NewIRODSError(irodscommon.CAT_NO_ACCESS_PERMISSION)
+	}
+	entry, ok := f.entriesByPath[irodsPath]
+	if !ok || !entry.IsDir() {
+		return nil, irodstypes.NewFileNotFoundError(irodsPath)
+	}
+
+	return &irodstypes.IRODSAccessInheritance{
+		Path:        irodsPath,
+		Inheritance: f.inheritByPath[irodsPath],
+	}, nil
+}
+
 func (f *catalogTestFileSystem) ComputeChecksum(irodsPath string, _ string) (*irodstypes.IRODSChecksum, error) {
 	if irodsPath == "/tempZone/home/alice/forbidden" {
 		return nil, irodstypes.NewIRODSError(irodscommon.CAT_NO_ACCESS_PERMISSION)
@@ -1036,6 +1206,134 @@ func (f *catalogTestFileSystem) OpenFile(irodsPath string, _ string, _ string) (
 	}
 
 	return &catalogTestFileHandle{reader: bytes.NewReader(data)}, nil
+}
+
+func (f *catalogTestFileSystem) GetUser(username string, zoneName string, _ irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error) {
+	user, ok := f.usersByKey[catalogUserKey(username, zoneName)]
+	if !ok {
+		return nil, irodstypes.NewUserNotFoundError(username)
+	}
+	return user, nil
+}
+
+func (f *catalogTestFileSystem) ListUsers(zoneName string, userType irodstypes.IRODSUserType) ([]*irodstypes.IRODSUser, error) {
+	users := make([]*irodstypes.IRODSUser, 0, len(f.usersByKey))
+	for _, user := range f.usersByKey {
+		if user == nil || user.Zone != zoneName || user.Type != userType {
+			continue
+		}
+		users = append(users, user)
+	}
+	return users, nil
+}
+
+func (f *catalogTestFileSystem) ListGroupMembers(zoneName string, groupName string) ([]*irodstypes.IRODSUser, error) {
+	key := catalogUserKey(groupName, zoneName)
+	usernames := f.groupMembers[key]
+	members := make([]*irodstypes.IRODSUser, 0, len(usernames))
+	for _, username := range usernames {
+		user, ok := f.usersByKey[catalogUserKey(username, zoneName)]
+		if !ok {
+			continue
+		}
+		members = append(members, user)
+	}
+	return members, nil
+}
+
+func (f *catalogTestFileSystem) CreateUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error) {
+	key := catalogUserKey(username, zoneName)
+	if existing, ok := f.usersByKey[key]; ok {
+		return existing, errors.New("already exists")
+	}
+
+	user := &irodstypes.IRODSUser{
+		ID:   int64(len(f.usersByKey) + 500),
+		Name: username,
+		Zone: zoneName,
+		Type: userType,
+	}
+	f.usersByKey[key] = user
+	return user, nil
+}
+
+func (f *catalogTestFileSystem) ChangeUserPassword(username string, zoneName string, _ string) error {
+	if _, ok := f.usersByKey[catalogUserKey(username, zoneName)]; !ok {
+		return irodstypes.NewUserNotFoundError(username)
+	}
+	return nil
+}
+
+func (f *catalogTestFileSystem) ChangeUserType(username string, zoneName string, newType irodstypes.IRODSUserType) error {
+	user, ok := f.usersByKey[catalogUserKey(username, zoneName)]
+	if !ok {
+		return irodstypes.NewUserNotFoundError(username)
+	}
+	user.Type = newType
+	return nil
+}
+
+func (f *catalogTestFileSystem) RemoveUser(username string, zoneName string, _ irodstypes.IRODSUserType) error {
+	key := catalogUserKey(username, zoneName)
+	if _, ok := f.usersByKey[key]; !ok {
+		return irodstypes.NewUserNotFoundError(username)
+	}
+	delete(f.usersByKey, key)
+	delete(f.groupMembers, key)
+	for groupKey, members := range f.groupMembers {
+		filtered := members[:0]
+		for _, member := range members {
+			if member == username {
+				continue
+			}
+			filtered = append(filtered, member)
+		}
+		f.groupMembers[groupKey] = filtered
+	}
+	return nil
+}
+
+func (f *catalogTestFileSystem) AddGroupMember(groupName string, username string, zoneName string) error {
+	group, ok := f.usersByKey[catalogUserKey(groupName, zoneName)]
+	if !ok || group.Type != irodstypes.IRODSUserRodsGroup {
+		return irodstypes.NewUserNotFoundError(groupName)
+	}
+	if _, ok := f.usersByKey[catalogUserKey(username, zoneName)]; !ok {
+		return irodstypes.NewUserNotFoundError(username)
+	}
+
+	key := catalogUserKey(groupName, zoneName)
+	members := f.groupMembers[key]
+	for _, member := range members {
+		if member == username {
+			return nil
+		}
+	}
+	f.groupMembers[key] = append(members, username)
+	return nil
+}
+
+func (f *catalogTestFileSystem) RemoveGroupMember(groupName string, username string, zoneName string) error {
+	key := catalogUserKey(groupName, zoneName)
+	members, ok := f.groupMembers[key]
+	if !ok {
+		return irodstypes.NewUserNotFoundError(groupName)
+	}
+
+	filtered := members[:0]
+	removed := false
+	for _, member := range members {
+		if member == username {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, member)
+	}
+	if !removed {
+		return irodstypes.NewUserNotFoundError(username)
+	}
+	f.groupMembers[key] = filtered
+	return nil
 }
 
 func (f *catalogTestFileSystem) Release() {
@@ -1194,6 +1492,10 @@ func filterCatalogChildEntry(entries []*irodsfs.Entry, targetPath string) []*iro
 		filtered = append(filtered, entry)
 	}
 	return filtered
+}
+
+func catalogUserKey(username string, zone string) string {
+	return strings.TrimSpace(zone) + "/" + strings.TrimSpace(username)
 }
 
 type catalogTestFileHandle struct {

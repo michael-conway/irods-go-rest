@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
 	"github.com/michael-conway/irods-go-rest/internal/domain"
 	"github.com/michael-conway/irods-go-rest/internal/irods"
 )
@@ -151,6 +152,226 @@ func (h *Handler) getPathChildren(w http.ResponseWriter, r *http.Request) {
 		"path_segments": buildPathSegments(objectPath),
 		"children":      mappedChildren,
 	})
+}
+
+func (h *Handler) getPathACL(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
+	if objectPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
+		return
+	}
+
+	acl, err := h.paths.GetPathACL(r.Context(), objectPath)
+	if err != nil {
+		writePathError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, pathACLResponse(r, acl))
+}
+
+func (h *Handler) postPathACL(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
+	if objectPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
+		return
+	}
+
+	var request struct {
+		Name        string `json:"name"`
+		Zone        string `json:"zone"`
+		Type        string `json:"type"`
+		AccessLevel string `json:"access_level"`
+		Recursive   bool   `json:"recursive"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
+		return
+	}
+
+	name := strings.TrimSpace(request.Name)
+	if name == "" {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "ACL request validation failed", map[string]string{
+			"name": "name is required",
+		})
+		return
+	}
+
+	principalType := strings.TrimSpace(request.Type)
+	if principalType == "" {
+		principalType = "user"
+	}
+	if principalType != "user" && principalType != "group" {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "ACL request validation failed", map[string]string{
+			"type": "type must be user or group",
+		})
+		return
+	}
+
+	accessLevel := strings.TrimSpace(request.AccessLevel)
+	if irodstypes.GetIRODSAccessLevelType(accessLevel) == irodstypes.IRODSAccessLevelNull {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "ACL request validation failed", map[string]string{
+			"access_level": "access_level is required",
+		})
+		return
+	}
+
+	userType := irodstypes.IRODSUserRodsUser
+	if principalType == "group" {
+		userType = irodstypes.IRODSUserRodsGroup
+	}
+
+	created, err := h.paths.AddPathACL(r.Context(), objectPath, irodstypes.IRODSAccess{
+		UserName:    name,
+		UserZone:    strings.TrimSpace(request.Zone),
+		UserType:    userType,
+		AccessLevel: irodstypes.GetIRODSAccessLevelType(accessLevel),
+	}, request.Recursive)
+	if err != nil {
+		lowerErr := strings.ToLower(err.Error())
+		if strings.Contains(lowerErr, "name is required") || strings.Contains(lowerErr, "access_level is required") {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		writePathError(w, err)
+		return
+	}
+
+	created.Links = pathACLItemLinks(objectPath, created.ID)
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"irods_path": objectPath,
+		"acl":        created,
+	})
+}
+
+func (h *Handler) putPathACL(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
+	if objectPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
+		return
+	}
+
+	aclID := pathValue(r, "acl_id")
+	if aclID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "acl_id path parameter is required")
+		return
+	}
+
+	var request struct {
+		AccessLevel string `json:"access_level"`
+		Recursive   bool   `json:"recursive"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
+		return
+	}
+	if irodstypes.GetIRODSAccessLevelType(strings.TrimSpace(request.AccessLevel)) == irodstypes.IRODSAccessLevelNull {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "ACL request validation failed", map[string]string{
+			"access_level": "access_level is required",
+		})
+		return
+	}
+
+	updated, err := h.paths.UpdatePathACL(r.Context(), objectPath, aclID, request.AccessLevel, request.Recursive)
+	if err != nil {
+		lowerErr := strings.ToLower(err.Error())
+		if strings.Contains(lowerErr, "access_level is required") || strings.Contains(lowerErr, "invalid acl id") {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		writePathError(w, err)
+		return
+	}
+
+	updated.Links = pathACLItemLinks(objectPath, updated.ID)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"irods_path": objectPath,
+		"acl":        updated,
+	})
+}
+
+func (h *Handler) deletePathACL(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
+	if objectPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
+		return
+	}
+
+	aclID := pathValue(r, "acl_id")
+	if aclID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "acl_id path parameter is required")
+		return
+	}
+
+	if err := h.paths.DeletePathACL(r.Context(), objectPath, aclID); err != nil {
+		lowerErr := strings.ToLower(err.Error())
+		if strings.Contains(lowerErr, "invalid acl id") {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		writePathError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) putPathACLInheritance(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
+	if objectPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
+		return
+	}
+
+	var request struct {
+		Enabled   *bool `json:"enabled"`
+		Recursive bool  `json:"recursive"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
+		return
+	}
+	if request.Enabled == nil {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "ACL inheritance request validation failed", map[string]string{
+			"enabled": "enabled is required",
+		})
+		return
+	}
+
+	if err := h.paths.SetPathACLInheritance(r.Context(), objectPath, *request.Enabled, request.Recursive); err != nil {
+		writePathError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) deletePathACLInheritance(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
+	if objectPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
+		return
+	}
+
+	recursive := false
+	rawRecursive := strings.TrimSpace(r.URL.Query().Get("recursive"))
+	if rawRecursive != "" {
+		parsedRecursive, err := strconv.ParseBool(rawRecursive)
+		if err != nil {
+			writeValidationError(w, http.StatusBadRequest, "invalid_request", "ACL inheritance request validation failed", map[string]string{
+				"recursive": "recursive must be a boolean",
+			})
+			return
+		}
+		recursive = parsedRecursive
+	}
+
+	if err := h.paths.SetPathACLInheritance(r.Context(), objectPath, false, recursive); err != nil {
+		writePathError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) postPath(w http.ResponseWriter, r *http.Request) {
@@ -789,6 +1010,27 @@ func avuMetadataResponse(r *http.Request, irodsPath string, avu domain.AVUMetada
 	return avu
 }
 
+func pathACLResponse(_ *http.Request, acl domain.PathACL) domain.PathACL {
+	acl.PathSegments = buildPathSegments(acl.IRODSPath)
+	acl.Links = pathACLLinks(acl)
+	acl.Users = pathACLEntryResponseList(acl.IRODSPath, acl.Users)
+	acl.Groups = pathACLEntryResponseList(acl.IRODSPath, acl.Groups)
+	return acl
+}
+
+func pathACLEntryResponseList(irodsPath string, entries []domain.PathACLEntry) []domain.PathACLEntry {
+	if len(entries) == 0 {
+		return []domain.PathACLEntry{}
+	}
+
+	mapped := make([]domain.PathACLEntry, 0, len(entries))
+	for _, entry := range entries {
+		entry.Links = pathACLItemLinks(irodsPath, entry.ID)
+		mapped = append(mapped, entry)
+	}
+	return mapped
+}
+
 func pathChecksumResponse(irodsPath string, checksum domain.PathChecksum) map[string]any {
 	return map[string]any{
 		"irods_path":    irodsPath,
@@ -827,9 +1069,14 @@ func pathLinksForEntry(irodsPath string, kind string) *domain.PathLinks {
 	}
 
 	avuPath := "/api/v1/path/avu?irods_path=" + url.QueryEscape(irodsPath)
+	aclPath := "/api/v1/path/acl?irods_path=" + url.QueryEscape(irodsPath)
 	links := &domain.PathLinks{
 		AVUs: &domain.ActionLink{
 			Href:   avuPath,
+			Method: http.MethodGet,
+		},
+		ACLs: &domain.ActionLink{
+			Href:   aclPath,
 			Method: http.MethodGet,
 		},
 		CreateAVU: &domain.ActionLink{
@@ -856,9 +1103,67 @@ func pathLinksForEntry(irodsPath string, kind string) *domain.PathLinks {
 			Href:   createChildrenPath,
 			Method: http.MethodPost,
 		}
+		inheritancePath := "/api/v1/path/acl/inheritance?irods_path=" + url.QueryEscape(irodsPath)
+		links.SetInheritance = &domain.ActionLink{
+			Href:   inheritancePath,
+			Method: http.MethodPut,
+		}
+		links.DeleteInheritance = &domain.ActionLink{
+			Href:   inheritancePath,
+			Method: http.MethodDelete,
+		}
 	}
 
 	return links
+}
+
+func pathACLLinks(acl domain.PathACL) *domain.PathACLLinks {
+	irodsPath := strings.TrimSpace(acl.IRODSPath)
+	if irodsPath == "" {
+		return nil
+	}
+
+	aclPath := "/api/v1/path/acl?irods_path=" + url.QueryEscape(irodsPath)
+	links := &domain.PathACLLinks{
+		Path: &domain.ActionLink{
+			Href:   "/api/v1/path?irods_path=" + url.QueryEscape(irodsPath),
+			Method: http.MethodGet,
+		},
+		AddUser: &domain.ActionLink{
+			Href:   aclPath,
+			Method: http.MethodPost,
+		},
+	}
+
+	if acl.Kind == "collection" && acl.InheritanceEnabled != nil {
+		inheritancePath := "/api/v1/path/acl/inheritance?irods_path=" + url.QueryEscape(irodsPath)
+		links.SetInheritance = &domain.ActionLink{
+			Href:   inheritancePath,
+			Method: http.MethodPut,
+		}
+	}
+
+	return links
+}
+
+func pathACLItemLinks(irodsPath string, aclID string) *domain.PathACLItemLinks {
+	irodsPath = strings.TrimSpace(irodsPath)
+	aclID = strings.TrimSpace(aclID)
+	if irodsPath == "" || aclID == "" {
+		return nil
+	}
+
+	pathWithID := "/api/v1/path/acl/" + url.PathEscape(aclID) + "?irods_path=" + url.QueryEscape(irodsPath)
+	return &domain.PathACLItemLinks{
+		Update: &domain.ActionLink{
+			Href:   pathWithID,
+			Method: http.MethodPut,
+		},
+		Remove: &domain.ActionLink{
+			Href:   pathWithID,
+			Method: http.MethodDelete,
+		},
+	}
 }
 
 func avuLinksForEntry(irodsPath string, avuID string) *domain.AVULinks {

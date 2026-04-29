@@ -36,10 +36,12 @@ func New(cfg config.RestConfig) *App {
 	catalog := irods.NewCatalogService(cfg)
 	paths := restservice.NewPathService(catalog)
 	resources := restservice.NewResourceService(irods.NewResourceService(cfg))
+	users := restservice.NewUserService(irods.NewUserService(cfg))
+	userGroups := restservice.NewUserGroupService(irods.NewUserGroupService(cfg))
 	tickets := restservice.NewTicketService(irods.NewTicketService(cfg))
 	authService := auth.NewKeycloakService(cfg)
 	sessionStore := auth.NewSessionStore()
-	handler := httpapi.NewHandler(cfg, paths, resources, tickets, authService, authService, sessionStore)
+	handler := httpapi.NewHandler(cfg, paths, resources, users, userGroups, tickets, authService, authService, sessionStore)
 
 	return &App{
 		server: &http.Server{
