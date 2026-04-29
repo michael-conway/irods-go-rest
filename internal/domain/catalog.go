@@ -59,18 +59,52 @@ type AVUMetadata struct {
 	Links     *AVULinks  `json:"links,omitempty"`
 }
 
+type PathACL struct {
+	IRODSPath          string            `json:"irods_path"`
+	Kind               string            `json:"kind"`
+	InheritanceEnabled *bool             `json:"inheritance_enabled,omitempty"`
+	PathSegments       []PathSegmentLink `json:"path_segments,omitempty"`
+	Links              *PathACLLinks     `json:"links,omitempty"`
+	Users              []PathACLEntry    `json:"users"`
+	Groups             []PathACLEntry    `json:"groups"`
+}
+
+type PathACLEntry struct {
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	Zone          string            `json:"zone,omitempty"`
+	Type          string            `json:"type"`
+	IRODSUserType string            `json:"irods_user_type,omitempty"`
+	AccessLevel   string            `json:"access_level"`
+	Links         *PathACLItemLinks `json:"links,omitempty"`
+}
+
 type PathLinks struct {
 	AVUs                  *ActionLink `json:"avus,omitempty"`
+	ACLs                  *ActionLink `json:"acls,omitempty"`
 	CreateAVU             *ActionLink `json:"create_avu,omitempty"`
 	CreateTicket          *ActionLink `json:"create_ticket,omitempty"`
 	Resources             *ActionLink `json:"resources,omitempty"`
 	CreateChildCollection *ActionLink `json:"create_child_collection,omitempty"`
 	CreateChildDataObject *ActionLink `json:"create_child_data_object,omitempty"`
+	SetInheritance        *ActionLink `json:"set_inheritance,omitempty"`
+	DeleteInheritance     *ActionLink `json:"delete_inheritance,omitempty"`
 }
 
 type AVULinks struct {
 	Update *ActionLink `json:"update,omitempty"`
 	Delete *ActionLink `json:"delete,omitempty"`
+}
+
+type PathACLLinks struct {
+	Path           *ActionLink `json:"path,omitempty"`
+	AddUser        *ActionLink `json:"add_user,omitempty"`
+	SetInheritance *ActionLink `json:"set_inheritance,omitempty"`
+}
+
+type PathACLItemLinks struct {
+	Update *ActionLink `json:"update,omitempty"`
+	Remove *ActionLink `json:"remove,omitempty"`
 }
 
 type ActionLink struct {

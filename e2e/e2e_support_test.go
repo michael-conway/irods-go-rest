@@ -262,6 +262,11 @@ func setBasicAuth(req *http.Request) {
 	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(credentials)))
 }
 
+func setBasicAuthCredentials(req *http.Request, username string, password string) {
+	credentials := strings.TrimSpace(username) + ":" + strings.TrimSpace(password)
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(credentials)))
+}
+
 func setBearerAuth(req *http.Request, token string) {
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
 }
