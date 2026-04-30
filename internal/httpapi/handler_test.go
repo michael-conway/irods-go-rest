@@ -692,6 +692,63 @@ func TestDeletePathReplicasRejectsMissingSelector(t *testing.T) {
 	}
 }
 
+func TestPatchPathReplicasUsesConfiguredTrimDefaultsWhenOmitted(t *testing.T) {
+	handler, filesystem := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.ReplicaTrimMinCopies = 1
+		cfg.ReplicaTrimMinAgeMinutes = 17
+	})
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/path/replicas?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(`{"source_resource":"demoResc","destination_resource":"archiveResc","update":true}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if filesystem.lastTrimMinCopies != 1 {
+		t.Fatalf("expected configured trim min copies 1, got %d", filesystem.lastTrimMinCopies)
+	}
+	if filesystem.lastTrimMinAgeMins != 17 {
+		t.Fatalf("expected configured trim min age minutes 17, got %d", filesystem.lastTrimMinAgeMins)
+	}
+}
+
+func TestDeletePathReplicasUsesConfiguredTrimDefaultsWhenOmitted(t *testing.T) {
+	handler, filesystem := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.ReplicaTrimMinCopies = 1
+		cfg.ReplicaTrimMinAgeMinutes = 23
+	})
+
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/path/replicas?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(`{"resource":"archiveResc","update":true}`))
+	createReq.Header.Set("Authorization", "Bearer token123")
+	createReq.Header.Set("Content-Type", "application/json")
+	createRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(createRec, createReq)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("expected create status 201, got %d: %s", createRec.Code, createRec.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/path/replicas?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(`{"resource":"demoResc"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if filesystem.lastTrimMinCopies != 1 {
+		t.Fatalf("expected configured trim min copies 1, got %d", filesystem.lastTrimMinCopies)
+	}
+	if filesystem.lastTrimMinAgeMins != 23 {
+		t.Fatalf("expected configured trim min age minutes 23, got %d", filesystem.lastTrimMinAgeMins)
+	}
+}
+
 func TestPostPathChildrenCreatesCollection(t *testing.T) {
 	handler := testHandler(t)
 
@@ -1521,6 +1578,12 @@ func (stubAuthService) VerifyToken(_ context.Context, accessToken string) (auth.
 
 func testHandler(t *testing.T) *Handler {
 	t.Helper()
+	handler, _ := testHandlerWithConfig(t, nil)
+	return handler
+}
+
+func testHandlerWithConfig(t *testing.T, mutate func(*config.RestConfig)) (*Handler, *testCatalogFileSystem) {
+	t.Helper()
 
 	cfg, err := config.ReadRestConfig("rest-config", "yaml", []string{"../config"})
 	if err != nil {
@@ -1538,6 +1601,9 @@ func testHandler(t *testing.T) *Handler {
 	cfg.IrodsNegotiationPolicy = "CS_NEG_DONT_CARE"
 	cfg.IrodsDefaultResource = "demoResc"
 	cfg.ResourceAffinity = []string{"demoResc", "edgeResc"}
+	if mutate != nil {
+		mutate(cfg)
+	}
 	filesystem := newTestCatalogFileSystem()
 	factory := func(_ *irodstypes.IRODSAccount, _ string) (irods.CatalogFileSystem, error) {
 		return filesystem, nil
@@ -1554,21 +1620,23 @@ func testHandler(t *testing.T) *Handler {
 		stubAuthService{},
 		stubAuthService{},
 		auth.NewSessionStore(),
-	)
+	), filesystem
 }
 
 type testCatalogFileSystem struct {
-	entriesByPath  map[string]*irodsfs.Entry
-	childrenByPath map[string][]*irodsfs.Entry
-	metadataByPath map[string][]*irodstypes.IRODSMeta
-	aclByPath      map[string][]*irodstypes.IRODSAccess
-	inheritByPath  map[string]bool
-	contentByPath  map[string][]byte
-	ticketsByName  map[string]*irodstypes.IRODSTicket
-	resources      []*irodstypes.IRODSResource
-	serverVersion  *irodstypes.IRODSVersion
-	usersByKey     map[string]*irodstypes.IRODSUser
-	groupMembers   map[string][]string
+	entriesByPath      map[string]*irodsfs.Entry
+	childrenByPath     map[string][]*irodsfs.Entry
+	metadataByPath     map[string][]*irodstypes.IRODSMeta
+	aclByPath          map[string][]*irodstypes.IRODSAccess
+	inheritByPath      map[string]bool
+	contentByPath      map[string][]byte
+	ticketsByName      map[string]*irodstypes.IRODSTicket
+	resources          []*irodstypes.IRODSResource
+	serverVersion      *irodstypes.IRODSVersion
+	usersByKey         map[string]*irodstypes.IRODSUser
+	groupMembers       map[string][]string
+	lastTrimMinCopies  int
+	lastTrimMinAgeMins int
 }
 
 func newTestCatalogFileSystem() *testCatalogFileSystem {
@@ -1963,11 +2031,13 @@ func (f *testCatalogFileSystem) ReplicateFile(irodsPath string, resource string,
 	return nil
 }
 
-func (f *testCatalogFileSystem) TrimDataObject(irodsPath string, resource string, minCopies int, _ int) error {
+func (f *testCatalogFileSystem) TrimDataObject(irodsPath string, resource string, minCopies int, minAgeMinutes int) error {
 	resource = strings.TrimSpace(resource)
 	if resource == "" {
 		return errors.New("resource is required")
 	}
+	f.lastTrimMinCopies = minCopies
+	f.lastTrimMinAgeMins = minAgeMinutes
 
 	entry, ok := f.entriesByPath[irodsPath]
 	if !ok || entry.IsDir() {

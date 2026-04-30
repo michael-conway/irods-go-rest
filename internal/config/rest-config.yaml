@@ -20,3 +20,5 @@ RestLogLevel: info
 ResourceAffinity:
   - demoResc
   - test1-resc
+ReplicaTrimMinCopies: 1
+ReplicaTrimMinAgeMinutes: 0
