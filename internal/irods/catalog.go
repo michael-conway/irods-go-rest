@@ -53,11 +53,35 @@ type PathContentsUploadOptions struct {
 	Overwrite bool
 }
 
+type PathReplicaCreateOptions struct {
+	Resource string
+	Update   bool
+}
+
+type PathReplicaMoveOptions struct {
+	SourceResource      string
+	DestinationResource string
+	Update              bool
+	MinCopies           int
+	MinAgeMinutes       int
+}
+
+type PathReplicaTrimOptions struct {
+	Resource      string
+	ReplicaIndex  *int64
+	MinCopies     int
+	MinAgeMinutes int
+}
+
 type CatalogService interface {
 	GetPath(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathLookupOptions) (domain.PathEntry, error)
 	GetPathChildren(ctx context.Context, requestContext *RequestContext, absolutePath string) ([]domain.PathEntry, error)
+	GetPathReplicas(ctx context.Context, requestContext *RequestContext, absolutePath string, verboseLevel int) ([]domain.PathReplica, error)
 	UploadPathContents(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathContentsUploadOptions) (domain.PathContentsUploadResult, error)
 	CreatePathChild(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathCreateOptions) (domain.PathEntry, error)
+	CreatePathReplica(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathReplicaCreateOptions) ([]domain.PathReplica, error)
+	MovePathReplica(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathReplicaMoveOptions) ([]domain.PathReplica, error)
+	TrimPathReplica(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathReplicaTrimOptions) ([]domain.PathReplica, error)
 	DeletePath(ctx context.Context, requestContext *RequestContext, absolutePath string, force bool) error
 	RenamePath(ctx context.Context, requestContext *RequestContext, absolutePath string, newName string) (domain.PathEntry, error)
 	GetPathMetadata(ctx context.Context, requestContext *RequestContext, absolutePath string) ([]domain.AVUMetadata, error)
@@ -112,6 +136,8 @@ type CatalogFileSystem interface {
 	ClearTicketUseLimit(ticketName string) error
 	ModifyTicketExpirationTime(ticketName string, expirationTime time.Time) error
 	ClearTicketExpirationTime(ticketName string) error
+	ReplicateFile(irodsPath string, resource string, update bool) error
+	TrimDataObject(irodsPath string, resource string, minCopies int, minAgeMinutes int) error
 	Release()
 }
 
@@ -232,6 +258,203 @@ func (s *catalogService) GetPathChildren(_ context.Context, requestContext *Requ
 	}
 
 	return results, nil
+}
+
+func (s *catalogService) GetPathReplicas(_ context.Context, requestContext *RequestContext, absolutePath string, verboseLevel int) ([]domain.PathReplica, error) {
+	absolutePath = strings.TrimSpace(absolutePath)
+	if absolutePath == "" {
+		return nil, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
+	}
+
+	slog.Debug("catalog GetPathReplicas start", "path", absolutePath, "verbose_level", verboseLevel, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-get-path-replicas")
+	if err != nil {
+		logIRODSError("catalog GetPathReplicas filesystem setup failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return nil, err
+	}
+	defer filesystem.Release()
+
+	entry, err := filesystem.Stat(absolutePath)
+	if err != nil {
+		logIRODSError("catalog GetPathReplicas stat failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return nil, normalizePathAccessError("stat path", absolutePath, err)
+	}
+	if entry.IsDir() {
+		return nil, fmt.Errorf("%w: path %q is not a data object", ErrNotFound, absolutePath)
+	}
+
+	if verboseLevel < 1 {
+		verboseLevel = 1
+	}
+	if verboseLevel > 2 {
+		verboseLevel = 2
+	}
+
+	return pathReplicas(entry, PathLookupOptions{VerboseLevel: verboseLevel}), nil
+}
+
+func (s *catalogService) CreatePathReplica(_ context.Context, requestContext *RequestContext, absolutePath string, options PathReplicaCreateOptions) ([]domain.PathReplica, error) {
+	absolutePath = strings.TrimSpace(absolutePath)
+	resource := strings.TrimSpace(options.Resource)
+	if absolutePath == "" {
+		return nil, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
+	}
+	if resource == "" {
+		return nil, fmt.Errorf("resource is required")
+	}
+
+	slog.Debug("catalog CreatePathReplica start", "path", absolutePath, "resource", resource, "update", options.Update, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-create-path-replica")
+	if err != nil {
+		logIRODSError("catalog CreatePathReplica filesystem setup failed", err, "path", absolutePath, "resource", resource, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return nil, err
+	}
+	defer filesystem.Release()
+
+	entry, err := filesystem.Stat(absolutePath)
+	if err != nil {
+		logIRODSError("catalog CreatePathReplica stat failed", err, "path", absolutePath, "resource", resource, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return nil, normalizePathAccessError("stat path", absolutePath, err)
+	}
+	if entry.IsDir() {
+		return nil, fmt.Errorf("%w: path %q is not a data object", ErrNotFound, absolutePath)
+	}
+
+	if err := filesystem.ReplicateFile(absolutePath, resource, options.Update); err != nil {
+		logIRODSError("catalog CreatePathReplica replicate failed", err, "path", absolutePath, "resource", resource, "update", options.Update, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return nil, normalizePathAccessError("replicate data object", absolutePath, err)
+	}
+
+	entry, err = filesystem.Stat(absolutePath)
+	if err != nil {
+		logIRODSError("catalog CreatePathReplica verify stat failed", err, "path", absolutePath, "resource", resource, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return nil, normalizePathAccessError("stat path", absolutePath, err)
+	}
+
+	return pathReplicas(entry, PathLookupOptions{VerboseLevel: 2}), nil
+}
+
+func (s *catalogService) MovePathReplica(_ context.Context, requestContext *RequestContext, absolutePath string, options PathReplicaMoveOptions) ([]domain.PathReplica, error) {
+	absolutePath = strings.TrimSpace(absolutePath)
+	sourceResource := strings.TrimSpace(options.SourceResource)
+	destinationResource := strings.TrimSpace(options.DestinationResource)
+	if absolutePath == "" {
+		return nil, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
+	}
+	if sourceResource == "" {
+		return nil, fmt.Errorf("source_resource is required")
+	}
+	if destinationResource == "" {
+		return nil, fmt.Errorf("destination_resource is required")
+	}
+	if sourceResource == destinationResource {
+		return nil, fmt.Errorf("source_resource and destination_resource must differ")
+	}
+
+	minCopies := options.MinCopies
+	if minCopies <= 0 {
+		minCopies = 1
+	}
+	minAgeMinutes := options.MinAgeMinutes
+	if minAgeMinutes < 0 {
+		minAgeMinutes = 0
+	}
+
+	slog.Debug("catalog MovePathReplica start", "path", absolutePath, "source_resource", sourceResource, "destination_resource", destinationResource, "update", options.Update, "min_copies", minCopies, "min_age_minutes", minAgeMinutes, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-move-path-replica")
+	if err != nil {
+		logIRODSError("catalog MovePathReplica filesystem setup failed", err, "path", absolutePath, "source_resource", sourceResource, "destination_resource", destinationResource, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return nil, err
+	}
+	defer filesystem.Release()
+
+	entry, err := filesystem.Stat(absolutePath)
+	if err != nil {
+		logIRODSError("catalog MovePathReplica stat failed", err, "path", absolutePath, "source_resource", sourceResource, "destination_resource", destinationResource, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return nil, normalizePathAccessError("stat path", absolutePath, err)
+	}
+	if entry.IsDir() {
+		return nil, fmt.Errorf("%w: path %q is not a data object", ErrNotFound, absolutePath)
+	}
+	if !entryHasReplicaInResource(entry, sourceResource) {
+		return nil, fmt.Errorf("%w: replica on resource %q for path %q", ErrNotFound, sourceResource, absolutePath)
+	}
+
+	if err := filesystem.ReplicateFile(absolutePath, destinationResource, options.Update); err != nil {
+		logIRODSError("catalog MovePathReplica replicate destination failed", err, "path", absolutePath, "source_resource", sourceResource, "destination_resource", destinationResource, "update", options.Update, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return nil, normalizePathAccessError("replicate data object", absolutePath, err)
+	}
+
+	if err := filesystem.TrimDataObject(absolutePath, sourceResource, minCopies, minAgeMinutes); err != nil {
+		logIRODSError("catalog MovePathReplica trim source failed", err, "path", absolutePath, "source_resource", sourceResource, "destination_resource", destinationResource, "min_copies", minCopies, "min_age_minutes", minAgeMinutes, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return nil, normalizePathAccessError("trim data object replica", absolutePath, err)
+	}
+
+	entry, err = filesystem.Stat(absolutePath)
+	if err != nil {
+		logIRODSError("catalog MovePathReplica verify stat failed", err, "path", absolutePath, "source_resource", sourceResource, "destination_resource", destinationResource, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return nil, normalizePathAccessError("stat path", absolutePath, err)
+	}
+
+	return pathReplicas(entry, PathLookupOptions{VerboseLevel: 2}), nil
+}
+
+func (s *catalogService) TrimPathReplica(_ context.Context, requestContext *RequestContext, absolutePath string, options PathReplicaTrimOptions) ([]domain.PathReplica, error) {
+	absolutePath = strings.TrimSpace(absolutePath)
+	if absolutePath == "" {
+		return nil, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
+	}
+
+	minCopies := options.MinCopies
+	if minCopies <= 0 {
+		minCopies = 1
+	}
+	minAgeMinutes := options.MinAgeMinutes
+	if minAgeMinutes < 0 {
+		minAgeMinutes = 0
+	}
+
+	slog.Debug("catalog TrimPathReplica start", "path", absolutePath, "resource", options.Resource, "replica_index", options.ReplicaIndex, "min_copies", minCopies, "min_age_minutes", minAgeMinutes, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-trim-path-replica")
+	if err != nil {
+		logIRODSError("catalog TrimPathReplica filesystem setup failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return nil, err
+	}
+	defer filesystem.Release()
+
+	entry, err := filesystem.Stat(absolutePath)
+	if err != nil {
+		logIRODSError("catalog TrimPathReplica stat failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return nil, normalizePathAccessError("stat path", absolutePath, err)
+	}
+	if entry.IsDir() {
+		return nil, fmt.Errorf("%w: path %q is not a data object", ErrNotFound, absolutePath)
+	}
+
+	resource := strings.TrimSpace(options.Resource)
+	if resource == "" {
+		resource, err = resolveReplicaResourceByIndex(entry, options.ReplicaIndex)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if err := filesystem.TrimDataObject(absolutePath, resource, minCopies, minAgeMinutes); err != nil {
+		logIRODSError("catalog TrimPathReplica trim failed", err, "path", absolutePath, "resource", resource, "min_copies", minCopies, "min_age_minutes", minAgeMinutes, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return nil, normalizePathAccessError("trim data object replica", absolutePath, err)
+	}
+
+	entry, err = filesystem.Stat(absolutePath)
+	if err != nil {
+		logIRODSError("catalog TrimPathReplica verify stat failed", err, "path", absolutePath, "resource", resource, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return nil, normalizePathAccessError("stat path", absolutePath, err)
+	}
+
+	return pathReplicas(entry, PathLookupOptions{VerboseLevel: 2}), nil
 }
 
 func (s *catalogService) CreatePathChild(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathCreateOptions) (domain.PathEntry, error) {
@@ -1468,6 +1691,27 @@ func (a *catalogFileSystemAdapter) ClearTicketExpirationTime(ticketName string) 
 	return a.filesystem.ClearTicketExpirationTime(ticketName)
 }
 
+func (a *catalogFileSystemAdapter) ReplicateFile(irodsPath string, resource string, update bool) error {
+	return a.filesystem.ReplicateFile(irodsPath, resource, update)
+}
+
+func (a *catalogFileSystemAdapter) TrimDataObject(irodsPath string, resource string, minCopies int, minAgeMinutes int) error {
+	conn, err := a.filesystem.GetMetadataConnection(false)
+	if err != nil {
+		return err
+	}
+	defer a.filesystem.ReturnMetadataConnection(conn) //nolint:errcheck
+
+	if err := irodslibfs.TrimDataObject(conn, irodsPath, resource, minCopies, minAgeMinutes, false); err != nil {
+		return err
+	}
+
+	// TODO:// evaluate with new nocache irods client
+	// Keep immediate Stat() reads consistent after low-level trim operations.
+	a.filesystem.InvalidateCacheForFileUpdate(irodsPath)
+	return nil
+}
+
 func (a *catalogFileSystemAdapter) Release() {
 	a.filesystem.Release()
 }
@@ -1975,6 +2219,46 @@ func pathReplicas(entry *irodsfs.Entry, options PathLookupOptions) []domain.Path
 	}
 
 	return replicas
+}
+
+func entryHasReplicaInResource(entry *irodsfs.Entry, resource string) bool {
+	if entry == nil {
+		return false
+	}
+
+	resource = strings.TrimSpace(resource)
+	if resource == "" {
+		return false
+	}
+
+	for _, replica := range entry.IRODSReplicas {
+		if strings.TrimSpace(replica.ResourceName) == resource {
+			return true
+		}
+	}
+
+	return false
+}
+
+func resolveReplicaResourceByIndex(entry *irodsfs.Entry, replicaIndex *int64) (string, error) {
+	if entry == nil {
+		return "", fmt.Errorf("resource or replica_index is required")
+	}
+	if replicaIndex == nil {
+		return "", fmt.Errorf("resource or replica_index is required")
+	}
+
+	for _, replica := range entry.IRODSReplicas {
+		if replica.Number == *replicaIndex {
+			resource := strings.TrimSpace(replica.ResourceName)
+			if resource == "" {
+				break
+			}
+			return resource, nil
+		}
+	}
+
+	return "", fmt.Errorf("%w: replica_index %d on path %q", ErrNotFound, *replicaIndex, entry.Path)
 }
 
 func resourceActionLink(resourceName string) *domain.ActionLink {

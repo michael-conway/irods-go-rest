@@ -223,7 +223,7 @@ func TestGetServerInfo(t *testing.T) {
 		`"irods_host":"irods.local"`,
 		`"irods_port":1247`,
 		`"irods_zone":"tempZone"`,
-		`"irods_negotiation":"request_server_negotiation"`,
+		`"irods_negotiation":"CS_NEG_DONT_CARE"`,
 		`"irods_default_resource":"demoResc"`,
 		`"resource_affinity":["demoResc","edgeResc"]`,
 	) {
@@ -281,6 +281,7 @@ func TestGetPathAcceptsValidBearerToken(t *testing.T) {
 	if body := rec.Body.String(); !containsAll(
 		body,
 		`"avus":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"}`,
+		`"replicas":{"href":"/api/v1/path/replicas?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"}`,
 		`"create_avu":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"}`,
 		`"resource_link":{"href":"/api/v1/resource/demoResc","method":"GET"}`,
 		`"cmd_cue":{"operation":"get","gocmd":"gocmd get '/tempZone/home/test1/file.txt' \u003cDESTINATION_PATH\u003e","icommand":"iget '/tempZone/home/test1/file.txt' \u003cDESTINATION_PATH\u003e"}`,
@@ -512,6 +513,182 @@ func TestGetPathChildrenReturnsCollectionChildren(t *testing.T) {
 
 	if body := rec.Body.String(); !containsAll(body, `"parent":{"irods_path":"/tempZone/home/test1/project"`) {
 		t.Fatalf("expected child parent links in response body: %q", body)
+	}
+}
+
+func TestGetPathReplicasRequiresIRODSPathQuery(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/replicas", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestGetPathReplicasReturnsReplicaList(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/replicas?irods_path=/tempZone/home/test1/file.txt&verbose=2", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"irods_path":"/tempZone/home/test1/file.txt"`,
+		`"replicas":[`,
+		`"resource_name":"demoResc"`,
+		`"resource_link":{"href":"/api/v1/resource/demoResc","method":"GET"}`,
+	) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestPostPathReplicasCreatesReplica(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/replicas?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(`{"resource":"archiveResc","update":true}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"resource_name":"demoResc"`,
+		`"resource_name":"archiveResc"`,
+	) {
+		t.Fatalf("expected created replica in response body: %q", body)
+	}
+}
+
+func TestPostPathReplicasRejectsMissingResource(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/replicas?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(`{"update":true}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"fields":{"resource":"resource is required"}`) {
+		t.Fatalf("expected field validation error, got %q", body)
+	}
+}
+
+func TestPatchPathReplicasMovesReplica(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/path/replicas?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(`{"source_resource":"demoResc","destination_resource":"archiveResc","update":true,"min_copies":1}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"resource_name":"archiveResc"`) {
+		t.Fatalf("expected destination replica in response body: %q", body)
+	}
+	if strings.Contains(rec.Body.String(), `"resource_name":"demoResc"`) {
+		t.Fatalf("expected source replica to be trimmed, got %q", rec.Body.String())
+	}
+}
+
+func TestPatchPathReplicasRejectsSameSourceAndDestination(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/path/replicas?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(`{"source_resource":"demoResc","destination_resource":"demoResc"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"destination_resource":"destination_resource must differ from source_resource"`) {
+		t.Fatalf("expected destination field validation error, got %q", body)
+	}
+}
+
+func TestDeletePathReplicasTrimsReplicaByNumber(t *testing.T) {
+	handler := testHandler(t)
+
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/path/replicas?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(`{"resource":"archiveResc","update":true}`))
+	createReq.Header.Set("Authorization", "Bearer token123")
+	createReq.Header.Set("Content-Type", "application/json")
+	createRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(createRec, createReq)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("expected create status 201, got %d: %s", createRec.Code, createRec.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/path/replicas?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(`{"replica_number":1,"min_copies":1}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"resource_name":"demoResc"`) {
+		t.Fatalf("expected default replica to remain in response body: %q", body)
+	}
+	if strings.Contains(rec.Body.String(), `"resource_name":"archiveResc"`) {
+		t.Fatalf("expected archive replica to be trimmed, got %q", rec.Body.String())
+	}
+}
+
+func TestDeletePathReplicasRejectsMissingSelector(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/path/replicas?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(`{"min_copies":1}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"fields":{`,
+		`"resource":"resource or replica_number is required"`,
+		`"replica_number":"resource or replica_number is required"`,
+	) {
+		t.Fatalf("expected validation errors for selector fields, got %q", body)
 	}
 }
 
@@ -1358,7 +1535,7 @@ func testHandler(t *testing.T) *Handler {
 	if cfg.IrodsPort <= 0 {
 		cfg.IrodsPort = 1247
 	}
-	cfg.IrodsNegotiationPolicy = "request_server_negotiation"
+	cfg.IrodsNegotiationPolicy = "CS_NEG_DONT_CARE"
 	cfg.IrodsDefaultResource = "demoResc"
 	cfg.ResourceAffinity = []string{"demoResc", "edgeResc"}
 	filesystem := newTestCatalogFileSystem()
@@ -1745,6 +1922,80 @@ func (f *testCatalogFileSystem) RenameFile(srcPath string, destPath string) erro
 
 	f.childrenByPath[parentSrc] = filterChildEntry(f.childrenByPath[parentSrc], cleanSrc)
 	f.childrenByPath[parentDest] = append(f.childrenByPath[parentDest], entry)
+	return nil
+}
+
+func (f *testCatalogFileSystem) ReplicateFile(irodsPath string, resource string, _ bool) error {
+	resource = strings.TrimSpace(resource)
+	if resource == "" {
+		return errors.New("resource is required")
+	}
+
+	entry, ok := f.entriesByPath[irodsPath]
+	if !ok || entry.IsDir() {
+		return errors.New("not found")
+	}
+
+	for _, replica := range entry.IRODSReplicas {
+		if strings.TrimSpace(replica.ResourceName) == resource {
+			return nil
+		}
+	}
+
+	nextReplicaNumber := int64(0)
+	for _, replica := range entry.IRODSReplicas {
+		if replica.Number >= nextReplicaNumber {
+			nextReplicaNumber = replica.Number + 1
+		}
+	}
+
+	now := time.Unix(1_700_000_003, 0)
+	entry.IRODSReplicas = append(entry.IRODSReplicas, irodstypes.IRODSReplica{
+		Number:            nextReplicaNumber,
+		Owner:             entry.Owner,
+		Status:            "1",
+		ResourceName:      resource,
+		ResourceHierarchy: resource,
+		Path:              "/var/lib/irods/" + resource + "/Vault" + entry.Path,
+		ModifyTime:        now,
+	})
+	entry.ModifyTime = now
+	return nil
+}
+
+func (f *testCatalogFileSystem) TrimDataObject(irodsPath string, resource string, minCopies int, _ int) error {
+	resource = strings.TrimSpace(resource)
+	if resource == "" {
+		return errors.New("resource is required")
+	}
+
+	entry, ok := f.entriesByPath[irodsPath]
+	if !ok || entry.IsDir() {
+		return errors.New("not found")
+	}
+
+	if minCopies < 0 {
+		minCopies = 0
+	}
+
+	replicas := entry.IRODSReplicas
+	filtered := make([]irodstypes.IRODSReplica, 0, len(replicas))
+	removed := false
+
+	for _, replica := range replicas {
+		if !removed && strings.TrimSpace(replica.ResourceName) == resource && len(replicas)-1 >= minCopies {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, replica)
+	}
+
+	if !removed {
+		return errors.New("not found")
+	}
+
+	entry.IRODSReplicas = filtered
+	entry.ModifyTime = time.Unix(1_700_000_004, 0)
 	return nil
 }
 

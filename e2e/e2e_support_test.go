@@ -192,6 +192,40 @@ func e2eIRODSDefaultResource(t *testing.T) string {
 	return ""
 }
 
+func e2eTestResource1(t *testing.T) string {
+	if t != nil {
+		t.Helper()
+	}
+
+	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_TEST_RESOURCE1")); value != "" {
+		return value
+	}
+
+	if cfg := optionalE2ERestConfig(t); cfg != nil && strings.TrimSpace(cfg.TestResource1) != "" {
+		return strings.TrimSpace(cfg.TestResource1)
+	}
+
+	t.Fatalf("e2e tests require TestResource1 in %s or GOREST_E2E_TEST_RESOURCE1", e2eConfigFileEnvVar)
+	return ""
+}
+
+func e2eTestResource2(t *testing.T) string {
+	if t != nil {
+		t.Helper()
+	}
+
+	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_TEST_RESOURCE2")); value != "" {
+		return value
+	}
+
+	if cfg := optionalE2ERestConfig(t); cfg != nil && strings.TrimSpace(cfg.TestResource2) != "" {
+		return strings.TrimSpace(cfg.TestResource2)
+	}
+
+	t.Fatalf("e2e tests require TestResource2 in %s or GOREST_E2E_TEST_RESOURCE2", e2eConfigFileEnvVar)
+	return ""
+}
+
 func e2eIRODSUser(t *testing.T) string {
 	if t != nil {
 		t.Helper()

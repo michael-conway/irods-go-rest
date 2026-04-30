@@ -83,6 +83,7 @@ type PathACLEntry struct {
 type PathLinks struct {
 	AVUs                  *ActionLink `json:"avus,omitempty"`
 	ACLs                  *ActionLink `json:"acls,omitempty"`
+	Replicas              *ActionLink `json:"replicas,omitempty"`
 	CreateAVU             *ActionLink `json:"create_avu,omitempty"`
 	CreateTicket          *ActionLink `json:"create_ticket,omitempty"`
 	Resources             *ActionLink `json:"resources,omitempty"`

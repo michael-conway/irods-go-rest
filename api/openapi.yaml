@@ -1003,6 +1003,214 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/path/replicas:
+    get:
+      operationId: getPathReplicas
+      tags: [path]
+      summary: List replicas for a data object path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a data object.
+        - in: query
+          name: verbose
+          required: false
+          schema:
+            type: string
+          description: |
+            Optional verbosity level for replica details.
+            `1`, `true`, or `long` includes `ils -l` style replica information.
+            `2` or `very_long` includes `ils -L` style checksum, data type, and physical path details.
+      responses:
+        "200":
+          description: Replica metadata for the requested data object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathReplicasResponse"
+        "400":
+          description: Missing irods_path query parameter or invalid verbose value
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Path not found or not a data object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested data object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: postPathReplicas
+      tags: [path]
+      summary: Create a replica on a destination resource
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a data object.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PathReplicaCreateRequest"
+      responses:
+        "201":
+          description: Replica created and updated replica list returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathReplicasResponse"
+        "400":
+          description: Missing path or invalid replica create request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Path not found or not a data object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested data object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      operationId: patchPathReplicas
+      tags: [path]
+      summary: Move a replica between resources
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a data object.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PathReplicaMoveRequest"
+      responses:
+        "200":
+          description: Replica moved and updated replica list returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathReplicasResponse"
+        "400":
+          description: Missing path or invalid move request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Path or source replica not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested data object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deletePathReplicas
+      tags: [path]
+      summary: Trim a replica by resource or replica number
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a data object.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PathReplicaTrimRequest"
+      responses:
+        "200":
+          description: Replica trimmed and updated replica list returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathReplicasResponse"
+        "400":
+          description: Missing path or invalid trim request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Path or targeted replica not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested data object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/path/acl:
     get:
       operationId: getPathACL
@@ -2127,6 +2335,7 @@ components:
           type: string
         irods_negotiation:
           type: string
+          enum: [CS_NEG_REFUSE, CS_NEG_REQUIRE, CS_NEG_DONT_CARE]
           description: Configured iRODS negotiation policy for this REST service.
         irods_default_resource:
           type: string
@@ -2254,6 +2463,8 @@ components:
           $ref: "#/components/schemas/ActionLink"
         acls:
           $ref: "#/components/schemas/ActionLink"
+        replicas:
+          $ref: "#/components/schemas/ActionLink"
         create_avu:
           $ref: "#/components/schemas/ActionLink"
         create_ticket:
@@ -2291,6 +2502,21 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PathEntry"
+    PathReplicasResponse:
+      type: object
+      required: [irods_path, path_segments, replicas]
+      properties:
+        irods_path:
+          type: string
+        path_segments:
+          type: array
+          description: Ordered collection path segments for the requested data object, each with a display name and HATEOAS link.
+          items:
+            $ref: "#/components/schemas/PathSegmentLink"
+        replicas:
+          type: array
+          items:
+            $ref: "#/components/schemas/PathReplica"
     PathACLResponse:
       type: object
       required: [irods_path, kind, path_segments, users, groups]
@@ -2473,6 +2699,64 @@ components:
         new_name:
           type: string
           description: New basename for the file or collection within the same parent collection.
+    PathReplicaCreateRequest:
+      type: object
+      required: [resource]
+      properties:
+        resource:
+          type: string
+          description: Destination resource name to replicate to.
+        update:
+          type: boolean
+          default: false
+          description: When true, overwrite an existing destination replica if needed.
+    PathReplicaMoveRequest:
+      type: object
+      required: [source_resource, destination_resource]
+      properties:
+        source_resource:
+          type: string
+          description: Source resource name to trim after destination replication.
+        destination_resource:
+          type: string
+          description: Destination resource name to receive the replica.
+        update:
+          type: boolean
+          default: false
+          description: When true, allow updating an existing destination replica.
+        min_copies:
+          type: integer
+          minimum: 0
+          default: 1
+          description: Minimum replicas to preserve during source trim.
+        min_age_minutes:
+          type: integer
+          minimum: 0
+          default: 0
+          description: Minimum age threshold in minutes for trim eligibility.
+    PathReplicaTrimRequest:
+      type: object
+      properties:
+        resource:
+          type: string
+          description: Resource name of the replica to trim.
+        replica_number:
+          type: integer
+          format: int64
+          description: Replica number to trim when resource is not provided.
+        min_copies:
+          type: integer
+          minimum: 0
+          default: 1
+          description: Minimum replicas to preserve after trim.
+        min_age_minutes:
+          type: integer
+          minimum: 0
+          default: 0
+          description: Minimum age threshold in minutes for trim eligibility.
+      anyOf:
+        - required: [resource]
+        - required: [replica_number]
     PathAVUCreateRequest:
       type: object
       required: [attrib, value]
