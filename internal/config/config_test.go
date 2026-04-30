@@ -66,7 +66,7 @@ func TestReadRestConfigSecretFileSupport(t *testing.T) {
 		"IrodsAdminUser: rods\n" +
 		"IrodsAdminPasswordFile: " + irodsSecretPath + "\n" +
 		"IrodsAuthScheme: native\n" +
-		"IrodsNegotiationPolicy: native\n" +
+		"IrodsNegotiationPolicy: CS_NEG_DONT_CARE\n" +
 		"OidcUrl: https://localhost:8443\n" +
 		"OidcClientSecretFile: " + oidcSecretPath + "\n" +
 		"RestLogLevel: info\n"
@@ -95,7 +95,7 @@ func TestReadRestConfigResourceAffinityYAMLList(t *testing.T) {
 		"IrodsZone: tempZone\n" +
 		"IrodsAdminUser: rods\n" +
 		"IrodsAuthScheme: native\n" +
-		"IrodsNegotiationPolicy: native\n" +
+		"IrodsNegotiationPolicy: CS_NEG_DONT_CARE\n" +
 		"ResourceAffinity:\n" +
 		"  - demoResc\n" +
 		"  - edgeResc\n" +
@@ -121,7 +121,7 @@ func TestReadRestConfigConfigFileEnvOverride(t *testing.T) {
 		"IrodsZone: tempZone\n" +
 		"IrodsAdminUser: rods\n" +
 		"IrodsAuthScheme: native\n" +
-		"IrodsNegotiationPolicy: native\n" +
+		"IrodsNegotiationPolicy: CS_NEG_DONT_CARE\n" +
 		"PublicURL: http://env-file.example\n" +
 		"RestLogLevel: info\n"
 	configPath := writeTestFile(t, dir, "custom-rest-config.yaml", configBody)
@@ -150,7 +150,7 @@ func TestReadRestConfigTrimsWhitespaceFromInputs(t *testing.T) {
 		"IrodsZone: tempZone\n" +
 		"IrodsAdminUser: rods\n" +
 		"IrodsAuthScheme: native\n" +
-		"IrodsNegotiationPolicy: native\n" +
+		"IrodsNegotiationPolicy: CS_NEG_DONT_CARE\n" +
 		"PublicURL: http://trimmed.example\n" +
 		"RestLogLevel: info\n"
 	configPath := writeTestFile(t, dir, "custom-rest-config.yaml", configBody)
@@ -168,5 +168,27 @@ func TestReadRestConfigTrimsWhitespaceFromInputs(t *testing.T) {
 
 	if cfg.IrodsHost != "trimmed-host" {
 		t.Fatalf("expected IrodsHost from trimmed %s override, got %q", ConfigFileEnvVar, cfg.IrodsHost)
+	}
+}
+
+func TestReadRestConfigInvalidNegotiationPolicyDefaultsToDontCare(t *testing.T) {
+	dir := t.TempDir()
+	configBody := "" +
+		"IrodsHost: localhost\n" +
+		"IrodsPort: 1247\n" +
+		"IrodsZone: tempZone\n" +
+		"IrodsAdminUser: rods\n" +
+		"IrodsAuthScheme: native\n" +
+		"IrodsNegotiationPolicy: INVALID_NEGOTIATION_POLICY\n" +
+		"RestLogLevel: info\n"
+	writeTestFile(t, dir, "rest-config.yaml", configBody)
+
+	cfg, err := ReadRestConfig("rest-config", "yaml", []string{dir})
+	if err != nil {
+		t.Fatalf("error reading config: %v", err)
+	}
+
+	if cfg.IrodsNegotiationPolicy != "CS_NEG_DONT_CARE" {
+		t.Fatalf("expected invalid negotiation policy to normalize to CS_NEG_DONT_CARE, got %q", cfg.IrodsNegotiationPolicy)
 	}
 }

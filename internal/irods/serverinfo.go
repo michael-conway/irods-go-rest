@@ -66,7 +66,7 @@ func (s *serverInfoService) GetServerInfo(_ context.Context, requestContext *Req
 		IRODSHost:            strings.TrimSpace(s.cfg.IrodsHost),
 		IRODSPort:            s.cfg.IrodsPort,
 		IRODSZone:            strings.TrimSpace(s.cfg.IrodsZone),
-		IRODSNegotiation:     effectiveNegotiationPolicy(s.cfg.IrodsNegotiationPolicy),
+		IRODSNegotiation:     config.NormalizeIRODSNegotiationPolicy(s.cfg.IrodsNegotiationPolicy),
 		IRODSDefaultResource: strings.TrimSpace(s.cfg.IrodsDefaultResource),
 		ResourceAffinity:     resourceAffinity,
 	}
@@ -80,12 +80,4 @@ func (s *serverInfoService) GetServerInfo(_ context.Context, requestContext *Req
 	}
 
 	return response, nil
-}
-
-func effectiveNegotiationPolicy(policy string) string {
-	policy = strings.TrimSpace(policy)
-	if policy == "" {
-		return "native"
-	}
-	return policy
 }

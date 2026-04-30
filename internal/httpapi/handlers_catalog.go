@@ -155,6 +155,201 @@ func (h *Handler) getPathChildren(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) getPathReplicas(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
+	if objectPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
+		return
+	}
+
+	verboseLevel, err := queryVerboseLevel(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	replicas, err := h.paths.GetPathReplicas(r.Context(), objectPath, verboseLevel)
+	if err != nil {
+		writePathError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"irods_path":    objectPath,
+		"path_segments": buildPathSegments(objectPath),
+		"replicas":      replicas,
+	})
+}
+
+func (h *Handler) postPathReplicas(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
+	if objectPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
+		return
+	}
+
+	var request struct {
+		Resource string `json:"resource"`
+		Update   bool   `json:"update"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
+		return
+	}
+
+	if strings.TrimSpace(request.Resource) == "" {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "replica request validation failed", map[string]string{
+			"resource": "resource is required",
+		})
+		return
+	}
+
+	replicas, err := h.paths.CreatePathReplica(r.Context(), objectPath, irods.PathReplicaCreateOptions{
+		Resource: request.Resource,
+		Update:   request.Update,
+	})
+	if err != nil {
+		lowerErr := strings.ToLower(err.Error())
+		if strings.Contains(lowerErr, "resource is required") {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		writePathError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"irods_path":    objectPath,
+		"path_segments": buildPathSegments(objectPath),
+		"replicas":      replicas,
+	})
+}
+
+func (h *Handler) patchPathReplicas(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
+	if objectPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
+		return
+	}
+
+	var request struct {
+		SourceResource      string `json:"source_resource"`
+		DestinationResource string `json:"destination_resource"`
+		Update              bool   `json:"update"`
+		MinCopies           int    `json:"min_copies"`
+		MinAgeMinutes       int    `json:"min_age_minutes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
+		return
+	}
+
+	validationErrors := map[string]string{}
+	if strings.TrimSpace(request.SourceResource) == "" {
+		validationErrors["source_resource"] = "source_resource is required"
+	}
+	if strings.TrimSpace(request.DestinationResource) == "" {
+		validationErrors["destination_resource"] = "destination_resource is required"
+	}
+	if strings.TrimSpace(request.SourceResource) != "" && strings.TrimSpace(request.SourceResource) == strings.TrimSpace(request.DestinationResource) {
+		validationErrors["destination_resource"] = "destination_resource must differ from source_resource"
+	}
+	if request.MinCopies < 0 {
+		validationErrors["min_copies"] = "min_copies must be >= 0"
+	}
+	if request.MinAgeMinutes < 0 {
+		validationErrors["min_age_minutes"] = "min_age_minutes must be >= 0"
+	}
+	if len(validationErrors) > 0 {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "replica request validation failed", validationErrors)
+		return
+	}
+
+	replicas, err := h.paths.MovePathReplica(r.Context(), objectPath, irods.PathReplicaMoveOptions{
+		SourceResource:      request.SourceResource,
+		DestinationResource: request.DestinationResource,
+		Update:              request.Update,
+		MinCopies:           request.MinCopies,
+		MinAgeMinutes:       request.MinAgeMinutes,
+	})
+	if err != nil {
+		lowerErr := strings.ToLower(err.Error())
+		if strings.Contains(lowerErr, "source_resource is required") || strings.Contains(lowerErr, "destination_resource is required") || strings.Contains(lowerErr, "must differ") {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		writePathError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"irods_path":    objectPath,
+		"path_segments": buildPathSegments(objectPath),
+		"replicas":      replicas,
+	})
+}
+
+func (h *Handler) deletePathReplicas(w http.ResponseWriter, r *http.Request) {
+	objectPath := queryIRODSPath(r)
+	if objectPath == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
+		return
+	}
+
+	var request struct {
+		Resource      string `json:"resource"`
+		ReplicaNumber *int64 `json:"replica_number"`
+		MinCopies     int    `json:"min_copies"`
+		MinAgeMinutes int    `json:"min_age_minutes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
+		return
+	}
+
+	if strings.TrimSpace(request.Resource) == "" && request.ReplicaNumber == nil {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "replica request validation failed", map[string]string{
+			"resource":       "resource or replica_number is required",
+			"replica_number": "resource or replica_number is required",
+		})
+		return
+	}
+	if request.MinCopies < 0 {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "replica request validation failed", map[string]string{
+			"min_copies": "min_copies must be >= 0",
+		})
+		return
+	}
+	if request.MinAgeMinutes < 0 {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "replica request validation failed", map[string]string{
+			"min_age_minutes": "min_age_minutes must be >= 0",
+		})
+		return
+	}
+
+	replicas, err := h.paths.TrimPathReplica(r.Context(), objectPath, irods.PathReplicaTrimOptions{
+		Resource:      request.Resource,
+		ReplicaIndex:  request.ReplicaNumber,
+		MinCopies:     request.MinCopies,
+		MinAgeMinutes: request.MinAgeMinutes,
+	})
+	if err != nil {
+		lowerErr := strings.ToLower(err.Error())
+		if strings.Contains(lowerErr, "resource or replica_index is required") || strings.Contains(lowerErr, "replica_index") {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		writePathError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"irods_path":    objectPath,
+		"path_segments": buildPathSegments(objectPath),
+		"replicas":      replicas,
+	})
+}
+
 func (h *Handler) getPathACL(w http.ResponseWriter, r *http.Request) {
 	objectPath := queryIRODSPath(r)
 	if objectPath == "" {
@@ -1119,6 +1314,14 @@ func pathLinksForEntry(irodsPath string, kind string) *domain.PathLinks {
 			Href:   "/api/v1/resource",
 			Method: http.MethodGet,
 		},
+	}
+
+	if kind == "data_object" {
+		replicasPath := "/api/v1/path/replicas?irods_path=" + url.QueryEscape(irodsPath)
+		links.Replicas = &domain.ActionLink{
+			Href:   replicasPath,
+			Method: http.MethodGet,
+		}
 	}
 
 	if kind == "collection" {

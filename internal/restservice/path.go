@@ -11,8 +11,12 @@ import (
 type PathService interface {
 	GetPath(ctx context.Context, absolutePath string, options irods.PathLookupOptions) (domain.PathEntry, error)
 	GetPathChildren(ctx context.Context, absolutePath string) ([]domain.PathEntry, error)
+	GetPathReplicas(ctx context.Context, absolutePath string, verboseLevel int) ([]domain.PathReplica, error)
 	UploadPathContents(ctx context.Context, absolutePath string, options irods.PathContentsUploadOptions) (domain.PathContentsUploadResult, error)
 	CreatePathChild(ctx context.Context, absolutePath string, options irods.PathCreateOptions) (domain.PathEntry, error)
+	CreatePathReplica(ctx context.Context, absolutePath string, options irods.PathReplicaCreateOptions) ([]domain.PathReplica, error)
+	MovePathReplica(ctx context.Context, absolutePath string, options irods.PathReplicaMoveOptions) ([]domain.PathReplica, error)
+	TrimPathReplica(ctx context.Context, absolutePath string, options irods.PathReplicaTrimOptions) ([]domain.PathReplica, error)
 	DeletePath(ctx context.Context, absolutePath string, force bool) error
 	RenamePath(ctx context.Context, absolutePath string, newName string) (domain.PathEntry, error)
 	GetPathMetadata(ctx context.Context, absolutePath string) ([]domain.AVUMetadata, error)
@@ -55,6 +59,15 @@ func (s *pathService) GetPathChildren(ctx context.Context, absolutePath string) 
 	return s.catalog.GetPathChildren(ctx, irodsRequestContext(requestContext), absolutePath)
 }
 
+func (s *pathService) GetPathReplicas(ctx context.Context, absolutePath string, verboseLevel int) ([]domain.PathReplica, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.catalog.GetPathReplicas(ctx, irodsRequestContext(requestContext), absolutePath, verboseLevel)
+}
+
 func (s *pathService) UploadPathContents(ctx context.Context, absolutePath string, options irods.PathContentsUploadOptions) (domain.PathContentsUploadResult, error) {
 	requestContext, err := RequestContextFromContext(ctx)
 	if err != nil {
@@ -71,6 +84,33 @@ func (s *pathService) CreatePathChild(ctx context.Context, absolutePath string, 
 	}
 
 	return s.catalog.CreatePathChild(ctx, irodsRequestContext(requestContext), absolutePath, options)
+}
+
+func (s *pathService) CreatePathReplica(ctx context.Context, absolutePath string, options irods.PathReplicaCreateOptions) ([]domain.PathReplica, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.catalog.CreatePathReplica(ctx, irodsRequestContext(requestContext), absolutePath, options)
+}
+
+func (s *pathService) MovePathReplica(ctx context.Context, absolutePath string, options irods.PathReplicaMoveOptions) ([]domain.PathReplica, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.catalog.MovePathReplica(ctx, irodsRequestContext(requestContext), absolutePath, options)
+}
+
+func (s *pathService) TrimPathReplica(ctx context.Context, absolutePath string, options irods.PathReplicaTrimOptions) ([]domain.PathReplica, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.catalog.TrimPathReplica(ctx, irodsRequestContext(requestContext), absolutePath, options)
 }
 
 func (s *pathService) DeletePath(ctx context.Context, absolutePath string, force bool) error {

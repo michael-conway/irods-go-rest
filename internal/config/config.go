@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"reflect"
 	"strings"
@@ -25,6 +26,8 @@ type RestConfig struct {
 	IrodsAuthScheme        string
 	IrodsNegotiationPolicy string
 	IrodsDefaultResource   string
+	TestResource1          string
+	TestResource2          string
 	ResourceAffinity       []string
 	OidcUrl                string
 	OidcClientId           string
@@ -35,15 +38,31 @@ type RestConfig struct {
 	OidcScope              string
 }
 
+func NormalizeIRODSNegotiationPolicy(policy string) string {
+	policy = strings.TrimSpace(policy)
+	switch policy {
+	case string(types.CSNegotiationPolicyRequestTCP), string(types.CSNegotiationPolicyRequestSSL), string(types.CSNegotiationPolicyRequestDontCare):
+		return policy
+	default:
+		slog.Warn(
+			"invalid iRODS negotiation policy; defaulting to CS_NEG_DONT_CARE",
+			"configured_policy", policy,
+			"default_policy", string(types.CSNegotiationPolicyRequestDontCare),
+		)
+		return string(types.CSNegotiationPolicyRequestDontCare)
+	}
+}
+
 func (cfg *RestConfig) ToIrodsAccount() types.IRODSAccount {
 	authScheme := types.GetAuthScheme(cfg.IrodsAuthScheme)
+	normalizedPolicy := NormalizeIRODSNegotiationPolicy(cfg.IrodsNegotiationPolicy)
 
-	negotiationPolicy := types.GetCSNegotiationPolicyRequest(cfg.IrodsNegotiationPolicy)
-	negotiation := types.GetCSNegotiation(cfg.IrodsNegotiationPolicy)
+	negotiationPolicy := types.GetCSNegotiationPolicyRequest(normalizedPolicy)
+	requireNegotiation := negotiationPolicy == types.CSNegotiationPolicyRequestSSL
 
 	account := types.IRODSAccount{
 		AuthenticationScheme:    authScheme,
-		ClientServerNegotiation: negotiation.IsNegotiationRequired(),
+		ClientServerNegotiation: requireNegotiation,
 		CSNegotiationPolicy:     negotiationPolicy,
 		Host:                    cfg.IrodsHost,
 		Port:                    cfg.IrodsPort,
@@ -77,6 +96,8 @@ func bindEnvVars(v *viper.Viper) error {
 		"IrodsAuthScheme":        {"GOREST_IRODS_AUTH_SCHEME", "GOREST_IRODSAUTHSCHEME"},
 		"IrodsNegotiationPolicy": {"GOREST_IRODS_NEGOTIATION_POLICY", "GOREST_IRODSNEGOTIATIONPOLICY"},
 		"IrodsDefaultResource":   {"GOREST_IRODS_DEFAULT_RESOURCE", "GOREST_IRODSDEFAULTRESOURCE"},
+		"TestResource1":          {"GOREST_TEST_RESOURCE1"},
+		"TestResource2":          {"GOREST_TEST_RESOURCE2"},
 		"ResourceAffinity":       {"GOREST_RESOURCE_AFFINITY", "GOREST_RESOURCEAFFINITY"},
 		"OidcUrl":                {"GOREST_OIDC_URL", "GOREST_OIDCURL"},
 		"OidcClientId":           {"GOREST_OIDC_CLIENT_ID", "GOREST_OIDCCLIENTID"},
@@ -195,6 +216,8 @@ func ReadRestConfig(configName string, configType string, configPaths []string) 
 	if err != nil {
 		return nil, err
 	}
+
+	C.IrodsNegotiationPolicy = NormalizeIRODSNegotiationPolicy(C.IrodsNegotiationPolicy)
 
 	C.OidcClientSecret, err = resolveSecret(C.OidcClientSecret, C.OidcClientSecretFile, "OIDC client secret")
 	if err != nil {

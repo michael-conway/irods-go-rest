@@ -6,7 +6,7 @@ IrodsAdminPassword:
 IrodsAdminPasswordFile:
 IrodsAdminLoginType:
 IrodsAuthScheme:
-IrodsNegotiationPolicy: native
+IrodsNegotiationPolicy: CS_NEG_DONT_CARE
 IrodsDefaultResource:
 OidcUrl:
 OidcClientId: irods-go-rest

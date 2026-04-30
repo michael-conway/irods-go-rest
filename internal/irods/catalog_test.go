@@ -156,6 +156,110 @@ func TestCatalogGetPathChildrenMapsChildEntries(t *testing.T) {
 	}
 }
 
+func TestCatalogGetPathReplicasReturnsReplicaList(t *testing.T) {
+	service := newTestCatalogService(t, newCatalogTestFileSystem())
+
+	replicas, err := service.GetPathReplicas(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt", 2)
+	if err != nil {
+		t.Fatalf("GetPathReplicas returned error: %v", err)
+	}
+
+	if len(replicas) != 1 {
+		t.Fatalf("expected 1 replica, got %+v", replicas)
+	}
+	if replicas[0].ResourceName != "demoResc" {
+		t.Fatalf("expected demoResc replica, got %+v", replicas[0])
+	}
+}
+
+func TestCatalogCreatePathReplicaCreatesReplicaOnResource(t *testing.T) {
+	service := newTestCatalogService(t, newCatalogTestFileSystem())
+
+	replicas, err := service.CreatePathReplica(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt", PathReplicaCreateOptions{
+		Resource: "archiveResc",
+		Update:   true,
+	})
+	if err != nil {
+		t.Fatalf("CreatePathReplica returned error: %v", err)
+	}
+
+	if len(replicas) != 2 {
+		t.Fatalf("expected 2 replicas after create, got %+v", replicas)
+	}
+}
+
+func TestCatalogMovePathReplicaMovesReplicaBetweenResources(t *testing.T) {
+	service := newTestCatalogService(t, newCatalogTestFileSystem())
+
+	_, err := service.CreatePathReplica(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt", PathReplicaCreateOptions{
+		Resource: "cacheResc",
+		Update:   true,
+	})
+	if err != nil {
+		t.Fatalf("CreatePathReplica returned error: %v", err)
+	}
+
+	replicas, err := service.MovePathReplica(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt", PathReplicaMoveOptions{
+		SourceResource:      "cacheResc",
+		DestinationResource: "archiveResc",
+		Update:              true,
+		MinCopies:           1,
+	})
+	if err != nil {
+		t.Fatalf("MovePathReplica returned error: %v", err)
+	}
+
+	if len(replicas) != 2 {
+		t.Fatalf("expected 2 replicas after move, got %+v", replicas)
+	}
+
+	hasSource := false
+	hasDestination := false
+	for _, replica := range replicas {
+		if replica.ResourceName == "cacheResc" {
+			hasSource = true
+		}
+		if replica.ResourceName == "archiveResc" {
+			hasDestination = true
+		}
+	}
+
+	if hasSource {
+		t.Fatalf("expected source replica to be trimmed, got %+v", replicas)
+	}
+	if !hasDestination {
+		t.Fatalf("expected destination replica to exist, got %+v", replicas)
+	}
+}
+
+func TestCatalogTrimPathReplicaByReplicaIndex(t *testing.T) {
+	service := newTestCatalogService(t, newCatalogTestFileSystem())
+
+	_, err := service.CreatePathReplica(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt", PathReplicaCreateOptions{
+		Resource: "archiveResc",
+		Update:   true,
+	})
+	if err != nil {
+		t.Fatalf("CreatePathReplica returned error: %v", err)
+	}
+
+	replicaNumber := int64(1)
+	replicas, err := service.TrimPathReplica(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt", PathReplicaTrimOptions{
+		ReplicaIndex: &replicaNumber,
+		MinCopies:    1,
+	})
+	if err != nil {
+		t.Fatalf("TrimPathReplica returned error: %v", err)
+	}
+
+	if len(replicas) != 1 {
+		t.Fatalf("expected 1 replica after trim, got %+v", replicas)
+	}
+	if replicas[0].ResourceName != "demoResc" {
+		t.Fatalf("expected demoResc to remain, got %+v", replicas)
+	}
+}
+
 func TestCatalogCreatePathChildCollectionReturnsCreatedEntry(t *testing.T) {
 	service := newTestCatalogService(t, newCatalogTestFileSystem())
 
@@ -1033,6 +1137,80 @@ func (f *catalogTestFileSystem) RenameFile(srcPath string, destPath string) erro
 
 	f.childrenByPath[parentSrc] = filterCatalogChildEntry(f.childrenByPath[parentSrc], cleanSrc)
 	f.childrenByPath[parentDest] = append(f.childrenByPath[parentDest], entry)
+	return nil
+}
+
+func (f *catalogTestFileSystem) ReplicateFile(irodsPath string, resource string, _ bool) error {
+	resource = strings.TrimSpace(resource)
+	if resource == "" {
+		return errors.New("resource is required")
+	}
+
+	entry, ok := f.entriesByPath[irodsPath]
+	if !ok || entry.IsDir() {
+		return irodstypes.NewFileNotFoundError(irodsPath)
+	}
+
+	for _, replica := range entry.IRODSReplicas {
+		if strings.TrimSpace(replica.ResourceName) == resource {
+			return nil
+		}
+	}
+
+	nextReplicaNumber := int64(0)
+	for _, replica := range entry.IRODSReplicas {
+		if replica.Number >= nextReplicaNumber {
+			nextReplicaNumber = replica.Number + 1
+		}
+	}
+
+	now := time.Unix(1_700_000_003, 0)
+	entry.IRODSReplicas = append(entry.IRODSReplicas, irodstypes.IRODSReplica{
+		Number:            nextReplicaNumber,
+		Owner:             entry.Owner,
+		Status:            "1",
+		ResourceName:      resource,
+		ResourceHierarchy: resource,
+		Path:              "/var/lib/irods/" + resource + "/Vault" + entry.Path,
+		ModifyTime:        now,
+	})
+	entry.ModifyTime = now
+	return nil
+}
+
+func (f *catalogTestFileSystem) TrimDataObject(irodsPath string, resource string, minCopies int, _ int) error {
+	resource = strings.TrimSpace(resource)
+	if resource == "" {
+		return errors.New("resource is required")
+	}
+
+	entry, ok := f.entriesByPath[irodsPath]
+	if !ok || entry.IsDir() {
+		return irodstypes.NewFileNotFoundError(irodsPath)
+	}
+
+	if minCopies < 0 {
+		minCopies = 0
+	}
+
+	replicas := entry.IRODSReplicas
+	filtered := make([]irodstypes.IRODSReplica, 0, len(replicas))
+	removed := false
+
+	for _, replica := range replicas {
+		if !removed && strings.TrimSpace(replica.ResourceName) == resource && len(replicas)-1 >= minCopies {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, replica)
+	}
+
+	if !removed {
+		return irodstypes.NewFileNotFoundError(irodsPath)
+	}
+
+	entry.IRODSReplicas = filtered
+	entry.ModifyTime = time.Unix(1_700_000_004, 0)
 	return nil
 }
 

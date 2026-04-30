@@ -405,6 +405,210 @@ func TestPathFileCreateRenameDeleteBasicAuthE2E(t *testing.T) {
 	}
 }
 
+func TestPathReplicaResourceLifecycleBasicAuthE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	client := newE2EHTTPClient()
+	filesystem := newE2EIRODSFilesystem(t)
+	defer filesystem.Release()
+
+	testResource1 := e2eTestResource1(t)
+	testResource2 := e2eTestResource2(t)
+	if testResource1 == testResource2 {
+		t.Fatalf("TestResource1 and TestResource2 must differ, got %q", testResource1)
+	}
+
+	parentPath := irodsJoin(
+		"/"+e2eIRODSZone(t)+"/home/"+e2eBasicUsername(t),
+		"e2e-path-replica-"+randomToken(nil, 8),
+	)
+	if err := filesystem.MakeDir(parentPath, true); err != nil {
+		t.Fatalf("make parent collection %q: %v", parentPath, err)
+	}
+	defer func() {
+		if err := filesystem.RemoveDir(parentPath, true, true); err != nil && filesystem.Exists(parentPath) {
+			t.Errorf("cleanup parent collection %q: %v", parentPath, err)
+		}
+	}()
+
+	createReq := newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path", parentPath), strings.NewReader(`{"child_name":"replica-source.txt","kind":"data_object"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	setBasicAuth(createReq)
+
+	createResp, err := client.Do(createReq)
+	if err != nil {
+		t.Fatalf("perform create replica source request: %v", err)
+	}
+	defer createResp.Body.Close()
+	if createResp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(createResp.Body)
+		t.Fatalf("expected 201 creating replica source, got %d: %s", createResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var created struct {
+		Path string `json:"path"`
+	}
+	decodeJSON(t, createResp.Body, &created)
+
+	sourcePath := parentPath + "/replica-source.txt"
+	if created.Path != sourcePath {
+		t.Fatalf("expected created path %q, got %q", sourcePath, created.Path)
+	}
+	if !waitForIRODSPathFresh(t, sourcePath, 3*time.Second) {
+		t.Fatalf("expected created data object %q to exist", sourcePath)
+	}
+
+	type replicaSummary struct {
+		ResourceName string `json:"resource_name"`
+	}
+	type replicaPayload struct {
+		Replicas []replicaSummary `json:"replicas"`
+	}
+
+	readReplicaResources := func(replicas []replicaSummary) map[string]struct{} {
+		set := make(map[string]struct{}, len(replicas))
+		for _, replica := range replicas {
+			resourceName := strings.TrimSpace(replica.ResourceName)
+			if resourceName != "" {
+				set[resourceName] = struct{}{}
+			}
+		}
+		return set
+	}
+
+	requestReplicas := func(method string, payload any, expectedStatus int) replicaPayload {
+		t.Helper()
+
+		var bodyReader io.Reader
+		if payload != nil {
+			rawBody, marshalErr := json.Marshal(payload)
+			if marshalErr != nil {
+				t.Fatalf("marshal %s replica payload: %v", method, marshalErr)
+			}
+			bodyReader = bytes.NewReader(rawBody)
+		}
+
+		req := newE2ERequest(t, method, pathURL(baseURL, "/api/v1/path/replicas", sourcePath), bodyReader)
+		if payload != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		setBasicAuth(req)
+
+		resp, reqErr := client.Do(req)
+		if reqErr != nil {
+			t.Fatalf("perform %s path replicas request: %v", method, reqErr)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != expectedStatus {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected %d for %s /api/v1/path/replicas, got %d: %s", expectedStatus, method, resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+
+		var parsed replicaPayload
+		decodeJSON(t, resp.Body, &parsed)
+		return parsed
+	}
+
+	requirePathResource := func(expectedResource string) {
+		t.Helper()
+
+		req := newE2ERequest(t, http.MethodGet, pathURL(baseURL, "/api/v1/path", sourcePath), nil)
+		setBasicAuth(req)
+
+		resp, reqErr := client.Do(req)
+		if reqErr != nil {
+			t.Fatalf("perform get path request for resource verification: %v", reqErr)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected 200 for /api/v1/path resource verification, got %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+
+		var payload struct {
+			Resource string `json:"resource"`
+		}
+		decodeJSON(t, resp.Body, &payload)
+
+		if strings.TrimSpace(payload.Resource) != expectedResource {
+			t.Fatalf("expected final resource %q, got %q", expectedResource, strings.TrimSpace(payload.Resource))
+		}
+	}
+
+	// Ensure the data object has a replica on testResource1 before proceeding.
+	initialReplicaPayload := requestReplicas(http.MethodGet, nil, http.StatusOK)
+	initialResources := readReplicaResources(initialReplicaPayload.Replicas)
+	if _, exists := initialResources[testResource1]; !exists {
+		var sourceResource string
+		for resourceName := range initialResources {
+			sourceResource = resourceName
+			break
+		}
+		if sourceResource == "" {
+			t.Fatal("expected at least one initial replica resource")
+		}
+
+		movedToTestResource1 := requestReplicas(http.MethodPatch, map[string]any{
+			"source_resource":      sourceResource,
+			"destination_resource": testResource1,
+			"update":               true,
+			"min_copies":           1,
+		}, http.StatusOK)
+
+		resourcesAfterMoveToResource1 := readReplicaResources(movedToTestResource1.Replicas)
+		if _, existsAfterMove := resourcesAfterMoveToResource1[testResource1]; !existsAfterMove {
+			t.Fatalf("expected replica on %q after initial move, got %v", testResource1, resourcesAfterMoveToResource1)
+		}
+	}
+
+	// Replicate the data object to testResource2.
+	replicatedPayload := requestReplicas(http.MethodPost, map[string]any{
+		"resource": testResource2,
+		"update":   true,
+	}, http.StatusCreated)
+
+	resourcesAfterReplication := readReplicaResources(replicatedPayload.Replicas)
+	if _, exists := resourcesAfterReplication[testResource1]; !exists {
+		t.Fatalf("expected replica on %q after replication, got %v", testResource1, resourcesAfterReplication)
+	}
+	if _, exists := resourcesAfterReplication[testResource2]; !exists {
+		t.Fatalf("expected replica on %q after replication, got %v", testResource2, resourcesAfterReplication)
+	}
+
+	// Delete the replica in testResource1.
+	trimmedPayload := requestReplicas(http.MethodDelete, map[string]any{
+		"resource":   testResource1,
+		"min_copies": 1,
+	}, http.StatusOK)
+
+	resourcesAfterTrim := readReplicaResources(trimmedPayload.Replicas)
+	if _, exists := resourcesAfterTrim[testResource1]; exists {
+		t.Fatalf("expected replica on %q to be removed, got %v", testResource1, resourcesAfterTrim)
+	}
+	if _, exists := resourcesAfterTrim[testResource2]; !exists {
+		t.Fatalf("expected replica on %q to remain after trim, got %v", testResource2, resourcesAfterTrim)
+	}
+
+	// Phymove from testResource2 back to testResource1.
+	movedBackPayload := requestReplicas(http.MethodPatch, map[string]any{
+		"source_resource":      testResource2,
+		"destination_resource": testResource1,
+		"update":               true,
+		"min_copies":           1,
+	}, http.StatusOK)
+
+	finalResources := readReplicaResources(movedBackPayload.Replicas)
+	if _, exists := finalResources[testResource1]; !exists {
+		t.Fatalf("expected replica on %q after move back, got %v", testResource1, finalResources)
+	}
+	if _, exists := finalResources[testResource2]; exists {
+		t.Fatalf("expected replica on %q to be trimmed by move, got %v", testResource2, finalResources)
+	}
+
+	requirePathResource(testResource1)
+}
+
 func TestPathContentsUploadBasicAuthE2E(t *testing.T) {
 	baseURL := requireE2EBaseURL(t)
 	client := newE2EHTTPClient()
