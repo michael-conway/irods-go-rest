@@ -236,8 +236,8 @@ func (h *Handler) patchPathReplicas(w http.ResponseWriter, r *http.Request) {
 		SourceResource      string `json:"source_resource"`
 		DestinationResource string `json:"destination_resource"`
 		Update              bool   `json:"update"`
-		MinCopies           int    `json:"min_copies"`
-		MinAgeMinutes       int    `json:"min_age_minutes"`
+		MinCopies           *int   `json:"min_copies"`
+		MinAgeMinutes       *int   `json:"min_age_minutes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
@@ -254,10 +254,10 @@ func (h *Handler) patchPathReplicas(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(request.SourceResource) != "" && strings.TrimSpace(request.SourceResource) == strings.TrimSpace(request.DestinationResource) {
 		validationErrors["destination_resource"] = "destination_resource must differ from source_resource"
 	}
-	if request.MinCopies < 0 {
+	if request.MinCopies != nil && *request.MinCopies < 0 {
 		validationErrors["min_copies"] = "min_copies must be >= 0"
 	}
-	if request.MinAgeMinutes < 0 {
+	if request.MinAgeMinutes != nil && *request.MinAgeMinutes < 0 {
 		validationErrors["min_age_minutes"] = "min_age_minutes must be >= 0"
 	}
 	if len(validationErrors) > 0 {
@@ -265,12 +265,20 @@ func (h *Handler) patchPathReplicas(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	minCopies, minAgeMinutes := h.replicaTrimDefaults()
+	if request.MinCopies != nil {
+		minCopies = *request.MinCopies
+	}
+	if request.MinAgeMinutes != nil {
+		minAgeMinutes = *request.MinAgeMinutes
+	}
+
 	replicas, err := h.paths.MovePathReplica(r.Context(), objectPath, irods.PathReplicaMoveOptions{
 		SourceResource:      request.SourceResource,
 		DestinationResource: request.DestinationResource,
 		Update:              request.Update,
-		MinCopies:           request.MinCopies,
-		MinAgeMinutes:       request.MinAgeMinutes,
+		MinCopies:           minCopies,
+		MinAgeMinutes:       minAgeMinutes,
 	})
 	if err != nil {
 		lowerErr := strings.ToLower(err.Error())
@@ -299,8 +307,8 @@ func (h *Handler) deletePathReplicas(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Resource      string `json:"resource"`
 		ReplicaNumber *int64 `json:"replica_number"`
-		MinCopies     int    `json:"min_copies"`
-		MinAgeMinutes int    `json:"min_age_minutes"`
+		MinCopies     *int   `json:"min_copies"`
+		MinAgeMinutes *int   `json:"min_age_minutes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
@@ -314,24 +322,32 @@ func (h *Handler) deletePathReplicas(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if request.MinCopies < 0 {
+	if request.MinCopies != nil && *request.MinCopies < 0 {
 		writeValidationError(w, http.StatusBadRequest, "invalid_request", "replica request validation failed", map[string]string{
 			"min_copies": "min_copies must be >= 0",
 		})
 		return
 	}
-	if request.MinAgeMinutes < 0 {
+	if request.MinAgeMinutes != nil && *request.MinAgeMinutes < 0 {
 		writeValidationError(w, http.StatusBadRequest, "invalid_request", "replica request validation failed", map[string]string{
 			"min_age_minutes": "min_age_minutes must be >= 0",
 		})
 		return
 	}
 
+	minCopies, minAgeMinutes := h.replicaTrimDefaults()
+	if request.MinCopies != nil {
+		minCopies = *request.MinCopies
+	}
+	if request.MinAgeMinutes != nil {
+		minAgeMinutes = *request.MinAgeMinutes
+	}
+
 	replicas, err := h.paths.TrimPathReplica(r.Context(), objectPath, irods.PathReplicaTrimOptions{
 		Resource:      request.Resource,
 		ReplicaIndex:  request.ReplicaNumber,
-		MinCopies:     request.MinCopies,
-		MinAgeMinutes: request.MinAgeMinutes,
+		MinCopies:     minCopies,
+		MinAgeMinutes: minAgeMinutes,
 	})
 	if err != nil {
 		lowerErr := strings.ToLower(err.Error())
@@ -348,6 +364,20 @@ func (h *Handler) deletePathReplicas(w http.ResponseWriter, r *http.Request) {
 		"path_segments": buildPathSegments(objectPath),
 		"replicas":      replicas,
 	})
+}
+
+func (h *Handler) replicaTrimDefaults() (int, int) {
+	minCopies := h.cfg.ReplicaTrimMinCopies
+	if minCopies <= 0 {
+		minCopies = 1
+	}
+
+	minAgeMinutes := h.cfg.ReplicaTrimMinAgeMinutes
+	if minAgeMinutes < 0 {
+		minAgeMinutes = 0
+	}
+
+	return minCopies, minAgeMinutes
 }
 
 func (h *Handler) getPathACL(w http.ResponseWriter, r *http.Request) {

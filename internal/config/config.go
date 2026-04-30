@@ -15,27 +15,29 @@ import (
 
 // RestConfig Provides configuration for drs behaviors
 type RestConfig struct {
-	PublicURL              string
-	RestLogLevel           string //info, debug
-	IrodsHost              string
-	IrodsPort              int
-	IrodsZone              string
-	IrodsAdminUser         string
-	IrodsAdminPassword     string
-	IrodsAdminPasswordFile string
-	IrodsAuthScheme        string
-	IrodsNegotiationPolicy string
-	IrodsDefaultResource   string
-	TestResource1          string
-	TestResource2          string
-	ResourceAffinity       []string
-	OidcUrl                string
-	OidcClientId           string
-	OidcClientSecret       string
-	OidcClientSecretFile   string
-	OidcInsecureSkipVerify bool
-	OidcRealm              string
-	OidcScope              string
+	PublicURL                string
+	RestLogLevel             string //info, debug
+	IrodsHost                string
+	IrodsPort                int
+	IrodsZone                string
+	IrodsAdminUser           string
+	IrodsAdminPassword       string
+	IrodsAdminPasswordFile   string
+	IrodsAuthScheme          string
+	IrodsNegotiationPolicy   string
+	IrodsDefaultResource     string
+	TestResource1            string
+	TestResource2            string
+	ResourceAffinity         []string
+	ReplicaTrimMinCopies     int
+	ReplicaTrimMinAgeMinutes int
+	OidcUrl                  string
+	OidcClientId             string
+	OidcClientSecret         string
+	OidcClientSecretFile     string
+	OidcInsecureSkipVerify   bool
+	OidcRealm                string
+	OidcScope                string
 }
 
 func NormalizeIRODSNegotiationPolicy(policy string) string {
@@ -85,27 +87,29 @@ const ConfigFileEnvVar = "IRODS_REST_CONFIG_FILE"
 
 func bindEnvVars(v *viper.Viper) error {
 	envBindings := map[string][]string{
-		"PublicURL":              {"GOREST_PUBLIC_URL", "GOREST_PUBLICURL"},
-		"RestLogLevel":           {"GOREST_REST_LOG_LEVEL", "GOREST_RESTLOGLEVEL"},
-		"IrodsHost":              {"GOREST_IRODS_HOST", "GOREST_IRODSHOST"},
-		"IrodsPort":              {"GOREST_IRODS_PORT", "GOREST_IRODSPORT"},
-		"IrodsZone":              {"GOREST_IRODS_ZONE", "GOREST_IRODSZONE"},
-		"IrodsAdminUser":         {"GOREST_IRODS_ADMIN_USER", "GOREST_IRODSADMINUSER"},
-		"IrodsAdminPassword":     {"GOREST_IRODS_ADMIN_PASSWORD", "GOREST_IRODSADMINPASSWORD"},
-		"IrodsAdminPasswordFile": {"GOREST_IRODS_ADMIN_PASSWORD_FILE", "GOREST_IRODSADMINPASSWORDFILE"},
-		"IrodsAuthScheme":        {"GOREST_IRODS_AUTH_SCHEME", "GOREST_IRODSAUTHSCHEME"},
-		"IrodsNegotiationPolicy": {"GOREST_IRODS_NEGOTIATION_POLICY", "GOREST_IRODSNEGOTIATIONPOLICY"},
-		"IrodsDefaultResource":   {"GOREST_IRODS_DEFAULT_RESOURCE", "GOREST_IRODSDEFAULTRESOURCE"},
-		"TestResource1":          {"GOREST_TEST_RESOURCE1"},
-		"TestResource2":          {"GOREST_TEST_RESOURCE2"},
-		"ResourceAffinity":       {"GOREST_RESOURCE_AFFINITY", "GOREST_RESOURCEAFFINITY"},
-		"OidcUrl":                {"GOREST_OIDC_URL", "GOREST_OIDCURL"},
-		"OidcClientId":           {"GOREST_OIDC_CLIENT_ID", "GOREST_OIDCCLIENTID"},
-		"OidcClientSecret":       {"GOREST_OIDC_CLIENT_SECRET", "GOREST_OIDCCLIENTSECRET"},
-		"OidcClientSecretFile":   {"GOREST_OIDC_CLIENT_SECRET_FILE", "GOREST_OIDCCLIENTSECRETFILE"},
-		"OidcInsecureSkipVerify": {"GOREST_OIDC_INSECURE_SKIP_VERIFY", "GOREST_OIDCINSECURESKIPVERIFY"},
-		"OidcRealm":              {"GOREST_OIDC_REALM", "GOREST_OIDCREALM"},
-		"OidcScope":              {"GOREST_OIDC_SCOPE", "GOREST_OIDCSCOPE"},
+		"PublicURL":                {"GOREST_PUBLIC_URL", "GOREST_PUBLICURL"},
+		"RestLogLevel":             {"GOREST_REST_LOG_LEVEL", "GOREST_RESTLOGLEVEL"},
+		"IrodsHost":                {"GOREST_IRODS_HOST", "GOREST_IRODSHOST"},
+		"IrodsPort":                {"GOREST_IRODS_PORT", "GOREST_IRODSPORT"},
+		"IrodsZone":                {"GOREST_IRODS_ZONE", "GOREST_IRODSZONE"},
+		"IrodsAdminUser":           {"GOREST_IRODS_ADMIN_USER", "GOREST_IRODSADMINUSER"},
+		"IrodsAdminPassword":       {"GOREST_IRODS_ADMIN_PASSWORD", "GOREST_IRODSADMINPASSWORD"},
+		"IrodsAdminPasswordFile":   {"GOREST_IRODS_ADMIN_PASSWORD_FILE", "GOREST_IRODSADMINPASSWORDFILE"},
+		"IrodsAuthScheme":          {"GOREST_IRODS_AUTH_SCHEME", "GOREST_IRODSAUTHSCHEME"},
+		"IrodsNegotiationPolicy":   {"GOREST_IRODS_NEGOTIATION_POLICY", "GOREST_IRODSNEGOTIATIONPOLICY"},
+		"IrodsDefaultResource":     {"GOREST_IRODS_DEFAULT_RESOURCE", "GOREST_IRODSDEFAULTRESOURCE"},
+		"TestResource1":            {"GOREST_TEST_RESOURCE1"},
+		"TestResource2":            {"GOREST_TEST_RESOURCE2"},
+		"ResourceAffinity":         {"GOREST_RESOURCE_AFFINITY", "GOREST_RESOURCEAFFINITY"},
+		"ReplicaTrimMinCopies":     {"GOREST_REPLICA_TRIM_MIN_COPIES"},
+		"ReplicaTrimMinAgeMinutes": {"GOREST_REPLICA_TRIM_MIN_AGE_MINUTES"},
+		"OidcUrl":                  {"GOREST_OIDC_URL", "GOREST_OIDCURL"},
+		"OidcClientId":             {"GOREST_OIDC_CLIENT_ID", "GOREST_OIDCCLIENTID"},
+		"OidcClientSecret":         {"GOREST_OIDC_CLIENT_SECRET", "GOREST_OIDCCLIENTSECRET"},
+		"OidcClientSecretFile":     {"GOREST_OIDC_CLIENT_SECRET_FILE", "GOREST_OIDCCLIENTSECRETFILE"},
+		"OidcInsecureSkipVerify":   {"GOREST_OIDC_INSECURE_SKIP_VERIFY", "GOREST_OIDCINSECURESKIPVERIFY"},
+		"OidcRealm":                {"GOREST_OIDC_REALM", "GOREST_OIDCREALM"},
+		"OidcScope":                {"GOREST_OIDC_SCOPE", "GOREST_OIDCSCOPE"},
 	}
 
 	for key, envNames := range envBindings {
@@ -218,6 +222,17 @@ func ReadRestConfig(configName string, configType string, configPaths []string) 
 	}
 
 	C.IrodsNegotiationPolicy = NormalizeIRODSNegotiationPolicy(C.IrodsNegotiationPolicy)
+	if C.ReplicaTrimMinCopies <= 0 {
+		C.ReplicaTrimMinCopies = 1
+	}
+	if C.ReplicaTrimMinAgeMinutes < 0 {
+		slog.Warn(
+			"invalid replica trim minimum age; defaulting to 0",
+			"configured_min_age_minutes", C.ReplicaTrimMinAgeMinutes,
+			"default_min_age_minutes", 0,
+		)
+		C.ReplicaTrimMinAgeMinutes = 0
+	}
 
 	C.OidcClientSecret, err = resolveSecret(C.OidcClientSecret, C.OidcClientSecretFile, "OIDC client secret")
 	if err != nil {

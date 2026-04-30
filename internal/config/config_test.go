@@ -25,6 +25,8 @@ func TestReadRestConfigEnvOverride(t *testing.T) {
 	t.Setenv("GOREST_OIDC_CLIENT_SECRET", "env-secret")
 	t.Setenv("GOREST_REST_LOG_LEVEL", "debug")
 	t.Setenv("GOREST_RESOURCE_AFFINITY", "demoResc, edgeResc ,  archiveResc  ")
+	t.Setenv("GOREST_REPLICA_TRIM_MIN_COPIES", "4")
+	t.Setenv("GOREST_REPLICA_TRIM_MIN_AGE_MINUTES", "12")
 
 	cfg, err := ReadRestConfig("rest-config", "yaml", []string{dir})
 	if err != nil {
@@ -44,6 +46,12 @@ func TestReadRestConfigEnvOverride(t *testing.T) {
 	}
 	if len(cfg.ResourceAffinity) != 3 || cfg.ResourceAffinity[0] != "demoResc" || cfg.ResourceAffinity[1] != "edgeResc" || cfg.ResourceAffinity[2] != "archiveResc" {
 		t.Fatalf("expected trimmed ResourceAffinity from env override, got %+v", cfg.ResourceAffinity)
+	}
+	if cfg.ReplicaTrimMinCopies != 4 {
+		t.Fatalf("expected ReplicaTrimMinCopies from env override, got %d", cfg.ReplicaTrimMinCopies)
+	}
+	if cfg.ReplicaTrimMinAgeMinutes != 12 {
+		t.Fatalf("expected ReplicaTrimMinAgeMinutes from env override, got %d", cfg.ReplicaTrimMinAgeMinutes)
 	}
 }
 
@@ -190,5 +198,30 @@ func TestReadRestConfigInvalidNegotiationPolicyDefaultsToDontCare(t *testing.T) 
 
 	if cfg.IrodsNegotiationPolicy != "CS_NEG_DONT_CARE" {
 		t.Fatalf("expected invalid negotiation policy to normalize to CS_NEG_DONT_CARE, got %q", cfg.IrodsNegotiationPolicy)
+	}
+}
+
+func TestReadRestConfigReplicaTrimDefaults(t *testing.T) {
+	dir := t.TempDir()
+	configBody := "" +
+		"IrodsHost: localhost\n" +
+		"IrodsPort: 1247\n" +
+		"IrodsZone: tempZone\n" +
+		"IrodsAdminUser: rods\n" +
+		"IrodsAuthScheme: native\n" +
+		"IrodsNegotiationPolicy: CS_NEG_DONT_CARE\n" +
+		"RestLogLevel: info\n"
+	writeTestFile(t, dir, "rest-config.yaml", configBody)
+
+	cfg, err := ReadRestConfig("rest-config", "yaml", []string{dir})
+	if err != nil {
+		t.Fatalf("error reading config: %v", err)
+	}
+
+	if cfg.ReplicaTrimMinCopies != 1 {
+		t.Fatalf("expected ReplicaTrimMinCopies default 1, got %d", cfg.ReplicaTrimMinCopies)
+	}
+	if cfg.ReplicaTrimMinAgeMinutes != 0 {
+		t.Fatalf("expected ReplicaTrimMinAgeMinutes default 0, got %d", cfg.ReplicaTrimMinAgeMinutes)
 	}
 }

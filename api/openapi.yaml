@@ -2727,13 +2727,11 @@ components:
         min_copies:
           type: integer
           minimum: 0
-          default: 1
-          description: Minimum replicas to preserve during source trim.
+          description: Minimum replicas to preserve during source trim. When omitted, the service uses `ReplicaTrimMinCopies` from configuration.
         min_age_minutes:
           type: integer
           minimum: 0
-          default: 0
-          description: Minimum age threshold in minutes for trim eligibility.
+          description: Minimum age threshold in minutes for trim eligibility. When omitted, the service uses `ReplicaTrimMinAgeMinutes` from configuration.
     PathReplicaTrimRequest:
       type: object
       properties:
@@ -2747,13 +2745,11 @@ components:
         min_copies:
           type: integer
           minimum: 0
-          default: 1
-          description: Minimum replicas to preserve after trim.
+          description: Minimum replicas to preserve after trim. When omitted, the service uses `ReplicaTrimMinCopies` from configuration.
         min_age_minutes:
           type: integer
           minimum: 0
-          default: 0
-          description: Minimum age threshold in minutes for trim eligibility.
+          description: Minimum age threshold in minutes for trim eligibility. When omitted, the service uses `ReplicaTrimMinAgeMinutes` from configuration.
       anyOf:
         - required: [resource]
         - required: [replica_number]

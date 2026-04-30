@@ -9,6 +9,8 @@ IrodsAdminPassword: rods
 IrodsAuthScheme: native
 IrodsNegotiationPolicy: CS_NEG_DONT_CARE
 IrodsDefaultResource: demoResc
+ReplicaTrimMinCopies: 1
+ReplicaTrimMinAgeMinutes: 0
 
 TestResource1: test1-resc
 TestResource2: test1-resc2
