@@ -3,9 +3,11 @@ package config
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 
 	"github.com/cyverse/go-irodsclient/irods/types"
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/rs/zerolog"
 	"github.com/spf13/viper"
 )
@@ -23,6 +25,7 @@ type RestConfig struct {
 	IrodsAuthScheme        string
 	IrodsNegotiationPolicy string
 	IrodsDefaultResource   string
+	ResourceAffinity       []string
 	OidcUrl                string
 	OidcClientId           string
 	OidcClientSecret       string
@@ -74,6 +77,7 @@ func bindEnvVars(v *viper.Viper) error {
 		"IrodsAuthScheme":        {"GOREST_IRODS_AUTH_SCHEME", "GOREST_IRODSAUTHSCHEME"},
 		"IrodsNegotiationPolicy": {"GOREST_IRODS_NEGOTIATION_POLICY", "GOREST_IRODSNEGOTIATIONPOLICY"},
 		"IrodsDefaultResource":   {"GOREST_IRODS_DEFAULT_RESOURCE", "GOREST_IRODSDEFAULTRESOURCE"},
+		"ResourceAffinity":       {"GOREST_RESOURCE_AFFINITY", "GOREST_RESOURCEAFFINITY"},
 		"OidcUrl":                {"GOREST_OIDC_URL", "GOREST_OIDCURL"},
 		"OidcClientId":           {"GOREST_OIDC_CLIENT_ID", "GOREST_OIDCCLIENTID"},
 		"OidcClientSecret":       {"GOREST_OIDC_CLIENT_SECRET", "GOREST_OIDCCLIENTSECRET"},
@@ -158,7 +162,31 @@ func ReadRestConfig(configName string, configType string, configPaths []string) 
 	}
 	var C RestConfig
 
-	err = v.Unmarshal(&C)
+	err = v.Unmarshal(&C, func(decoderConfig *mapstructure.DecoderConfig) {
+		decoderConfig.DecodeHook = mapstructure.ComposeDecodeHookFunc(
+			mapstructure.StringToSliceHookFunc(","),
+			func(from reflect.Type, to reflect.Type, data any) (any, error) {
+				if to.Kind() != reflect.Slice || to.Elem().Kind() != reflect.String {
+					return data, nil
+				}
+
+				values, ok := data.([]string)
+				if !ok {
+					return data, nil
+				}
+
+				normalized := make([]string, 0, len(values))
+				for _, value := range values {
+					value = strings.TrimSpace(value)
+					if value == "" {
+						continue
+					}
+					normalized = append(normalized, value)
+				}
+				return normalized, nil
+			},
+		)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to decode into struct: %w", err)
 	}

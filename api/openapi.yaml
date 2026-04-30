@@ -9,6 +9,7 @@ servers:
 tags:
   - name: health
   - name: path
+  - name: user
 paths:
   /healthz:
     get:
@@ -22,6 +23,672 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+  /api/v1/server:
+    get:
+      operationId: getServerInfo
+      tags: [health]
+      summary: Fetch iRODS server information
+      description: |
+        Returns iRODS server version details (similar to `miscsvrinfo`) plus
+        service-side iRODS connection configuration details.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      responses:
+        "200":
+          description: Server information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServerInfoResponse"
+        "403":
+          description: Access denied while reading server information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/resource:
+    get:
+      operationId: getResources
+      tags: [path]
+      summary: List resource servers in the configured iRODS zone
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: scope
+          required: false
+          schema:
+            type: string
+            enum: [top, all]
+            default: top
+          description: |
+            Resource listing scope. `top` is the default view intended for top-level
+            resources. `all` returns the full visible flat resource set. The current
+            backend resource model is flat, so these values are currently equivalent.
+      responses:
+        "200":
+          description: Resource servers visible in the zone
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceCollectionResponse"
+        "403":
+          description: Access denied while listing resources
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/resource/{resource_id}:
+    get:
+      operationId: getResource
+      tags: [path]
+      summary: Fetch details for one iRODS resource
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: resource_id
+          required: true
+          schema:
+            type: string
+          description: Resource identifier. This currently uses the iRODS resource name.
+      responses:
+        "200":
+          description: Resource details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceResponse"
+        "404":
+          description: Resource not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while reading the resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/user:
+    get:
+      operationId: getUsers
+      tags: [user]
+      summary: List iRODS users
+      description: |
+        Lists visible iRODS user principals in the configured zone. When `prefix`
+        is supplied for autocomplete-style search, it must be at least 3 characters.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone to search. Defaults to the configured iRODS zone.
+        - in: query
+          name: type
+          required: false
+          schema:
+            type: string
+            enum: [rodsuser, rodsadmin]
+          description: Optional user type filter.
+        - in: query
+          name: prefix
+          required: false
+          schema:
+            type: string
+            minLength: 3
+          description: Optional username prefix filter for autocomplete.
+      responses:
+        "200":
+          description: Users visible in the zone
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserCollectionResponse"
+        "400":
+          description: Invalid user list option
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while listing users
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: postUser
+      tags: [user]
+      summary: Create one iRODS user
+      description: Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserCreateRequest"
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "400":
+          description: Invalid create request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: User already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Authenticated iRODS user is not rodsadmin or groupadmin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/user/{user_name}:
+    get:
+      operationId: getUser
+      tags: [user]
+      summary: Fetch one iRODS user
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: user_name
+          required: true
+          schema:
+            type: string
+          description: iRODS username.
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+      responses:
+        "200":
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while reading the user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    put:
+      operationId: putUser
+      tags: [user]
+      summary: Update one iRODS user
+      description: Requires the authenticated iRODS user to have type `rodsadmin`.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: user_name
+          required: true
+          schema:
+            type: string
+          description: iRODS username.
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdateRequest"
+      responses:
+        "200":
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "400":
+          description: Invalid update request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Authenticated iRODS user is not rodsadmin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteUser
+      tags: [user]
+      summary: Delete one iRODS user
+      description: Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: user_name
+          required: true
+          schema:
+            type: string
+          description: iRODS username.
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+      responses:
+        "204":
+          description: User deleted
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Authenticated iRODS user is not rodsadmin or groupadmin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/usergroup:
+    get:
+      operationId: getUserGroups
+      tags: [user]
+      summary: List iRODS groups
+      description: |
+        Lists visible iRODS groups in the configured zone. When `prefix`
+        is supplied for autocomplete-style search, it must be at least 3 characters.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone to search. Defaults to the configured iRODS zone.
+        - in: query
+          name: prefix
+          required: false
+          schema:
+            type: string
+            minLength: 3
+          description: Optional group-name prefix filter for autocomplete.
+      responses:
+        "200":
+          description: Groups visible in the zone
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserGroupCollectionResponse"
+        "400":
+          description: Invalid group list option
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while listing groups
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: postUserGroup
+      tags: [user]
+      summary: Create one iRODS group
+      description: Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserGroupCreateRequest"
+      responses:
+        "201":
+          description: Group created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserGroupResponse"
+        "400":
+          description: Invalid create request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Group already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Authenticated iRODS user is not rodsadmin or groupadmin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/usergroup/{group_name}:
+    get:
+      operationId: getUserGroup
+      tags: [user]
+      summary: Fetch one iRODS group with members
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: group_name
+          required: true
+          schema:
+            type: string
+          description: iRODS group name.
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+      responses:
+        "200":
+          description: Group details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserGroupResponse"
+        "404":
+          description: Group not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while reading the group
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteUserGroup
+      tags: [user]
+      summary: Delete one iRODS group
+      description: Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: group_name
+          required: true
+          schema:
+            type: string
+          description: iRODS group name.
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+      responses:
+        "204":
+          description: Group deleted
+        "404":
+          description: Group not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Authenticated iRODS user is not rodsadmin or groupadmin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/usergroup/{group_name}/member:
+    post:
+      operationId: postUserGroupMember
+      tags: [user]
+      summary: Add one user to an iRODS group
+      description: Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: group_name
+          required: true
+          schema:
+            type: string
+          description: iRODS group name.
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserGroupMemberRequest"
+      responses:
+        "200":
+          description: Group membership updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserGroupResponse"
+        "400":
+          description: Invalid member request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Group or user not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Authenticated iRODS user is not rodsadmin or groupadmin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/usergroup/{group_name}/member/{user_name}:
+    delete:
+      operationId: deleteUserGroupMember
+      tags: [user]
+      summary: Remove one user from an iRODS group
+      description: Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: group_name
+          required: true
+          schema:
+            type: string
+          description: iRODS group name.
+        - in: path
+          name: user_name
+          required: true
+          schema:
+            type: string
+          description: iRODS username to remove from the group.
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+      responses:
+        "200":
+          description: Group membership updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserGroupResponse"
+        "404":
+          description: Group or user not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Authenticated iRODS user is not rodsadmin or groupadmin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/path:
     get:
       operationId: getPath
@@ -67,6 +734,165 @@ paths:
                 $ref: "#/components/schemas/Error"
         "403":
           description: Access denied for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: postPath
+      tags: [path]
+      summary: Create a collection or zero-byte data object under a parent collection
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to the parent collection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PathChildCreateRequest"
+      responses:
+        "201":
+          description: Created collection or data object metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathEntry"
+        "400":
+          description: Missing path or invalid create request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Parent collection not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      operationId: patchPath
+      tags: [path]
+      summary: Rename a file or collection within its current parent collection
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to the existing file or collection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PathMoveRequest"
+      responses:
+        "200":
+          description: Metadata for the renamed path at its new location
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathEntry"
+        "400":
+          description: Missing path or invalid rename request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Path not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deletePath
+      tags: [path]
+      summary: Delete a data object or collection path
+      description: |
+        Deletes the path identified by `irods_path`.
+        Collections must be empty unless `force=true`, which performs a recursive delete.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a file or collection.
+        - in: query
+          name: force
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: When `true`, bypass the empty-collection check and recursively delete collections.
+      responses:
+        "204":
+          description: Path deleted
+        "400":
+          description: Missing path or invalid force query parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Path not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Collection is not empty and force was not supplied
           content:
             application/json:
               schema:
@@ -123,6 +949,357 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+    post:
+      deprecated: true
+      operationId: postPathChildren
+      tags: [path]
+      summary: Compatibility alias for child creation under a collection path
+      description: |
+        Deprecated compatibility alias for `POST /api/v1/path`.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to the parent collection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PathChildCreateRequest"
+      responses:
+        "201":
+          description: Child collection or data object created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathEntry"
+        "400":
+          description: Missing parent path or invalid child request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Parent path not found or not a collection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested collection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/path/acl:
+    get:
+      operationId: getPathACL
+      tags: [path]
+      summary: List ACL entries for an iRODS logical path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a file or collection.
+      responses:
+        "200":
+          description: ACL entries for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathACLResponse"
+        "400":
+          description: Missing irods_path query parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Object not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: postPathACL
+      tags: [path]
+      summary: Add an ACL entry to an iRODS logical path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a file or collection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PathACLCreateRequest"
+      responses:
+        "201":
+          description: ACL entry created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathACLEntryResponse"
+        "400":
+          description: Invalid ACL create request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Object not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/path/acl/{acl_id}:
+    put:
+      operationId: putPathACL
+      tags: [path]
+      summary: Update one ACL entry for an iRODS logical path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: acl_id
+          required: true
+          schema:
+            type: string
+          description: ACL entry identifier returned by the ACL list response.
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a file or collection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PathACLUpdateRequest"
+      responses:
+        "200":
+          description: ACL entry updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathACLEntryResponse"
+        "400":
+          description: Invalid ACL update request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Object or ACL principal not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deletePathACL
+      tags: [path]
+      summary: Remove one ACL entry from an iRODS logical path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: acl_id
+          required: true
+          schema:
+            type: string
+          description: ACL entry identifier returned by the ACL list response.
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a file or collection.
+      responses:
+        "204":
+          description: ACL entry removed
+        "400":
+          description: Invalid ACL id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Object not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/path/acl/inheritance:
+    put:
+      operationId: putPathACLInheritance
+      tags: [path]
+      summary: Set ACL inheritance for a collection path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a collection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PathACLInheritanceUpdateRequest"
+      responses:
+        "204":
+          description: ACL inheritance updated
+        "400":
+          description: Invalid inheritance update request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested collection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Collection not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deletePathACLInheritance
+      tags: [path]
+      summary: Disable ACL inheritance for a collection path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path to a collection.
+        - in: query
+          name: recursive
+          required: false
+          schema:
+            type: boolean
+          description: Apply inheritance disable recursively to nested collections.
+      responses:
+        "204":
+          description: ACL inheritance disabled
+        "400":
+          description: Invalid inheritance disable request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested collection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Collection not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/path/avu:
     get:
       operationId: getPathAVUs
@@ -138,6 +1315,38 @@ paths:
           schema:
             type: string
           description: Full iRODS absolute logical path to a file or collection.
+        - in: query
+          name: attrib
+          schema:
+            type: string
+          description: Exact AVU attribute name to include in the response.
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum: [id, attrib, value, unit, created_at, updated_at]
+          description: AVU field to sort by.
+        - in: query
+          name: order
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+          description: Sort direction when sort is provided.
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+          description: Maximum number of AVUs to return.
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Number of filtered AVUs to skip before returning results.
       responses:
         "200":
           description: AVUs for the requested path
@@ -146,7 +1355,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/PathAVUResponse"
         "400":
-          description: Missing irods_path query parameter
+          description: Missing irods_path query parameter or invalid list option
           content:
             application/json:
               schema:
@@ -431,6 +1640,15 @@ paths:
           schema:
             type: string
           description: Full iRODS absolute logical path to a file.
+        - in: query
+          name: ticket_id
+          required: false
+          schema:
+            type: string
+          description: |
+            Optional iRODS ticket name for anonymous access. When supplied, this
+            takes precedence over any bearer token and allows browser-friendly
+            ticketed downloads without an `Authorization` header.
         - in: header
           name: Range
           required: false
@@ -472,6 +1690,8 @@ paths:
       summary: Stream bytes for an iRODS logical path
       description: |
         Accepts Basic auth, an OAuth bearer token, or a bearer token prefixed as `irods-ticket:<ticket>`.
+        Optionally accepts `ticket_id` as a query parameter, which takes precedence
+        over any bearer ticket and supports anonymous browser download links.
         Supports single-range byte restarts via the `Range` header.
         Responses include download-oriented headers such as `Content-Disposition`,
         `Last-Modified`, `ETag` when a checksum is already stored, and
@@ -486,6 +1706,15 @@ paths:
           schema:
             type: string
           description: Full iRODS absolute logical path to a file.
+        - in: query
+          name: ticket_id
+          required: false
+          schema:
+            type: string
+          description: |
+            Optional iRODS ticket name for anonymous access. When supplied, this
+            takes precedence over any bearer token and allows browser-friendly
+            ticketed downloads without an `Authorization` header.
         - in: header
           name: Range
           required: false
@@ -616,6 +1845,241 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/path/ticket:
+    post:
+      operationId: postPathTicket
+      tags: [ticket]
+      summary: Create an anonymous read ticket for an iRODS path
+      description: |
+        Creates an anonymous read ticket scoped to the supplied `irods_path`.
+        The response includes the raw ticket name, a bearer token formatted as
+        `irods-ticket:<ticket>`, ticket restriction values, and HATEOAS links.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Full iRODS absolute logical path for the ticket target.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TicketCreateRequest"
+      responses:
+        "201":
+          description: Ticket created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketResponse"
+        "400":
+          description: Missing irods_path or invalid ticket parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Object not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/ticket:
+    get:
+      operationId: getTickets
+      tags: [ticket]
+      summary: List tickets owned by the authenticated iRODS user
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      responses:
+        "200":
+          description: Ticket list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketCollectionResponse"
+        "401":
+          description: Missing or invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: postTicket
+      tags: [ticket]
+      summary: Create an anonymous read ticket for a supplied iRODS path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/TicketCreateRequest"
+                - type: object
+                  required: [irods_path]
+                  properties:
+                    irods_path:
+                      type: string
+      responses:
+        "201":
+          description: Ticket created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketResponse"
+        "400":
+          description: Missing irods_path or invalid ticket parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Path not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/ticket/{ticket_name}:
+    get:
+      operationId: getTicket
+      tags: [ticket]
+      summary: Show one ticket by ticket name
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: ticket_name
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Ticket details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketResponse"
+        "401":
+          description: Missing or invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ticket not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      operationId: patchTicket
+      tags: [ticket]
+      summary: Update mutable ticket restrictions
+      description: |
+        `maximum_uses: 0` clears the use limit.
+        `lifetime_minutes: 0` clears the expiration time.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: ticket_name
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TicketUpdateRequest"
+      responses:
+        "200":
+          description: Ticket updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketResponse"
+        "400":
+          description: Invalid request body or parameter values
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ticket not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteTicket
+      tags: [ticket]
+      summary: Delete a ticket by ticket name
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: ticket_name
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Ticket deleted
+        "401":
+          description: Missing or invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Ticket not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
   securitySchemes:
     BearerAuth:
@@ -639,6 +2103,44 @@ components:
         environment:
           type: string
           example: development
+    ServerInfo:
+      type: object
+      properties:
+        release_version:
+          type: string
+          description: iRODS release version (for example `rods4.3.2`).
+        api_version:
+          type: string
+          description: iRODS API compatibility version identifier.
+        reconnect_port:
+          type: integer
+        reconnect_addr:
+          type: string
+        cookie:
+          type: integer
+        irods_host:
+          type: string
+          description: Configured iRODS hostname for this REST service.
+        irods_port:
+          type: integer
+        irods_zone:
+          type: string
+        irods_negotiation:
+          type: string
+          description: Configured iRODS negotiation policy for this REST service.
+        irods_default_resource:
+          type: string
+        resource_affinity:
+          type: array
+          items:
+            type: string
+          description: Optional configured list of resources proximate to this service.
+    ServerInfoResponse:
+      type: object
+      required: [server_info]
+      properties:
+        server_info:
+          $ref: "#/components/schemas/ServerInfo"
     PathEntry:
       type: object
       required: [id, path, kind, zone, path_segments]
@@ -650,6 +2152,8 @@ components:
         kind:
           type: string
           enum: [data_object, collection]
+        cmd_cue:
+          $ref: "#/components/schemas/CmdCue"
         links:
           $ref: "#/components/schemas/PathLinks"
         parent:
@@ -679,6 +2183,8 @@ components:
           type: string
         resource:
           type: string
+        resource_link:
+          $ref: "#/components/schemas/ActionLink"
         created_at:
           type: string
           format: date-time
@@ -704,6 +2210,8 @@ components:
           type: string
         resource_name:
           type: string
+        resource_link:
+          $ref: "#/components/schemas/ActionLink"
         resource_hierarchy:
           type: string
         size:
@@ -729,10 +2237,36 @@ components:
           type: string
         physical_path:
           type: string
+    CmdCue:
+      type: object
+      properties:
+        operation:
+          type: string
+          enum: [put, get]
+        gocmd:
+          type: string
+        icommand:
+          type: string
     PathLinks:
       type: object
       properties:
         avus:
+          $ref: "#/components/schemas/ActionLink"
+        acls:
+          $ref: "#/components/schemas/ActionLink"
+        create_avu:
+          $ref: "#/components/schemas/ActionLink"
+        create_ticket:
+          $ref: "#/components/schemas/ActionLink"
+        resources:
+          $ref: "#/components/schemas/ActionLink"
+        create_child_collection:
+          $ref: "#/components/schemas/ActionLink"
+        create_child_data_object:
+          $ref: "#/components/schemas/ActionLink"
+        set_inheritance:
+          $ref: "#/components/schemas/ActionLink"
+        delete_inheritance:
           $ref: "#/components/schemas/ActionLink"
     ParentLink:
       type: object
@@ -757,6 +2291,125 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PathEntry"
+    PathACLResponse:
+      type: object
+      required: [irods_path, kind, path_segments, users, groups]
+      properties:
+        irods_path:
+          type: string
+        kind:
+          type: string
+          enum: [data_object, collection]
+        inheritance_enabled:
+          type: boolean
+          description: Collection-only inheritance setting when available.
+        path_segments:
+          type: array
+          description: Ordered collection path segments for the requested path, each with a display name and HATEOAS link.
+          items:
+            $ref: "#/components/schemas/PathSegmentLink"
+        links:
+          $ref: "#/components/schemas/PathACLLinks"
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/PathACLEntry"
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/PathACLEntry"
+    PathACLLinks:
+      type: object
+      properties:
+        path:
+          $ref: "#/components/schemas/ActionLink"
+        add_user:
+          $ref: "#/components/schemas/ActionLink"
+        set_inheritance:
+          $ref: "#/components/schemas/ActionLink"
+    PathACLEntry:
+      type: object
+      required: [id, name, type, access_level]
+      properties:
+        id:
+          type: string
+          description: Stable ACL entry identifier for follow-up update or remove links.
+        name:
+          type: string
+          description: iRODS user or group name.
+        zone:
+          type: string
+          description: iRODS zone for the user or group when supplied by iRODS.
+        type:
+          type: string
+          enum: [user, group]
+          description: Principal kind derived from the iRODS user type.
+        irods_user_type:
+          type: string
+          description: Raw iRODS user type returned with the ACL entry.
+        access_level:
+          type: string
+          description: Raw iRODS access level for the path.
+        links:
+          $ref: "#/components/schemas/PathACLItemLinks"
+    PathACLItemLinks:
+      type: object
+      properties:
+        update:
+          $ref: "#/components/schemas/ActionLink"
+        remove:
+          $ref: "#/components/schemas/ActionLink"
+    PathACLCreateRequest:
+      type: object
+      required: [name, access_level]
+      properties:
+        name:
+          type: string
+          description: iRODS user or group principal name.
+        zone:
+          type: string
+          description: iRODS zone for the principal. Defaults to configured zone.
+        type:
+          type: string
+          enum: [user, group]
+          description: Principal kind. Defaults to `user`.
+        access_level:
+          type: string
+          description: Target iRODS ACL access level.
+        recursive:
+          type: boolean
+          default: false
+          description: Apply ACL change recursively when target path is a collection.
+    PathACLUpdateRequest:
+      type: object
+      required: [access_level]
+      properties:
+        access_level:
+          type: string
+          description: Target iRODS ACL access level.
+        recursive:
+          type: boolean
+          default: false
+          description: Apply ACL change recursively when target path is a collection.
+    PathACLInheritanceUpdateRequest:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+          description: When true enables inheritance, when false disables inheritance.
+        recursive:
+          type: boolean
+          default: false
+          description: Apply inheritance toggle recursively to nested collections.
+    PathACLEntryResponse:
+      type: object
+      required: [irods_path, acl]
+      properties:
+        irods_path:
+          type: string
+        acl:
+          $ref: "#/components/schemas/PathACLEntry"
     PathAVUResponse:
       type: object
       required: [irods_path, path_segments, avus]
@@ -768,10 +2421,24 @@ components:
           description: Ordered collection path segments for the requested path, each with a display name and HATEOAS link.
           items:
             $ref: "#/components/schemas/PathSegmentLink"
+        links:
+          $ref: "#/components/schemas/PathLinks"
         avus:
           type: array
           items:
             $ref: "#/components/schemas/AVUMetadata"
+        count:
+          type: integer
+          description: Number of AVUs returned after filtering and pagination.
+        total:
+          type: integer
+          description: Number of AVUs matching the filter before pagination.
+        offset:
+          type: integer
+          description: Number of matching AVUs skipped before returning results.
+        limit:
+          type: integer
+          description: Requested page size, or 0 when no limit was requested.
     PathAVUSingleResponse:
       type: object
       required: [irods_path, path_segments, avu]
@@ -785,6 +2452,27 @@ components:
             $ref: "#/components/schemas/PathSegmentLink"
         avu:
           $ref: "#/components/schemas/AVUMetadata"
+    PathChildCreateRequest:
+      type: object
+      required: [child_name, kind]
+      properties:
+        child_name:
+          type: string
+          description: Relative child name or relative nested path to create under the parent collection.
+        kind:
+          type: string
+          enum: [collection, data_object]
+        mkdirs:
+          type: boolean
+          default: false
+          description: When `true`, create intermediate collection segments for collection creation.
+    PathMoveRequest:
+      type: object
+      required: [new_name]
+      properties:
+        new_name:
+          type: string
+          description: New basename for the file or collection within the same parent collection.
     PathAVUCreateRequest:
       type: object
       required: [attrib, value]
@@ -964,6 +2652,336 @@ components:
         href:
           type: string
           description: Relative REST link for the related resource.
+    Resource:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        zone:
+          type: string
+        type:
+          type: string
+        class:
+          type: string
+        location:
+          type: string
+        path:
+          type: string
+        context:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        links:
+          $ref: "#/components/schemas/ResourceLinks"
+    ResourceLinks:
+      type: object
+      properties:
+        self:
+          $ref: "#/components/schemas/ActionLink"
+    ResourceResponse:
+      type: object
+      required: [resource]
+      properties:
+        resource:
+          $ref: "#/components/schemas/Resource"
+    ResourceCollectionResponse:
+      type: object
+      required: [resources, count, scope, links]
+      properties:
+        resources:
+          type: array
+          items:
+            $ref: "#/components/schemas/Resource"
+        count:
+          type: integer
+        scope:
+          type: string
+          enum: [top, all]
+        links:
+          type: object
+          properties:
+            self:
+              $ref: "#/components/schemas/ActionLink"
+    User:
+      type: object
+      required: [id, name, zone, type]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        zone:
+          type: string
+        type:
+          type: string
+          enum: [rodsuser, rodsadmin]
+        links:
+          $ref: "#/components/schemas/UserLinks"
+    UserLinks:
+      type: object
+      properties:
+        self:
+          $ref: "#/components/schemas/ActionLink"
+        update:
+          $ref: "#/components/schemas/ActionLink"
+        delete:
+          $ref: "#/components/schemas/ActionLink"
+    UserResponse:
+      type: object
+      required: [user]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+    UserCollectionResponse:
+      type: object
+      required: [users, count, zone, links]
+      properties:
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/User"
+        count:
+          type: integer
+        zone:
+          type: string
+        type:
+          type: string
+          enum: [rodsuser, rodsadmin]
+        prefix:
+          type: string
+        links:
+          type: object
+          properties:
+            self:
+              $ref: "#/components/schemas/ActionLink"
+            create:
+              $ref: "#/components/schemas/ActionLink"
+    UserCreateRequest:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+          description: iRODS username to create.
+        type:
+          type: string
+          enum: [rodsuser, rodsadmin]
+          description: iRODS user type for the new user.
+        password:
+          type: string
+          format: password
+          description: Optional initial iRODS user password.
+    UserUpdateRequest:
+      type: object
+      description: At least one of `type` or `password` is required.
+      properties:
+        type:
+          type: string
+          enum: [rodsuser, rodsadmin]
+          description: New iRODS user type.
+        password:
+          type: string
+          format: password
+          description: New iRODS user password.
+    UserGroup:
+      type: object
+      required: [id, name, zone, type]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        zone:
+          type: string
+        type:
+          type: string
+          enum: [rodsgroup]
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserGroupMember"
+        links:
+          $ref: "#/components/schemas/UserGroupLinks"
+    UserGroupMember:
+      type: object
+      required: [id, name, zone, type]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        zone:
+          type: string
+        type:
+          type: string
+          enum: [rodsuser, rodsadmin, groupadmin]
+        links:
+          $ref: "#/components/schemas/UserGroupMemberLinks"
+    UserGroupLinks:
+      type: object
+      properties:
+        self:
+          $ref: "#/components/schemas/ActionLink"
+        delete:
+          $ref: "#/components/schemas/ActionLink"
+        add_member:
+          $ref: "#/components/schemas/ActionLink"
+    UserGroupMemberLinks:
+      type: object
+      properties:
+        self:
+          $ref: "#/components/schemas/ActionLink"
+        remove_from_group:
+          $ref: "#/components/schemas/ActionLink"
+    UserGroupResponse:
+      type: object
+      required: [group]
+      properties:
+        group:
+          $ref: "#/components/schemas/UserGroup"
+    UserGroupCollectionResponse:
+      type: object
+      required: [groups, count, zone, links]
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserGroup"
+        count:
+          type: integer
+        zone:
+          type: string
+        prefix:
+          type: string
+        links:
+          type: object
+          properties:
+            self:
+              $ref: "#/components/schemas/ActionLink"
+            create:
+              $ref: "#/components/schemas/ActionLink"
+    UserGroupCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: iRODS group name to create.
+    UserGroupMemberRequest:
+      type: object
+      required: [user_name]
+      properties:
+        user_name:
+          type: string
+          description: iRODS username to add to the group.
+    Ticket:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        bearer_token:
+          type: string
+        type:
+          type: string
+        owner:
+          type: string
+        owner_zone:
+          type: string
+        object_type:
+          type: string
+        irods_path:
+          type: string
+        uses_limit:
+          type: integer
+          format: int64
+        uses_count:
+          type: integer
+          format: int64
+        write_file_limit:
+          type: integer
+          format: int64
+        write_file_count:
+          type: integer
+          format: int64
+        write_byte_limit:
+          type: integer
+          format: int64
+        write_byte_count:
+          type: integer
+          format: int64
+        expiration_time:
+          type: string
+          format: date-time
+        links:
+          $ref: "#/components/schemas/TicketLinks"
+    TicketLinks:
+      type: object
+      properties:
+        self:
+          $ref: "#/components/schemas/ActionLink"
+        update:
+          $ref: "#/components/schemas/ActionLink"
+        delete:
+          $ref: "#/components/schemas/ActionLink"
+        path:
+          $ref: "#/components/schemas/ActionLink"
+        download:
+          $ref: "#/components/schemas/ActionLink"
+    TicketCreateRequest:
+      type: object
+      properties:
+        maximum_uses:
+          type: integer
+          format: int64
+          minimum: 0
+        lifetime_minutes:
+          type: integer
+          minimum: 0
+    TicketUpdateRequest:
+      type: object
+      properties:
+        maximum_uses:
+          type: integer
+          format: int64
+          minimum: 0
+        lifetime_minutes:
+          type: integer
+          minimum: 0
+    TicketResponse:
+      type: object
+      required: [ticket]
+      properties:
+        ticket:
+          $ref: "#/components/schemas/Ticket"
+    TicketCollectionResponse:
+      type: object
+      required: [tickets, count, links]
+      properties:
+        tickets:
+          type: array
+          items:
+            $ref: "#/components/schemas/Ticket"
+        count:
+          type: integer
+        links:
+          type: object
+          properties:
+            self:
+              $ref: "#/components/schemas/ActionLink"
+            create:
+              $ref: "#/components/schemas/ActionLink"
     Error:
       type: object
       required: [code, message]
@@ -972,3 +2990,8 @@ components:
           type: string
         message:
           type: string
+        fields:
+          type: object
+          description: Optional field-level validation messages keyed by request field name.
+          additionalProperties:
+            type: string

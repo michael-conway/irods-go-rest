@@ -1,5 +1,9 @@
 # iRODS Go REST API
 
+[![Go](https://github.com/michael-conway/irods-go-rest/actions/workflows/go.yml/badge.svg)](https://github.com/michael-conway/irods-go-rest/actions/workflows/go.yml)
+[![Container Build](https://github.com/michael-conway/irods-go-rest/actions/workflows/container-build.yml/badge.svg)](https://github.com/michael-conway/irods-go-rest/actions/workflows/container-build.yml)
+[![CodeQL Advanced](https://github.com/michael-conway/irods-go-rest/actions/workflows/codeql.yml/badge.svg)](https://github.com/michael-conway/irods-go-rest/actions/workflows/codeql.yml)
+
 OpenAPI Go REST API for iRODS.
 
 ## Overview
@@ -102,6 +106,7 @@ Common settings include:
 * `GOREST_IRODS_ADMIN_PASSWORD`
 * `GOREST_IRODS_ADMIN_PASSWORD_FILE`
 * `GOREST_IRODS_DEFAULT_RESOURCE`
+* `GOREST_RESOURCE_AFFINITY`
 * `GOREST_OIDC_URL`
 * `GOREST_OIDC_REALM`
 * `GOREST_OIDC_CLIENT_ID`
@@ -109,6 +114,9 @@ Common settings include:
 * `GOREST_OIDC_CLIENT_SECRET_FILE`
 * `GOREST_OIDC_SCOPE`
 * `GOREST_OIDC_INSECURE_SKIP_VERIFY`
+
+`GOREST_RESOURCE_AFFINITY` is optional and accepts a comma-separated list of
+iRODS resource names that are proximate to this service instance.
 
 If you want to point the service at one explicit config file, use:
 
@@ -145,10 +153,22 @@ Current path-based endpoints:
   `GET /api/v1/path?irods_path=/tempZone/home/test1/file.txt`
 * Collection children:
   `GET /api/v1/path/children?irods_path=/tempZone/home/test1/project`
+* AVU metadata:
+  `GET /api/v1/path/avu?irods_path=/tempZone/home/test1/file.txt`
+* Add AVU metadata:
+  `POST /api/v1/path/avu?irods_path=/tempZone/home/test1/file.txt`
+* Update or delete a single AVU:
+  `PUT /api/v1/path/avu/{avu_id}?irods_path=/tempZone/home/test1/file.txt`
+  `DELETE /api/v1/path/avu/{avu_id}?irods_path=/tempZone/home/test1/file.txt`
 * Content headers:
   `HEAD /api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt`
 * Content bytes:
   `GET /api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt`
+
+Additional endpoint:
+
+* iRODS server information (miscsvrinfo-style plus configured connection details):
+  `GET /api/v1/server`
 
 `/path` is the primary lookup model for both data objects and collections. The response identifies what the path resolves to using a discriminator such as `kind: data_object` or `kind: collection`.
 
@@ -157,7 +177,7 @@ Path responses also include a `parent` field when a parent exists. This follows 
 * `parent.irods_path`
 * `parent.href`
 
-Collection-specific behavior is expressed through subresources such as `/path/children`. Data-object-specific behavior is expressed through subresources such as `/path/contents`.
+Collection-specific behavior is expressed through subresources such as `/path/children`. AVU metadata is exposed as `/path/avu` so clients can list, create, update, and delete metadata rows while preserving `irods_path` as the resource identifier. Data-object-specific behavior is expressed through subresources such as `/path/contents`.
 
 This establishes `/path` as the generic REST pattern for logical-path-oriented operations. Additional routes such as `/path/metadata` and `/path/acl` can be added later without changing the core addressing model.
 

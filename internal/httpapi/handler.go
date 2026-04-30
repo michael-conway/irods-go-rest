@@ -34,15 +34,25 @@ const swaggerUIHTML = `<!DOCTYPE html>
 type Handler struct {
 	cfg        config.RestConfig
 	paths      restservice.PathService
+	serverInfo restservice.ServerInfoService
+	resources  restservice.ResourceService
+	users      restservice.UserService
+	userGroups restservice.UserGroupService
+	tickets    restservice.TicketService
 	authFlow   auth.AuthFlowService
 	verifier   auth.TokenVerifier
 	webSession *auth.SessionStore
 }
 
-func NewHandler(cfg config.RestConfig, paths restservice.PathService, authFlow auth.AuthFlowService, verifier auth.TokenVerifier, webSession *auth.SessionStore) *Handler {
+func NewHandler(cfg config.RestConfig, paths restservice.PathService, serverInfo restservice.ServerInfoService, resources restservice.ResourceService, users restservice.UserService, userGroups restservice.UserGroupService, tickets restservice.TicketService, authFlow auth.AuthFlowService, verifier auth.TokenVerifier, webSession *auth.SessionStore) *Handler {
 	return &Handler{
 		cfg:        cfg,
 		paths:      paths,
+		serverInfo: serverInfo,
+		resources:  resources,
+		users:      users,
+		userGroups: userGroups,
+		tickets:    tickets,
 		authFlow:   authFlow,
 		verifier:   verifier,
 		webSession: webSession,
@@ -59,15 +69,46 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("GET /web/callback", h.webCallback)
 	mux.HandleFunc("POST /web/logout", h.webLogout)
 	mux.Handle("GET /api/v1/path", h.requireBearer(http.HandlerFunc(h.getPath)))
+	mux.Handle("POST /api/v1/path", h.requireBearer(http.HandlerFunc(h.postPath)))
+	mux.Handle("PATCH /api/v1/path", h.requireBearer(http.HandlerFunc(h.patchPath)))
+	mux.Handle("DELETE /api/v1/path", h.requireBearer(http.HandlerFunc(h.deletePath)))
 	mux.Handle("GET /api/v1/path/children", h.requireBearer(http.HandlerFunc(h.getPathChildren)))
+	mux.Handle("POST /api/v1/path/children", h.requireBearer(http.HandlerFunc(h.postPathChildren)))
+	mux.Handle("GET /api/v1/path/acl", h.requireBearer(http.HandlerFunc(h.getPathACL)))
+	mux.Handle("POST /api/v1/path/acl", h.requireBearer(http.HandlerFunc(h.postPathACL)))
+	mux.Handle("PUT /api/v1/path/acl/{acl_id}", h.requireBearer(http.HandlerFunc(h.putPathACL)))
+	mux.Handle("DELETE /api/v1/path/acl/{acl_id}", h.requireBearer(http.HandlerFunc(h.deletePathACL)))
+	mux.Handle("PUT /api/v1/path/acl/inheritance", h.requireBearer(http.HandlerFunc(h.putPathACLInheritance)))
+	mux.Handle("DELETE /api/v1/path/acl/inheritance", h.requireBearer(http.HandlerFunc(h.deletePathACLInheritance)))
 	mux.Handle("GET /api/v1/path/avu", h.requireBearer(http.HandlerFunc(h.getPathAVUs)))
 	mux.Handle("POST /api/v1/path/avu", h.requireBearer(http.HandlerFunc(h.postPathAVU)))
 	mux.Handle("PUT /api/v1/path/avu/{avu_id}", h.requireBearer(http.HandlerFunc(h.putPathAVU)))
 	mux.Handle("DELETE /api/v1/path/avu/{avu_id}", h.requireBearer(http.HandlerFunc(h.deletePathAVU)))
 	mux.Handle("GET /api/v1/path/checksum", h.requireBearer(http.HandlerFunc(h.getPathChecksum)))
 	mux.Handle("POST /api/v1/path/checksum", h.requireBearer(http.HandlerFunc(h.postPathChecksum)))
+	mux.Handle("POST /api/v1/path/ticket", h.requireBearer(http.HandlerFunc(h.postPathTicket)))
+	mux.Handle("GET /api/v1/server", h.requireBearer(http.HandlerFunc(h.getServerInfo)))
+	mux.Handle("GET /api/v1/resource", h.requireBearer(http.HandlerFunc(h.getResources)))
+	mux.Handle("GET /api/v1/resource/{resource_id}", h.requireBearer(http.HandlerFunc(h.getResource)))
+	mux.Handle("GET /api/v1/user", h.requireBearer(http.HandlerFunc(h.getUsers)))
+	mux.Handle("POST /api/v1/user", h.requireBearer(http.HandlerFunc(h.postUser)))
+	mux.Handle("GET /api/v1/user/{user_name}", h.requireBearer(http.HandlerFunc(h.getUser)))
+	mux.Handle("PUT /api/v1/user/{user_name}", h.requireBearer(http.HandlerFunc(h.putUser)))
+	mux.Handle("DELETE /api/v1/user/{user_name}", h.requireBearer(http.HandlerFunc(h.deleteUser)))
+	mux.Handle("GET /api/v1/usergroup", h.requireBearer(http.HandlerFunc(h.getUserGroups)))
+	mux.Handle("POST /api/v1/usergroup", h.requireBearer(http.HandlerFunc(h.postUserGroup)))
+	mux.Handle("GET /api/v1/usergroup/{group_name}", h.requireBearer(http.HandlerFunc(h.getUserGroup)))
+	mux.Handle("DELETE /api/v1/usergroup/{group_name}", h.requireBearer(http.HandlerFunc(h.deleteUserGroup)))
+	mux.Handle("POST /api/v1/usergroup/{group_name}/member", h.requireBearer(http.HandlerFunc(h.postUserGroupMember)))
+	mux.Handle("DELETE /api/v1/usergroup/{group_name}/member/{user_name}", h.requireBearer(http.HandlerFunc(h.deleteUserGroupMember)))
 	mux.Handle("HEAD /api/v1/path/contents", h.requireDownloadBearer(http.HandlerFunc(h.headPathContents)))
 	mux.Handle("GET /api/v1/path/contents", h.requireDownloadBearer(http.HandlerFunc(h.getPathContents)))
+	mux.Handle("POST /api/v1/path/contents", h.requireBearer(http.HandlerFunc(h.postPathContents)))
+	mux.Handle("GET /api/v1/ticket", h.requireBearer(http.HandlerFunc(h.getTickets)))
+	mux.Handle("POST /api/v1/ticket", h.requireBearer(http.HandlerFunc(h.postTicket)))
+	mux.Handle("GET /api/v1/ticket/{ticket_name}", h.requireBearer(http.HandlerFunc(h.getTicket)))
+	mux.Handle("PATCH /api/v1/ticket/{ticket_name}", h.requireBearer(http.HandlerFunc(h.patchTicket)))
+	mux.Handle("DELETE /api/v1/ticket/{ticket_name}", h.requireBearer(http.HandlerFunc(h.deleteTicket)))
 
 	return requestLogger(mux)
 }

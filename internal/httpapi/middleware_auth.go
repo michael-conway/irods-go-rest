@@ -8,11 +8,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/michael-conway/go-irodsclient-extensions/tickets"
 	"github.com/michael-conway/irods-go-rest/internal/auth"
 	"github.com/michael-conway/irods-go-rest/internal/logutil"
 )
-
-const irodsTicketBearerPrefix = "irods-ticket:"
 
 func (h *Handler) requireBearer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -67,6 +66,12 @@ func (h *Handler) requireBearer(next http.Handler) http.Handler {
 
 func (h *Handler) requireDownloadBearer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ticketID := queryTicketID(r); ticketID != "" {
+			slog.Debug("http download auth resolved iRODS ticket from query parameter", "path", r.URL.Path)
+			next.ServeHTTP(w, r.WithContext(auth.WithTicket(r.Context(), ticketID)))
+			return
+		}
+
 		authz, err := authorizationFromRequest(r)
 		if err != nil {
 			logAuthMiddlewareError("authorization header parse failed", err, r, "phase", "requireDownloadBearer")
@@ -123,17 +128,7 @@ func (h *Handler) requireDownloadBearer(next http.Handler) http.Handler {
 }
 
 func parseIRODSTicketBearer(token string) (string, bool) {
-	token = strings.TrimSpace(token)
-	if !strings.HasPrefix(strings.ToLower(token), irodsTicketBearerPrefix) {
-		return "", false
-	}
-
-	ticket := strings.TrimSpace(token[len(irodsTicketBearerPrefix):])
-	if ticket == "" {
-		return "", false
-	}
-
-	return ticket, true
+	return tickets.ParseBearerToken(token)
 }
 
 type requestAuthorization struct {
