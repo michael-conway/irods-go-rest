@@ -4,14 +4,16 @@ go 1.25.0
 
 require github.com/michael-conway/go-irodsclient-extensions v0.0.0
 
-require github.com/cyverse/go-irodsclient v0.19.8
+require (
+	github.com/cyverse/go-irodsclient v0.19.10
+	github.com/go-viper/mapstructure/v2 v2.4.0
+)
 
 require (
 	github.com/danwakefield/fnmatch v0.0.0-20160403171240-cbb64ac3d964 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/evanphx/json-patch v4.12.0+incompatible // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
-	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
