@@ -10,6 +10,7 @@ type PathEntry struct {
 	Path         string            `json:"path"`
 	Kind         string            `json:"kind"`
 	Zone         string            `json:"zone"`
+	CmdCue       *CmdCue           `json:"cmd_cue,omitempty"`
 	Links        *PathLinks        `json:"links,omitempty"`
 	Parent       *ParentLink       `json:"parent,omitempty"`
 	PathSegments []PathSegmentLink `json:"path_segments,omitempty"`
@@ -110,6 +111,12 @@ type PathACLItemLinks struct {
 type ActionLink struct {
 	Href   string `json:"href"`
 	Method string `json:"method,omitempty"`
+}
+
+type CmdCue struct {
+	Operation string `json:"operation,omitempty"`
+	GoCmd     string `json:"gocmd,omitempty"`
+	ICommand  string `json:"icommand,omitempty"`
 }
 
 type ParentLink struct {

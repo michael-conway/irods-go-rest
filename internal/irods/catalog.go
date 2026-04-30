@@ -91,6 +91,7 @@ type CatalogFileSystem interface {
 	ChangeACLs(path string, access irodstypes.IRODSAccessLevelType, userName string, zoneName string, recurse bool, adminFlag bool) error
 	ChangeDirACLInheritance(path string, inherit bool, recurse bool, adminFlag bool) error
 	ComputeChecksum(irodsPath string, resource string) (*irodstypes.IRODSChecksum, error)
+	GetServerVersion() (*irodstypes.IRODSVersion, error)
 	OpenFile(irodsPath string, resource string, mode string) (CatalogFileHandle, error)
 	ListResources() ([]*irodstypes.IRODSResource, error)
 	GetResource(resourceName string) (*irodstypes.IRODSResource, error)
@@ -1369,6 +1370,10 @@ func (a *catalogFileSystemAdapter) ComputeChecksum(irodsPath string, resource st
 	defer a.filesystem.ReturnMetadataConnection(conn) //nolint:errcheck
 
 	return irodslibfs.GetDataObjectChecksum(conn, irodsPath, resource)
+}
+
+func (a *catalogFileSystemAdapter) GetServerVersion() (*irodstypes.IRODSVersion, error) {
+	return a.filesystem.GetServerVersion()
 }
 
 func (a *catalogFileSystemAdapter) OpenFile(irodsPath string, resource string, mode string) (CatalogFileHandle, error) {

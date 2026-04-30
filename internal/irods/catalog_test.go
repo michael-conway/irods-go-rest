@@ -1195,6 +1195,16 @@ func (f *catalogTestFileSystem) ComputeChecksum(irodsPath string, _ string) (*ir
 	}, nil
 }
 
+func (f *catalogTestFileSystem) GetServerVersion() (*irodstypes.IRODSVersion, error) {
+	return &irodstypes.IRODSVersion{
+		ReleaseVersion: "rods4.3.2",
+		APIVersion:     "d",
+		ReconnectPort:  1247,
+		ReconnectAddr:  "irods.example.org",
+		Cookie:         734,
+	}, nil
+}
+
 func (f *catalogTestFileSystem) OpenFile(irodsPath string, _ string, _ string) (CatalogFileHandle, error) {
 	if irodsPath == "/tempZone/home/alice/forbidden" {
 		return nil, irodstypes.NewIRODSError(irodscommon.CAT_NO_ACCESS_PERMISSION)

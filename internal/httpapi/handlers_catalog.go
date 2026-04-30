@@ -14,6 +14,7 @@ import (
 	"time"
 
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
+	"github.com/michael-conway/go-irodsclient-extensions/cmdcues"
 	"github.com/michael-conway/irods-go-rest/internal/domain"
 	"github.com/michael-conway/irods-go-rest/internal/irods"
 )
@@ -988,9 +989,36 @@ func avuValidationFields(attrib string, value string) map[string]string {
 
 func pathEntryResponse(r *http.Request, entry domain.PathEntry) domain.PathEntry {
 	entry.Links = pathLinksForEntry(entry.Path, entry.Kind)
+	entry.CmdCue = pathCmdCueForEntry(entry)
 	entry.Parent = buildParentLink(r, entry.Path)
 	entry.PathSegments = buildPathSegments(entry.Path)
 	return entry
+}
+
+func pathCmdCueForEntry(entry domain.PathEntry) *domain.CmdCue {
+	var (
+		cue cmdcues.Cue
+		err error
+	)
+
+	switch strings.TrimSpace(entry.Kind) {
+	case "collection":
+		cue, err = cmdcues.BuildPutCue(entry.Path)
+	case "data_object":
+		cue, err = cmdcues.BuildGetCue(entry.Path)
+	default:
+		return nil
+	}
+
+	if err != nil {
+		return nil
+	}
+
+	return &domain.CmdCue{
+		Operation: string(cue.Operation),
+		GoCmd:     cue.GoCmd,
+		ICommand:  cue.ICommand,
+	}
 }
 
 func avuMetadataResponseList(r *http.Request, irodsPath string, metadata []domain.AVUMetadata) []domain.AVUMetadata {
