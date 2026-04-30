@@ -24,6 +24,7 @@ func TestReadRestConfigEnvOverride(t *testing.T) {
 	t.Setenv("GOREST_IRODS_HOST", "env-host")
 	t.Setenv("GOREST_OIDC_CLIENT_SECRET", "env-secret")
 	t.Setenv("GOREST_REST_LOG_LEVEL", "debug")
+	t.Setenv("GOREST_RESOURCE_AFFINITY", "demoResc, edgeResc ,  archiveResc  ")
 
 	cfg, err := ReadRestConfig("rest-config", "yaml", []string{dir})
 	if err != nil {
@@ -40,6 +41,9 @@ func TestReadRestConfigEnvOverride(t *testing.T) {
 
 	if cfg.RestLogLevel != "debug" {
 		t.Fatalf("expected env override for RestLogLevel, got %q", cfg.RestLogLevel)
+	}
+	if len(cfg.ResourceAffinity) != 3 || cfg.ResourceAffinity[0] != "demoResc" || cfg.ResourceAffinity[1] != "edgeResc" || cfg.ResourceAffinity[2] != "archiveResc" {
+		t.Fatalf("expected trimmed ResourceAffinity from env override, got %+v", cfg.ResourceAffinity)
 	}
 }
 
@@ -80,6 +84,32 @@ func TestReadRestConfigSecretFileSupport(t *testing.T) {
 
 	if cfg.OidcClientSecret != "test-oidc-secret" {
 		t.Fatalf("expected secret file value for OidcClientSecret, got %q", cfg.OidcClientSecret)
+	}
+}
+
+func TestReadRestConfigResourceAffinityYAMLList(t *testing.T) {
+	dir := t.TempDir()
+	configBody := "" +
+		"IrodsHost: localhost\n" +
+		"IrodsPort: 1247\n" +
+		"IrodsZone: tempZone\n" +
+		"IrodsAdminUser: rods\n" +
+		"IrodsAuthScheme: native\n" +
+		"IrodsNegotiationPolicy: native\n" +
+		"ResourceAffinity:\n" +
+		"  - demoResc\n" +
+		"  - edgeResc\n" +
+		"  - archiveResc\n"
+
+	writeTestFile(t, dir, "rest-config.yaml", configBody)
+
+	cfg, err := ReadRestConfig("rest-config", "yaml", []string{dir})
+	if err != nil {
+		t.Fatalf("error reading config: %v", err)
+	}
+
+	if len(cfg.ResourceAffinity) != 3 || cfg.ResourceAffinity[0] != "demoResc" || cfg.ResourceAffinity[1] != "edgeResc" || cfg.ResourceAffinity[2] != "archiveResc" {
+		t.Fatalf("expected ResourceAffinity list from YAML, got %+v", cfg.ResourceAffinity)
 	}
 }
 

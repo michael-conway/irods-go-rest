@@ -17,3 +17,6 @@ OidcRealm:
 OidcScope: openid profile email
 PublicUrl: http://localhost:8080
 RestLogLevel: info
+ResourceAffinity:
+  - demoResc
+  - test1-resc

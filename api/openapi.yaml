@@ -23,6 +23,36 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+  /api/v1/server:
+    get:
+      operationId: getServerInfo
+      tags: [health]
+      summary: Fetch iRODS server information
+      description: |
+        Returns iRODS server version details (similar to `miscsvrinfo`) plus
+        service-side iRODS connection configuration details.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      responses:
+        "200":
+          description: Server information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServerInfoResponse"
+        "403":
+          description: Access denied while reading server information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/resource:
     get:
       operationId: getResources
@@ -2073,6 +2103,44 @@ components:
         environment:
           type: string
           example: development
+    ServerInfo:
+      type: object
+      properties:
+        release_version:
+          type: string
+          description: iRODS release version (for example `rods4.3.2`).
+        api_version:
+          type: string
+          description: iRODS API compatibility version identifier.
+        reconnect_port:
+          type: integer
+        reconnect_addr:
+          type: string
+        cookie:
+          type: integer
+        irods_host:
+          type: string
+          description: Configured iRODS hostname for this REST service.
+        irods_port:
+          type: integer
+        irods_zone:
+          type: string
+        irods_negotiation:
+          type: string
+          description: Configured iRODS negotiation policy for this REST service.
+        irods_default_resource:
+          type: string
+        resource_affinity:
+          type: array
+          items:
+            type: string
+          description: Optional configured list of resources proximate to this service.
+    ServerInfoResponse:
+      type: object
+      required: [server_info]
+      properties:
+        server_info:
+          $ref: "#/components/schemas/ServerInfo"
     PathEntry:
       type: object
       required: [id, path, kind, zone, path_segments]
@@ -2084,6 +2152,8 @@ components:
         kind:
           type: string
           enum: [data_object, collection]
+        cmd_cue:
+          $ref: "#/components/schemas/CmdCue"
         links:
           $ref: "#/components/schemas/PathLinks"
         parent:
@@ -2166,6 +2236,16 @@ components:
         data_type:
           type: string
         physical_path:
+          type: string
+    CmdCue:
+      type: object
+      properties:
+        operation:
+          type: string
+          enum: [put, get]
+        gocmd:
+          type: string
+        icommand:
           type: string
     PathLinks:
       type: object

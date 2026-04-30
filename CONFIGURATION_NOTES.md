@@ -29,6 +29,7 @@ GOREST_IRODS_PORT=1247
 GOREST_IRODS_ZONE=tempZone
 GOREST_IRODS_ADMIN_USER=rods
 GOREST_IRODS_DEFAULT_RESOURCE=demoResc
+GOREST_RESOURCE_AFFINITY=demoResc,edgeResc
 
 GOREST_OIDC_URL=https://localhost:8443
 GOREST_OIDC_REALM=drs
@@ -44,6 +45,25 @@ GOREST_OIDC_INSECURE_SKIP_VERIFY=true
 ```
 
 Use that only for local development.
+
+## Resource affinity
+
+`ResourceAffinity` is optional and represents iRODS resources that are
+considered proximate to this service instance.
+
+Supported forms:
+
+```yaml
+ResourceAffinity:
+  - demoResc
+  - edgeResc
+```
+
+or environment override:
+
+```bash
+GOREST_RESOURCE_AFFINITY=demoResc,edgeResc
+```
 
 ## Secrets
 

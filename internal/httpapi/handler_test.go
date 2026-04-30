@@ -199,6 +199,38 @@ func TestAPIAcceptsValidBearerToken(t *testing.T) {
 	}
 }
 
+func TestGetServerInfo(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/server", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"server_info"`,
+		`"release_version":"rods4.3.2"`,
+		`"api_version":"d"`,
+		`"reconnect_port":1247`,
+		`"reconnect_addr":"irods.example.org"`,
+		`"cookie":734`,
+		`"irods_host":"irods.local"`,
+		`"irods_port":1247`,
+		`"irods_zone":"tempZone"`,
+		`"irods_negotiation":"request_server_negotiation"`,
+		`"irods_default_resource":"demoResc"`,
+		`"resource_affinity":["demoResc","edgeResc"]`,
+	) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
 func TestAPIAcceptsBasicAuth(t *testing.T) {
 	handler := testHandler(t)
 
@@ -251,6 +283,7 @@ func TestGetPathAcceptsValidBearerToken(t *testing.T) {
 		`"avus":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"}`,
 		`"create_avu":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"}`,
 		`"resource_link":{"href":"/api/v1/resource/demoResc","method":"GET"}`,
+		`"cmd_cue":{"operation":"get","gocmd":"gocmd get '/tempZone/home/test1/file.txt' \u003cDESTINATION_PATH\u003e","icommand":"iget '/tempZone/home/test1/file.txt' \u003cDESTINATION_PATH\u003e"}`,
 	) {
 		t.Fatalf("expected AVU HATEOAS link in response body: %q", body)
 	}
@@ -347,6 +380,7 @@ func TestGetPathReturnsCollectionShape(t *testing.T) {
 		`"path_segments"`,
 		`"display_name":"project"`,
 		`"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject"`,
+		`"cmd_cue":{"operation":"put","gocmd":"gocmd put \u003cLOCAL_PATH\u003e '/tempZone/home/test1/project'","icommand":"iput \u003cLOCAL_PATH\u003e '/tempZone/home/test1/project'"}`,
 		`"resources":{"href":"/api/v1/resource","method":"GET"}`,
 		`"create_child_collection":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"POST"}`,
 		`"create_child_data_object":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"POST"}`,
@@ -1318,6 +1352,15 @@ func testHandler(t *testing.T) *Handler {
 	if strings.TrimSpace(cfg.IrodsZone) == "" {
 		cfg.IrodsZone = "tempZone"
 	}
+	if strings.TrimSpace(cfg.IrodsHost) == "" {
+		cfg.IrodsHost = "irods.local"
+	}
+	if cfg.IrodsPort <= 0 {
+		cfg.IrodsPort = 1247
+	}
+	cfg.IrodsNegotiationPolicy = "request_server_negotiation"
+	cfg.IrodsDefaultResource = "demoResc"
+	cfg.ResourceAffinity = []string{"demoResc", "edgeResc"}
 	filesystem := newTestCatalogFileSystem()
 	factory := func(_ *irodstypes.IRODSAccount, _ string) (irods.CatalogFileSystem, error) {
 		return filesystem, nil
@@ -1326,6 +1369,7 @@ func testHandler(t *testing.T) *Handler {
 	return NewHandler(
 		*cfg,
 		restservice.NewPathService(irods.NewCatalogServiceWithFactory(*cfg, factory)),
+		restservice.NewServerInfoService(irods.NewServerInfoServiceWithFactory(*cfg, factory)),
 		restservice.NewResourceService(irods.NewResourceServiceWithFactory(*cfg, factory)),
 		restservice.NewUserService(irods.NewUserServiceWithFactory(*cfg, factory)),
 		restservice.NewUserGroupService(irods.NewUserGroupServiceWithFactory(*cfg, factory)),
@@ -1345,6 +1389,7 @@ type testCatalogFileSystem struct {
 	contentByPath  map[string][]byte
 	ticketsByName  map[string]*irodstypes.IRODSTicket
 	resources      []*irodstypes.IRODSResource
+	serverVersion  *irodstypes.IRODSVersion
 	usersByKey     map[string]*irodstypes.IRODSUser
 	groupMembers   map[string][]string
 }
@@ -1508,6 +1553,13 @@ func newTestCatalogFileSystem() *testCatalogFileSystem {
 				CreateTime: now,
 				ModifyTime: now,
 			},
+		},
+		serverVersion: &irodstypes.IRODSVersion{
+			ReleaseVersion: "rods4.3.2",
+			APIVersion:     "d",
+			ReconnectPort:  1247,
+			ReconnectAddr:  "irods.example.org",
+			Cookie:         734,
 		},
 		usersByKey: map[string]*irodstypes.IRODSUser{
 			userKey("alice", "tempZone"): {
@@ -1836,6 +1888,15 @@ func (f *testCatalogFileSystem) ComputeChecksum(irodsPath string, _ string) (*ir
 		Algorithm:           irodstypes.ChecksumAlgorithmSHA256,
 		IRODSChecksumString: checksum,
 	}, nil
+}
+
+func (f *testCatalogFileSystem) GetServerVersion() (*irodstypes.IRODSVersion, error) {
+	if f.serverVersion == nil {
+		return &irodstypes.IRODSVersion{}, nil
+	}
+
+	copy := *f.serverVersion
+	return &copy, nil
 }
 
 func (f *testCatalogFileSystem) OpenFile(irodsPath string, _ string, _ string) (irods.CatalogFileHandle, error) {

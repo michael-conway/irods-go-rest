@@ -106,6 +106,7 @@ Common settings include:
 * `GOREST_IRODS_ADMIN_PASSWORD`
 * `GOREST_IRODS_ADMIN_PASSWORD_FILE`
 * `GOREST_IRODS_DEFAULT_RESOURCE`
+* `GOREST_RESOURCE_AFFINITY`
 * `GOREST_OIDC_URL`
 * `GOREST_OIDC_REALM`
 * `GOREST_OIDC_CLIENT_ID`
@@ -113,6 +114,9 @@ Common settings include:
 * `GOREST_OIDC_CLIENT_SECRET_FILE`
 * `GOREST_OIDC_SCOPE`
 * `GOREST_OIDC_INSECURE_SKIP_VERIFY`
+
+`GOREST_RESOURCE_AFFINITY` is optional and accepts a comma-separated list of
+iRODS resource names that are proximate to this service instance.
 
 If you want to point the service at one explicit config file, use:
 
@@ -160,6 +164,11 @@ Current path-based endpoints:
   `HEAD /api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt`
 * Content bytes:
   `GET /api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt`
+
+Additional endpoint:
+
+* iRODS server information (miscsvrinfo-style plus configured connection details):
+  `GET /api/v1/server`
 
 `/path` is the primary lookup model for both data objects and collections. The response identifies what the path resolves to using a discriminator such as `kind: data_object` or `kind: collection`.
 

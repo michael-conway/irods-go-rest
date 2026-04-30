@@ -34,6 +34,7 @@ const swaggerUIHTML = `<!DOCTYPE html>
 type Handler struct {
 	cfg        config.RestConfig
 	paths      restservice.PathService
+	serverInfo restservice.ServerInfoService
 	resources  restservice.ResourceService
 	users      restservice.UserService
 	userGroups restservice.UserGroupService
@@ -43,10 +44,11 @@ type Handler struct {
 	webSession *auth.SessionStore
 }
 
-func NewHandler(cfg config.RestConfig, paths restservice.PathService, resources restservice.ResourceService, users restservice.UserService, userGroups restservice.UserGroupService, tickets restservice.TicketService, authFlow auth.AuthFlowService, verifier auth.TokenVerifier, webSession *auth.SessionStore) *Handler {
+func NewHandler(cfg config.RestConfig, paths restservice.PathService, serverInfo restservice.ServerInfoService, resources restservice.ResourceService, users restservice.UserService, userGroups restservice.UserGroupService, tickets restservice.TicketService, authFlow auth.AuthFlowService, verifier auth.TokenVerifier, webSession *auth.SessionStore) *Handler {
 	return &Handler{
 		cfg:        cfg,
 		paths:      paths,
+		serverInfo: serverInfo,
 		resources:  resources,
 		users:      users,
 		userGroups: userGroups,
@@ -85,6 +87,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("GET /api/v1/path/checksum", h.requireBearer(http.HandlerFunc(h.getPathChecksum)))
 	mux.Handle("POST /api/v1/path/checksum", h.requireBearer(http.HandlerFunc(h.postPathChecksum)))
 	mux.Handle("POST /api/v1/path/ticket", h.requireBearer(http.HandlerFunc(h.postPathTicket)))
+	mux.Handle("GET /api/v1/server", h.requireBearer(http.HandlerFunc(h.getServerInfo)))
 	mux.Handle("GET /api/v1/resource", h.requireBearer(http.HandlerFunc(h.getResources)))
 	mux.Handle("GET /api/v1/resource/{resource_id}", h.requireBearer(http.HandlerFunc(h.getResource)))
 	mux.Handle("GET /api/v1/user", h.requireBearer(http.HandlerFunc(h.getUsers)))

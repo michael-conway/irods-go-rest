@@ -85,8 +85,7 @@ func TestGetServerInfoBasicAuthE2E(t *testing.T) {
 		}
 
 		expectedDefaultResource := strings.TrimSpace(cfg.IrodsDefaultResource)
-		// Default resource is optional in server responses and may be blank.
-		if expectedDefaultResource != "" && payload.ServerInfo.IRODSDefaultResource != "" && payload.ServerInfo.IRODSDefaultResource != expectedDefaultResource {
+		if expectedDefaultResource != "" && payload.ServerInfo.IRODSDefaultResource != expectedDefaultResource {
 			t.Fatalf("expected irods_default_resource %q, got %q", expectedDefaultResource, payload.ServerInfo.IRODSDefaultResource)
 		}
 
