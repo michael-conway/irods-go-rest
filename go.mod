@@ -2,7 +2,7 @@ module github.com/michael-conway/irods-go-rest
 
 go 1.25.0
 
-require github.com/michael-conway/go-irodsclient-extensions v0.0.0
+require github.com/michael-conway/go-irodsclient-extensions v0.0.0-20260430135522-b4e4d9a47ded
 
 require (
 	github.com/cyverse/go-irodsclient v0.19.10
@@ -29,8 +29,6 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/term v0.36.0 // indirect
 )
-
-replace github.com/michael-conway/go-irodsclient-extensions => ../go-irodsclient-extensions
 
 require (
 	github.com/cockroachdb/errors v1.12.0 // indirect
