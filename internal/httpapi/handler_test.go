@@ -284,7 +284,11 @@ func TestGetPathAcceptsValidBearerToken(t *testing.T) {
 		`"replicas":{"href":"/api/v1/path/replicas?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"}`,
 		`"create_avu":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"}`,
 		`"resource_link":{"href":"/api/v1/resource/demoResc","method":"GET"}`,
-		`"cmd_cue":{"operation":"get","gocmd":"gocmd get '/tempZone/home/test1/file.txt' \u003cDESTINATION_PATH\u003e","icommand":"iget '/tempZone/home/test1/file.txt' \u003cDESTINATION_PATH\u003e"}`,
+		`"cmd_cues":[`,
+		`"operation":"put","gocmd":"gocmd put \u003cLOCAL_PATH\u003e '/tempZone/home/test1'"`,
+		`"operation":"get","gocmd":"gocmd get '/tempZone/home/test1/file.txt' \u003cDESTINATION_PATH\u003e"`,
+		`"operation":"phymove","icommand":"iphymv -S \u003csrcResource\u003e -R \u003ctargetResource\u003e '/tempZone/home/test1/file.txt'"`,
+		`"operation":"replicate","icommand":"irepl -S \u003csrcResource\u003e -R \u003ctargetResource\u003e '/tempZone/home/test1/file.txt'"`,
 	) {
 		t.Fatalf("expected AVU HATEOAS link in response body: %q", body)
 	}
@@ -381,7 +385,11 @@ func TestGetPathReturnsCollectionShape(t *testing.T) {
 		`"path_segments"`,
 		`"display_name":"project"`,
 		`"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject"`,
-		`"cmd_cue":{"operation":"put","gocmd":"gocmd put \u003cLOCAL_PATH\u003e '/tempZone/home/test1/project'","icommand":"iput \u003cLOCAL_PATH\u003e '/tempZone/home/test1/project'"}`,
+		`"cmd_cues":[`,
+		`"operation":"put","gocmd":"gocmd put -r \u003cLOCAL_PATH\u003e '/tempZone/home/test1/project'"`,
+		`"operation":"get","gocmd":"gocmd get -r '/tempZone/home/test1/project' \u003cDESTINATION_PATH\u003e"`,
+		`"operation":"phymove","icommand":"iphymv -r -S \u003csrcResource\u003e -R \u003ctargetResource\u003e '/tempZone/home/test1/project'"`,
+		`"operation":"replicate","icommand":"irepl -r -S \u003csrcResource\u003e -R \u003ctargetResource\u003e '/tempZone/home/test1/project'"`,
 		`"resources":{"href":"/api/v1/resource","method":"GET"}`,
 		`"create_child_collection":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"POST"}`,
 		`"create_child_data_object":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"POST"}`,

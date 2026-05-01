@@ -10,7 +10,7 @@ type PathEntry struct {
 	Path         string            `json:"path"`
 	Kind         string            `json:"kind"`
 	Zone         string            `json:"zone"`
-	CmdCue       *CmdCue           `json:"cmd_cue,omitempty"`
+	CmdCues      []CmdCue          `json:"cmd_cues,omitempty"`
 	Links        *PathLinks        `json:"links,omitempty"`
 	Parent       *ParentLink       `json:"parent,omitempty"`
 	PathSegments []PathSegmentLink `json:"path_segments,omitempty"`

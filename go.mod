@@ -2,7 +2,7 @@ module github.com/michael-conway/irods-go-rest
 
 go 1.25
 
-require github.com/michael-conway/go-irodsclient-extensions v0.0.0-20260430135522-b4e4d9a47ded
+require github.com/michael-conway/go-irodsclient-extensions v0.0.0-20260501114033-0c6ac23e5f1a
 
 require (
 	github.com/cyverse/go-irodsclient v0.19.10

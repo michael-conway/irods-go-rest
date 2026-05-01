@@ -1214,36 +1214,96 @@ func avuValidationFields(attrib string, value string) map[string]string {
 
 func pathEntryResponse(r *http.Request, entry domain.PathEntry) domain.PathEntry {
 	entry.Links = pathLinksForEntry(entry.Path, entry.Kind)
-	entry.CmdCue = pathCmdCueForEntry(entry)
+	entry.CmdCues = pathCmdCuesForEntry(entry)
 	entry.Parent = buildParentLink(r, entry.Path)
 	entry.PathSegments = buildPathSegments(entry.Path)
 	return entry
 }
 
-func pathCmdCueForEntry(entry domain.PathEntry) *domain.CmdCue {
-	var (
-		cue cmdcues.Cue
-		err error
-	)
-
+func pathCmdCuesForEntry(entry domain.PathEntry) []domain.CmdCue {
 	switch strings.TrimSpace(entry.Kind) {
 	case "collection":
-		cue, err = cmdcues.BuildPutCue(entry.Path)
+		return buildCollectionCmdCues(entry.Path)
 	case "data_object":
-		cue, err = cmdcues.BuildGetCue(entry.Path)
+		return buildDataObjectCmdCues(entry.Path)
 	default:
 		return nil
 	}
+}
 
+func buildCollectionCmdCues(collectionIRODSPath string) []domain.CmdCue {
+	collectionIRODSPath = strings.TrimSpace(collectionIRODSPath)
+	if collectionIRODSPath == "" {
+		return nil
+	}
+
+	return []domain.CmdCue{
+		{
+			Operation: "put",
+			GoCmd:     fmt.Sprintf("gocmd put -r %s %s", "<LOCAL_PATH>", quoteCuePath(collectionIRODSPath)),
+			ICommand:  fmt.Sprintf("iput -r %s %s", "<LOCAL_PATH>", quoteCuePath(collectionIRODSPath)),
+		},
+		{
+			Operation: "get",
+			GoCmd:     fmt.Sprintf("gocmd get -r %s %s", quoteCuePath(collectionIRODSPath), "<DESTINATION_PATH>"),
+			ICommand:  fmt.Sprintf("iget -r %s %s", quoteCuePath(collectionIRODSPath), "<DESTINATION_PATH>"),
+		},
+		{
+			Operation: "phymove",
+			ICommand:  fmt.Sprintf("iphymv -r -S %s -R %s %s", "<srcResource>", "<targetResource>", quoteCuePath(collectionIRODSPath)),
+		},
+		{
+			Operation: "replicate",
+			ICommand:  fmt.Sprintf("irepl -r -S %s -R %s %s", "<srcResource>", "<targetResource>", quoteCuePath(collectionIRODSPath)),
+		},
+	}
+}
+
+func buildDataObjectCmdCues(objectIRODSPath string) []domain.CmdCue {
+	objectIRODSPath = strings.TrimSpace(objectIRODSPath)
+	if objectIRODSPath == "" {
+		return nil
+	}
+
+	parentPath := path.Dir(path.Clean(objectIRODSPath))
+	putCue, err := cmdcues.BuildPutCue(parentPath)
+	if err != nil {
+		return nil
+	}
+	getCue, err := cmdcues.BuildGetCue(objectIRODSPath)
 	if err != nil {
 		return nil
 	}
 
-	return &domain.CmdCue{
-		Operation: string(cue.Operation),
-		GoCmd:     cue.GoCmd,
-		ICommand:  cue.ICommand,
+	return []domain.CmdCue{
+		{
+			Operation: string(putCue.Operation),
+			GoCmd:     putCue.GoCmd,
+			ICommand:  putCue.ICommand,
+		},
+		{
+			Operation: string(getCue.Operation),
+			GoCmd:     getCue.GoCmd,
+			ICommand:  getCue.ICommand,
+		},
+		{
+			Operation: "phymove",
+			ICommand:  fmt.Sprintf("iphymv -S %s -R %s %s", "<srcResource>", "<targetResource>", quoteCuePath(objectIRODSPath)),
+		},
+		{
+			Operation: "replicate",
+			ICommand:  fmt.Sprintf("irepl -S %s -R %s %s", "<srcResource>", "<targetResource>", quoteCuePath(objectIRODSPath)),
+		},
 	}
+}
+
+func quoteCuePath(pathValue string) string {
+	pathValue = strings.TrimSpace(pathValue)
+	if pathValue == "" {
+		return "''"
+	}
+	escaped := strings.ReplaceAll(pathValue, `'`, `'"'"'`)
+	return "'" + escaped + "'"
 }
 
 func avuMetadataResponseList(r *http.Request, irodsPath string, metadata []domain.AVUMetadata) []domain.AVUMetadata {
