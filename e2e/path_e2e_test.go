@@ -524,6 +524,169 @@ func TestPathFileCreateRenameDeleteBasicAuthE2E(t *testing.T) {
 	}
 }
 
+func TestPathMoveCopyFileAndCollectionBasicAuthE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	client := newE2EHTTPClient()
+	filesystem := newE2EIRODSFilesystem(t)
+	defer filesystem.Release()
+
+	rootPath := irodsJoin(
+		"/"+e2eIRODSZone(t)+"/home/"+e2eBasicUsername(t),
+		"e2e-path-relocate-"+randomToken(nil, 8),
+	)
+	if err := filesystem.MakeDir(rootPath, true); err != nil {
+		t.Fatalf("make root collection %q: %v", rootPath, err)
+	}
+	defer func() {
+		if err := filesystem.RemoveDir(rootPath, true, true); err != nil && filesystem.Exists(rootPath) {
+			t.Errorf("cleanup root collection %q: %v", rootPath, err)
+		}
+	}()
+
+	sourceFileParent := irodsJoin(rootPath, "source-files")
+	targetFileParent := irodsJoin(rootPath, "target-files")
+	if err := filesystem.MakeDir(sourceFileParent, true); err != nil {
+		t.Fatalf("make source file parent %q: %v", sourceFileParent, err)
+	}
+	if err := filesystem.MakeDir(targetFileParent, true); err != nil {
+		t.Fatalf("make target file parent %q: %v", targetFileParent, err)
+	}
+
+	createFileReq := newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path", sourceFileParent), strings.NewReader(`{"child_name":"source-file.txt","kind":"data_object"}`))
+	createFileReq.Header.Set("Content-Type", "application/json")
+	setBasicAuth(createFileReq)
+
+	createFileResp, err := client.Do(createFileReq)
+	if err != nil {
+		t.Fatalf("perform create source file request: %v", err)
+	}
+	defer createFileResp.Body.Close()
+	if createFileResp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(createFileResp.Body)
+		t.Fatalf("expected 201 creating source file, got %d: %s", createFileResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	sourceFilePath := irodsJoin(sourceFileParent, "source-file.txt")
+	movedFilePath := irodsJoin(targetFileParent, "moved-file.txt")
+	copiedFilePath := irodsJoin(targetFileParent, "copied-file.txt")
+	if !waitForIRODSPathFresh(t, sourceFilePath, 3*time.Second) {
+		t.Fatalf("expected source file %q to exist", sourceFilePath)
+	}
+
+	moveFileReq := newE2ERequest(t, http.MethodPatch, pathURL(baseURL, "/api/v1/path", sourceFilePath), strings.NewReader(`{"operation":"move","destination_path":"`+movedFilePath+`"}`))
+	moveFileReq.Header.Set("Content-Type", "application/json")
+	setBasicAuth(moveFileReq)
+
+	moveFileResp, err := client.Do(moveFileReq)
+	if err != nil {
+		t.Fatalf("perform move file request: %v", err)
+	}
+	defer moveFileResp.Body.Close()
+	if moveFileResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(moveFileResp.Body)
+		t.Fatalf("expected 200 moving file, got %d: %s", moveFileResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if !waitForIRODSPathFresh(t, movedFilePath, 3*time.Second) {
+		t.Fatalf("expected moved file %q to exist", movedFilePath)
+	}
+	if waitForIRODSPathFresh(t, sourceFilePath, 500*time.Millisecond) {
+		t.Fatalf("expected source file %q to be absent after move", sourceFilePath)
+	}
+
+	copyFileReq := newE2ERequest(t, http.MethodPatch, pathURL(baseURL, "/api/v1/path", movedFilePath), strings.NewReader(`{"operation":"copy","destination_path":"`+copiedFilePath+`"}`))
+	copyFileReq.Header.Set("Content-Type", "application/json")
+	setBasicAuth(copyFileReq)
+
+	copyFileResp, err := client.Do(copyFileReq)
+	if err != nil {
+		t.Fatalf("perform copy file request: %v", err)
+	}
+	defer copyFileResp.Body.Close()
+	if copyFileResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(copyFileResp.Body)
+		t.Fatalf("expected 200 copying file, got %d: %s", copyFileResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if !waitForIRODSPathFresh(t, copiedFilePath, 3*time.Second) {
+		t.Fatalf("expected copied file %q to exist", copiedFilePath)
+	}
+	if !waitForIRODSPathFresh(t, movedFilePath, 500*time.Millisecond) {
+		t.Fatalf("expected moved source file %q to remain after copy", movedFilePath)
+	}
+
+	sourceCollection := irodsJoin(rootPath, "source-collection")
+	sourceCollectionChild := irodsJoin(sourceCollection, "inside.txt")
+	if err := filesystem.MakeDir(sourceCollection, true); err != nil {
+		t.Fatalf("make source collection %q: %v", sourceCollection, err)
+	}
+	createCollectionFileReq := newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path", sourceCollection), strings.NewReader(`{"child_name":"inside.txt","kind":"data_object"}`))
+	createCollectionFileReq.Header.Set("Content-Type", "application/json")
+	setBasicAuth(createCollectionFileReq)
+
+	createCollectionFileResp, err := client.Do(createCollectionFileReq)
+	if err != nil {
+		t.Fatalf("perform create collection child file request: %v", err)
+	}
+	defer createCollectionFileResp.Body.Close()
+	if createCollectionFileResp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(createCollectionFileResp.Body)
+		t.Fatalf("expected 201 creating collection child file, got %d: %s", createCollectionFileResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if !waitForIRODSPathFresh(t, sourceCollectionChild, 3*time.Second) {
+		t.Fatalf("expected source collection child %q to exist", sourceCollectionChild)
+	}
+
+	movedCollection := irodsJoin(rootPath, "moved-collection")
+	movedCollectionChild := irodsJoin(movedCollection, "inside.txt")
+	copiedCollection := irodsJoin(rootPath, "copied-collection")
+	copiedCollectionChild := irodsJoin(copiedCollection, "inside.txt")
+
+	moveCollectionReq := newE2ERequest(t, http.MethodPatch, pathURL(baseURL, "/api/v1/path", sourceCollection), strings.NewReader(`{"operation":"move","destination_path":"`+movedCollection+`"}`))
+	moveCollectionReq.Header.Set("Content-Type", "application/json")
+	setBasicAuth(moveCollectionReq)
+
+	moveCollectionResp, err := client.Do(moveCollectionReq)
+	if err != nil {
+		t.Fatalf("perform move collection request: %v", err)
+	}
+	defer moveCollectionResp.Body.Close()
+	if moveCollectionResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(moveCollectionResp.Body)
+		t.Fatalf("expected 200 moving collection, got %d: %s", moveCollectionResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if !waitForIRODSPathFresh(t, movedCollection, 3*time.Second) {
+		t.Fatalf("expected moved collection %q to exist", movedCollection)
+	}
+	if !waitForIRODSPathFresh(t, movedCollectionChild, 3*time.Second) {
+		t.Fatalf("expected moved collection child %q to exist", movedCollectionChild)
+	}
+	if waitForIRODSPathFresh(t, sourceCollection, 500*time.Millisecond) {
+		t.Fatalf("expected source collection %q to be absent after move", sourceCollection)
+	}
+
+	copyCollectionReq := newE2ERequest(t, http.MethodPatch, pathURL(baseURL, "/api/v1/path", movedCollection), strings.NewReader(`{"operation":"copy","destination_path":"`+copiedCollection+`"}`))
+	copyCollectionReq.Header.Set("Content-Type", "application/json")
+	setBasicAuth(copyCollectionReq)
+
+	copyCollectionResp, err := client.Do(copyCollectionReq)
+	if err != nil {
+		t.Fatalf("perform copy collection request: %v", err)
+	}
+	defer copyCollectionResp.Body.Close()
+	if copyCollectionResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(copyCollectionResp.Body)
+		t.Fatalf("expected 200 copying collection, got %d: %s", copyCollectionResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if !waitForIRODSPathFresh(t, copiedCollection, 3*time.Second) {
+		t.Fatalf("expected copied collection %q to exist", copiedCollection)
+	}
+	if !waitForIRODSPathFresh(t, copiedCollectionChild, 3*time.Second) {
+		t.Fatalf("expected copied collection child %q to exist", copiedCollectionChild)
+	}
+	if !waitForIRODSPathFresh(t, movedCollection, 500*time.Millisecond) {
+		t.Fatalf("expected moved collection %q to remain after copy", movedCollection)
+	}
+}
+
 func TestPathReplicaResourceLifecycleBasicAuthE2E(t *testing.T) {
 	baseURL := requireE2EBaseURL(t)
 	client := newE2EHTTPClient()

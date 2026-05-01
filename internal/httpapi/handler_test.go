@@ -194,9 +194,6 @@ func TestAPIAcceptsValidBearerToken(t *testing.T) {
 		t.Fatalf("expected path segments in response body: %q", body)
 	}
 
-	if body := rec.Body.String(); !containsAll(body, `"parent":{"irods_path":"/tempZone/home/test1"`, `"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1"`) {
-		t.Fatalf("expected parent link in response body: %q", body)
-	}
 }
 
 func TestGetServerInfo(t *testing.T) {
@@ -280,8 +277,18 @@ func TestGetPathAcceptsValidBearerToken(t *testing.T) {
 	}
 	if body := rec.Body.String(); !containsAll(
 		body,
+		`"self":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"}`,
+		`"update":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"PATCH"}`,
+		`"delete":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"DELETE"}`,
+		`"move":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"PATCH"}`,
+		`"copy":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"PATCH"}`,
 		`"avus":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"}`,
 		`"replicas":{"href":"/api/v1/path/replicas?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"}`,
+		`"add_replica":{"href":"/api/v1/path/replicas?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"}`,
+		`"move_replica":{"href":"/api/v1/path/replicas?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"PATCH"}`,
+		`"trim_replica":{"href":"/api/v1/path/replicas?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"DELETE"}`,
+		`"download_contents":{"href":"/api/v1/path/contents?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"}`,
+		`"replace_contents":{"href":"/api/v1/path/contents?parent_path=%2FtempZone%2Fhome%2Ftest1\u0026file_name=file.txt","method":"POST"}`,
 		`"create_avu":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"}`,
 		`"resource_link":{"href":"/api/v1/resource/demoResc","method":"GET"}`,
 		`"cmd_cues":[`,
@@ -385,6 +392,11 @@ func TestGetPathReturnsCollectionShape(t *testing.T) {
 		`"path_segments"`,
 		`"display_name":"project"`,
 		`"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject"`,
+		`"self":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"GET"}`,
+		`"children":{"href":"/api/v1/path/children?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"GET"}`,
+		`"upload_contents":{"href":"/api/v1/path/contents?parent_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"POST"}`,
+		`"move":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"PATCH"}`,
+		`"copy":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"PATCH"}`,
 		`"cmd_cues":[`,
 		`"operation":"put","gocmd":"gocmd put -r \u003cLOCAL_PATH\u003e '/tempZone/home/test1/project'"`,
 		`"operation":"get","gocmd":"gocmd get -r '/tempZone/home/test1/project' \u003cDESTINATION_PATH\u003e"`,
@@ -399,9 +411,6 @@ func TestGetPathReturnsCollectionShape(t *testing.T) {
 		t.Fatalf("expected path segments in collection response body: %q", body)
 	}
 
-	if body := rec.Body.String(); !containsAll(body, `"parent":{"irods_path":"/tempZone/home/test1"`) {
-		t.Fatalf("expected parent link in collection response body: %q", body)
-	}
 }
 
 func TestDeletePathDeletesDataObject(t *testing.T) {
@@ -488,6 +497,63 @@ func TestPostPathMoveRenamesCollection(t *testing.T) {
 	}
 }
 
+func TestPatchPathMovesDataObjectToDestinationPath(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/path?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(`{"operation":"move","destination_path":"/tempZone/home/test1/project/moved-file.txt"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"path":"/tempZone/home/test1/project/moved-file.txt"`, `"kind":"data_object"`) {
+		t.Fatalf("unexpected move response body: %q", body)
+	}
+}
+
+func TestPatchPathCopiesDataObjectToDestinationPath(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/path?irods_path=/tempZone/home/test1/file.txt", strings.NewReader(`{"operation":"copy","destination_path":"/tempZone/home/test1/project/copied-file.txt"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"path":"/tempZone/home/test1/project/copied-file.txt"`, `"kind":"data_object"`) {
+		t.Fatalf("unexpected copy response body: %q", body)
+	}
+}
+
+func TestPatchPathCopiesCollectionRecursively(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/path?irods_path=/tempZone/home/test1/project", strings.NewReader(`{"operation":"copy","destination_path":"/tempZone/home/test1/project-copy"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if body := rec.Body.String(); !containsAll(body, `"path":"/tempZone/home/test1/project-copy"`, `"kind":"collection"`) {
+		t.Fatalf("unexpected collection copy response body: %q", body)
+	}
+}
+
 func TestGetPathChildrenReturnsCollectionChildren(t *testing.T) {
 	handler := testHandler(t)
 
@@ -508,6 +574,23 @@ func TestGetPathChildrenReturnsCollectionChildren(t *testing.T) {
 	if body := rec.Body.String(); !containsAll(body, `"children"`, `"kind":"data_object"`, `"kind":"collection"`) {
 		t.Fatalf("unexpected children response body: %q", body)
 	}
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"links":{"self":{"href":"/api/v1/path/children?irods_path=/tempZone/home/test1/project","method":"GET"}`,
+		`"parent":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1","method":"GET"}`,
+		`"create_child_collection":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"POST"}`,
+		`"upload_contents":{"href":"/api/v1/path/contents?parent_path=%2FtempZone%2Fhome%2Ftest1%2Fproject","method":"POST"}`,
+	) {
+		t.Fatalf("expected children-level links in response body: %q", body)
+	}
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"details":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject%2Fchild.txt","method":"GET"}`,
+		`"move":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject%2Fchild.txt","method":"PATCH"}`,
+		`"copy":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject%2Fchild.txt","method":"PATCH"}`,
+	) {
+		t.Fatalf("expected per-child action links in response body: %q", body)
+	}
 
 	if body := rec.Body.String(); !containsAll(
 		body,
@@ -518,9 +601,20 @@ func TestGetPathChildrenReturnsCollectionChildren(t *testing.T) {
 	) {
 		t.Fatalf("expected path segments in response body: %q", body)
 	}
+}
 
-	if body := rec.Body.String(); !containsAll(body, `"parent":{"irods_path":"/tempZone/home/test1/project"`) {
-		t.Fatalf("expected child parent links in response body: %q", body)
+func TestPostPathChildrenEndpointRemoved(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/children?irods_path=/tempZone/home/test1/project", strings.NewReader(`{"child_name":"alias.txt","kind":"data_object"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -547,7 +641,7 @@ func TestGetPathChildrenSearchMatchesRelativePatternAndIncludesMetadata(t *testi
 	}
 }
 
-func TestGetPathChildrenSearchSubtreeViaRecursiveFlag(t *testing.T) {
+func TestGetPathChildrenSearchSubtreeViaSearchScope(t *testing.T) {
 	handler, filesystem := testHandlerWithConfig(t, nil)
 
 	now := time.Unix(1_700_000_007, 0)
@@ -565,7 +659,7 @@ func TestGetPathChildrenSearchSubtreeViaRecursiveFlag(t *testing.T) {
 	filesystem.entriesByPath[nestedFile.Path] = nestedFile
 	filesystem.childrenByPath["/tempZone/home/test1/project/nested"] = []*irodsfs.Entry{nestedFile}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/children?irods_path=/tempZone/home/test1/project&name_pattern=child*&recursive=true", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/children?irods_path=/tempZone/home/test1/project&name_pattern=child*&search_scope=subtree", nil)
 	req.Header.Set("Authorization", "Bearer token123")
 	rec := httptest.NewRecorder()
 
@@ -589,6 +683,20 @@ func TestGetPathChildrenSearchRejectsInvalidScope(t *testing.T) {
 	handler := testHandler(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/children?irods_path=/tempZone/home/test1/project&name_pattern=child*&search_scope=global", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestGetPathChildrenSearchRejectsRecursiveAlias(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/children?irods_path=/tempZone/home/test1/project&name_pattern=child*&recursive=true", nil)
 	req.Header.Set("Authorization", "Bearer token123")
 	rec := httptest.NewRecorder()
 
@@ -629,7 +737,13 @@ func TestGetPathReplicasReturnsReplicaList(t *testing.T) {
 	if body := rec.Body.String(); !containsAll(
 		body,
 		`"irods_path":"/tempZone/home/test1/file.txt"`,
+		`"links":{"self":{"href":"/api/v1/path/replicas?irods_path=/tempZone/home/test1/file.txt\u0026verbose=2","method":"GET"}`,
+		`"add_replica":{"href":"/api/v1/path/replicas?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"}`,
+		`"move_replica":{"href":"/api/v1/path/replicas?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"PATCH"}`,
+		`"trim_replica":{"href":"/api/v1/path/replicas?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"DELETE"}`,
 		`"replicas":[`,
+		`"trim":{"href":"/api/v1/path/replicas?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"DELETE"}`,
+		`"resource_details":{"href":"/api/v1/resource/demoResc","method":"GET"}`,
 		`"resource_name":"demoResc"`,
 		`"resource_link":{"href":"/api/v1/resource/demoResc","method":"GET"}`,
 	) {
@@ -1173,7 +1287,11 @@ func TestGetPathAVUsReturnsAVUList(t *testing.T) {
 		`"attrib":"source"`,
 		`"value":"test"`,
 		`"unit":"fixture"`,
-		`"links":{"avus":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"},"acls":{"href":"/api/v1/path/acl?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"},"create_avu":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"},"create_ticket":{"href":"/api/v1/path/ticket?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"},"resources":{"href":"/api/v1/resource","method":"GET"}}`,
+		`"links":{"self":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"}`,
+		`"details":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"}`,
+		`"update":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"PATCH"}`,
+		`"avus":{"href":"/api/v1/path/avu?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"}`,
+		`"create_ticket":{"href":"/api/v1/path/ticket?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"POST"}`,
 		`"update":{"href":"/api/v1/path/avu/701?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"PUT"}`,
 		`"delete":{"href":"/api/v1/path/avu/701?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"DELETE"}`,
 		`"count":1`,
@@ -1952,10 +2070,19 @@ func (f *testCatalogFileSystem) List(irodsPath string) ([]*irodsfs.Entry, error)
 	return entries, nil
 }
 
-func (f *testCatalogFileSystem) MakeDir(irodsPath string, _ bool) error {
-	parentPath := path.Dir(path.Clean(irodsPath))
-	if parentPath != "." && parentPath != "/" {
+func (f *testCatalogFileSystem) MakeDir(irodsPath string, recurse bool) error {
+	cleanPath := path.Clean(irodsPath)
+	parentPath := path.Dir(cleanPath)
+	if recurse && parentPath != "." && parentPath != "/" {
 		if _, ok := f.entriesByPath[parentPath]; !ok {
+			if err := f.MakeDir(parentPath, true); err != nil {
+				return err
+			}
+		}
+	}
+	if parentPath != "." && parentPath != "/" {
+		parentEntry, ok := f.entriesByPath[parentPath]
+		if !ok || !parentEntry.IsDir() {
 			return errors.New("not found")
 		}
 	}
@@ -1964,8 +2091,8 @@ func (f *testCatalogFileSystem) MakeDir(irodsPath string, _ bool) error {
 	entry := &irodsfs.Entry{
 		ID:         int64(len(f.entriesByPath) + 200),
 		Type:       irodsfs.DirectoryEntry,
-		Name:       path.Base(irodsPath),
-		Path:       path.Clean(irodsPath),
+		Name:       path.Base(cleanPath),
+		Path:       cleanPath,
 		CreateTime: now,
 		ModifyTime: now,
 	}
@@ -2073,6 +2200,47 @@ func (f *testCatalogFileSystem) RenameFile(srcPath string, destPath string) erro
 
 	f.childrenByPath[parentSrc] = filterChildEntry(f.childrenByPath[parentSrc], cleanSrc)
 	f.childrenByPath[parentDest] = append(f.childrenByPath[parentDest], entry)
+	return nil
+}
+
+func (f *testCatalogFileSystem) CopyFile(srcPath string, destPath string, force bool) error {
+	entry, ok := f.entriesByPath[srcPath]
+	if !ok || entry.IsDir() {
+		return errors.New("not found")
+	}
+
+	cleanDest := path.Clean(destPath)
+	if _, exists := f.entriesByPath[cleanDest]; exists && !force {
+		return errors.New("already exists")
+	}
+
+	parentDest := path.Dir(cleanDest)
+	parentEntry, ok := f.entriesByPath[parentDest]
+	if !ok || !parentEntry.IsDir() {
+		return errors.New("not found")
+	}
+
+	cloned := *entry
+	cloned.Path = cleanDest
+	cloned.Name = path.Base(cleanDest)
+	f.entriesByPath[cleanDest] = &cloned
+	f.childrenByPath[parentDest] = append(f.childrenByPath[parentDest], &cloned)
+
+	if data, ok := f.contentByPath[path.Clean(srcPath)]; ok {
+		f.contentByPath[cleanDest] = append([]byte(nil), data...)
+	}
+	if metas, ok := f.metadataByPath[path.Clean(srcPath)]; ok {
+		clonedMetas := make([]*irodstypes.IRODSMeta, 0, len(metas))
+		for _, meta := range metas {
+			if meta == nil {
+				continue
+			}
+			cloneMeta := *meta
+			clonedMetas = append(clonedMetas, &cloneMeta)
+		}
+		f.metadataByPath[cleanDest] = clonedMetas
+	}
+
 	return nil
 }
 

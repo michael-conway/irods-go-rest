@@ -799,7 +799,12 @@ paths:
     patch:
       operationId: patchPath
       tags: [path]
-      summary: Rename a file or collection within its current parent collection
+      summary: Move or copy a file or collection path
+      description: |
+        Supports path mutation operations:
+        - rename within the same parent via `new_name` (defaults to `move`)
+        - move to an absolute `destination_path`
+        - copy to an absolute `destination_path`
       security:
         - BearerAuth: []
         - BasicAuth: []
@@ -818,7 +823,7 @@ paths:
               $ref: "#/components/schemas/PathMoveRequest"
       responses:
         "200":
-          description: Metadata for the renamed path at its new location
+          description: Metadata for the moved or copied path at its destination location
           content:
             application/json:
               schema:
@@ -934,12 +939,6 @@ paths:
             default: children
           description: Search scope. `children` searches direct children, `subtree` searches descendants under `irods_path`, `absolute` performs full-path matching across the zone tree.
         - in: query
-          name: recursive
-          required: false
-          schema:
-            type: boolean
-          description: Backward-compatible alias for `search_scope=subtree` when `search_scope` is not supplied.
-        - in: query
           name: case_sensitive
           required: false
           schema:
@@ -991,60 +990,6 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           description: Path not found or not a collection
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "403":
-          description: Access denied for the requested collection
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: Missing or invalid bearer token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-    post:
-      deprecated: true
-      operationId: postPathChildren
-      tags: [path]
-      summary: Compatibility alias for child creation under a collection path
-      description: |
-        Deprecated compatibility alias for `POST /api/v1/path`.
-      security:
-        - BearerAuth: []
-        - BasicAuth: []
-      parameters:
-        - in: query
-          name: irods_path
-          required: true
-          schema:
-            type: string
-          description: Full iRODS absolute logical path to the parent collection.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PathChildCreateRequest"
-      responses:
-        "201":
-          description: Child collection or data object created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PathEntry"
-        "400":
-          description: Missing parent path or invalid child request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: Parent path not found or not a collection
           content:
             application/json:
               schema:
@@ -2812,8 +2757,6 @@ components:
             $ref: "#/components/schemas/CmdCue"
         links:
           $ref: "#/components/schemas/PathLinks"
-        parent:
-          $ref: "#/components/schemas/ParentLink"
         path_segments:
           type: array
           description: Ordered collection path segments for the path resource, each with a display name and HATEOAS link.
@@ -2868,6 +2811,8 @@ components:
           type: string
         resource_link:
           $ref: "#/components/schemas/ActionLink"
+        links:
+          $ref: "#/components/schemas/PathReplicaLinks"
         resource_hierarchy:
           type: string
         size:
@@ -2906,6 +2851,40 @@ components:
     PathLinks:
       type: object
       properties:
+        self:
+          $ref: "#/components/schemas/ActionLink"
+        parent:
+          $ref: "#/components/schemas/ActionLink"
+        children:
+          $ref: "#/components/schemas/ActionLink"
+        details:
+          $ref: "#/components/schemas/ActionLink"
+        update:
+          $ref: "#/components/schemas/ActionLink"
+        delete:
+          $ref: "#/components/schemas/ActionLink"
+        relocate:
+          $ref: "#/components/schemas/ActionLink"
+        move:
+          $ref: "#/components/schemas/ActionLink"
+        copy:
+          $ref: "#/components/schemas/ActionLink"
+        upload_contents:
+          $ref: "#/components/schemas/ActionLink"
+        replace_contents:
+          $ref: "#/components/schemas/ActionLink"
+        download_contents:
+          $ref: "#/components/schemas/ActionLink"
+        next:
+          $ref: "#/components/schemas/ActionLink"
+        prev:
+          $ref: "#/components/schemas/ActionLink"
+        add_replica:
+          $ref: "#/components/schemas/ActionLink"
+        move_replica:
+          $ref: "#/components/schemas/ActionLink"
+        trim_replica:
+          $ref: "#/components/schemas/ActionLink"
         avus:
           $ref: "#/components/schemas/ActionLink"
         acls:
@@ -2926,14 +2905,41 @@ components:
           $ref: "#/components/schemas/ActionLink"
         delete_inheritance:
           $ref: "#/components/schemas/ActionLink"
-    ParentLink:
+    PathChildrenLinks:
       type: object
-      required: [irods_path, href]
       properties:
-        irods_path:
-          type: string
-        href:
-          type: string
+        self:
+          $ref: "#/components/schemas/ActionLink"
+        parent:
+          $ref: "#/components/schemas/ActionLink"
+        next:
+          $ref: "#/components/schemas/ActionLink"
+        prev:
+          $ref: "#/components/schemas/ActionLink"
+        create_child_collection:
+          $ref: "#/components/schemas/ActionLink"
+        create_child_data_object:
+          $ref: "#/components/schemas/ActionLink"
+        upload_contents:
+          $ref: "#/components/schemas/ActionLink"
+    PathReplicasLinks:
+      type: object
+      properties:
+        self:
+          $ref: "#/components/schemas/ActionLink"
+        add_replica:
+          $ref: "#/components/schemas/ActionLink"
+        move_replica:
+          $ref: "#/components/schemas/ActionLink"
+        trim_replica:
+          $ref: "#/components/schemas/ActionLink"
+    PathReplicaLinks:
+      type: object
+      properties:
+        trim:
+          $ref: "#/components/schemas/ActionLink"
+        resource_details:
+          $ref: "#/components/schemas/ActionLink"
     PathChildrenResponse:
       type: object
       required: [irods_path, path_segments, children]
@@ -2945,6 +2951,8 @@ components:
           description: Ordered collection path segments for the requested collection, each with a display name and HATEOAS link.
           items:
             $ref: "#/components/schemas/PathSegmentLink"
+        links:
+          $ref: "#/components/schemas/PathChildrenLinks"
         children:
           type: array
           items:
@@ -2977,6 +2985,8 @@ components:
           description: Ordered collection path segments for the requested data object, each with a display name and HATEOAS link.
           items:
             $ref: "#/components/schemas/PathSegmentLink"
+        links:
+          $ref: "#/components/schemas/PathReplicasLinks"
         replicas:
           type: array
           items:
@@ -3158,11 +3168,21 @@ components:
           description: When `true`, create intermediate collection segments for collection creation.
     PathMoveRequest:
       type: object
-      required: [new_name]
       properties:
+        operation:
+          type: string
+          enum: [move, copy]
+          default: move
+          description: Path mutation operation. Defaults to `move` when omitted.
         new_name:
           type: string
-          description: New basename for the file or collection within the same parent collection.
+          description: New basename for rename/move within the same parent collection.
+        destination_path:
+          type: string
+          description: Absolute destination iRODS path for move or copy operations.
+      anyOf:
+        - required: [new_name]
+        - required: [destination_path]
     PathReplicaCreateRequest:
       type: object
       required: [resource]

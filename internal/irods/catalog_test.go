@@ -551,6 +551,69 @@ func TestCatalogRenamePathRenamesCollection(t *testing.T) {
 	}
 }
 
+func TestCatalogRelocatePathMovesDataObjectToDestinationPath(t *testing.T) {
+	filesystem := newCatalogTestFileSystem()
+	service := newTestCatalogService(t, filesystem)
+
+	entry, err := service.RelocatePath(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt", PathRelocateOptions{
+		Operation:       PathRelocateOperationMove,
+		DestinationPath: "/tempZone/home/alice/project/moved.txt",
+	})
+	if err != nil {
+		t.Fatalf("RelocatePath returned error: %v", err)
+	}
+
+	if entry.Path != "/tempZone/home/alice/project/moved.txt" {
+		t.Fatalf("expected moved path, got %q", entry.Path)
+	}
+	if _, ok := filesystem.entriesByPath["/tempZone/home/alice/file.txt"]; ok {
+		t.Fatal("expected original file path to be removed")
+	}
+}
+
+func TestCatalogRelocatePathCopiesDataObjectToDestinationPath(t *testing.T) {
+	filesystem := newCatalogTestFileSystem()
+	service := newTestCatalogService(t, filesystem)
+
+	entry, err := service.RelocatePath(context.Background(), bearerRequestContext(), "/tempZone/home/alice/file.txt", PathRelocateOptions{
+		Operation:       PathRelocateOperationCopy,
+		DestinationPath: "/tempZone/home/alice/project/copied.txt",
+	})
+	if err != nil {
+		t.Fatalf("RelocatePath returned error: %v", err)
+	}
+
+	if entry.Path != "/tempZone/home/alice/project/copied.txt" {
+		t.Fatalf("expected copied path, got %q", entry.Path)
+	}
+	if _, ok := filesystem.entriesByPath["/tempZone/home/alice/file.txt"]; !ok {
+		t.Fatal("expected source file to remain after copy")
+	}
+}
+
+func TestCatalogRelocatePathCopiesCollectionRecursively(t *testing.T) {
+	filesystem := newCatalogTestFileSystem()
+	service := newTestCatalogService(t, filesystem)
+
+	entry, err := service.RelocatePath(context.Background(), bearerRequestContext(), "/tempZone/home/alice/project", PathRelocateOptions{
+		Operation:       PathRelocateOperationCopy,
+		DestinationPath: "/tempZone/home/alice/project-copy",
+	})
+	if err != nil {
+		t.Fatalf("RelocatePath returned error: %v", err)
+	}
+
+	if entry.Path != "/tempZone/home/alice/project-copy" {
+		t.Fatalf("expected copied collection path, got %q", entry.Path)
+	}
+	if _, ok := filesystem.entriesByPath["/tempZone/home/alice/project/child.txt"]; !ok {
+		t.Fatal("expected source child to remain")
+	}
+	if _, ok := filesystem.entriesByPath["/tempZone/home/alice/project-copy/child.txt"]; !ok {
+		t.Fatal("expected copied child entry to exist")
+	}
+}
+
 func TestCatalogGetPathMetadataMapsAVUs(t *testing.T) {
 	service := newTestCatalogService(t, newCatalogTestFileSystem())
 
@@ -1237,6 +1300,47 @@ func (f *catalogTestFileSystem) RenameFile(srcPath string, destPath string) erro
 
 	f.childrenByPath[parentSrc] = filterCatalogChildEntry(f.childrenByPath[parentSrc], cleanSrc)
 	f.childrenByPath[parentDest] = append(f.childrenByPath[parentDest], entry)
+	return nil
+}
+
+func (f *catalogTestFileSystem) CopyFile(srcPath string, destPath string, force bool) error {
+	entry, ok := f.entriesByPath[srcPath]
+	if !ok || entry.IsDir() {
+		return irodstypes.NewFileNotFoundError(srcPath)
+	}
+
+	cleanDest := path.Clean(destPath)
+	if _, exists := f.entriesByPath[cleanDest]; exists && !force {
+		return irodstypes.NewIRODSError(irodscommon.CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME)
+	}
+
+	parentDest := path.Dir(cleanDest)
+	parentEntry, ok := f.entriesByPath[parentDest]
+	if !ok || !parentEntry.IsDir() {
+		return irodstypes.NewFileNotFoundError(parentDest)
+	}
+
+	cloned := *entry
+	cloned.Path = cleanDest
+	cloned.Name = path.Base(cleanDest)
+	f.entriesByPath[cleanDest] = &cloned
+	f.childrenByPath[parentDest] = append(f.childrenByPath[parentDest], &cloned)
+
+	if data, ok := f.contentByPath[path.Clean(srcPath)]; ok {
+		f.contentByPath[cleanDest] = append([]byte(nil), data...)
+	}
+	if metas, ok := f.metadataByPath[path.Clean(srcPath)]; ok {
+		clonedMetas := make([]*irodstypes.IRODSMeta, 0, len(metas))
+		for _, meta := range metas {
+			if meta == nil {
+				continue
+			}
+			cloneMeta := *meta
+			clonedMetas = append(clonedMetas, &cloneMeta)
+		}
+		f.metadataByPath[cleanDest] = clonedMetas
+	}
+
 	return nil
 }
 
