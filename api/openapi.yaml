@@ -2361,8 +2361,10 @@ components:
         kind:
           type: string
           enum: [data_object, collection]
-        cmd_cue:
-          $ref: "#/components/schemas/CmdCue"
+        cmd_cues:
+          type: array
+          items:
+            $ref: "#/components/schemas/CmdCue"
         links:
           $ref: "#/components/schemas/PathLinks"
         parent:
@@ -2451,7 +2453,7 @@ components:
       properties:
         operation:
           type: string
-          enum: [put, get]
+          enum: [put, get, phymove, replicate]
         gocmd:
           type: string
         icommand:
