@@ -20,6 +20,7 @@ type PathService interface {
 	TrimPathReplica(ctx context.Context, absolutePath string, options irods.PathReplicaTrimOptions) ([]domain.PathReplica, error)
 	DeletePath(ctx context.Context, absolutePath string, force bool) error
 	RenamePath(ctx context.Context, absolutePath string, newName string) (domain.PathEntry, error)
+	RelocatePath(ctx context.Context, absolutePath string, options irods.PathRelocateOptions) (domain.PathEntry, error)
 	GetPathMetadata(ctx context.Context, absolutePath string) ([]domain.AVUMetadata, error)
 	AddPathMetadata(ctx context.Context, absolutePath string, attrib string, value string, unit string) (domain.AVUMetadata, error)
 	UpdatePathMetadata(ctx context.Context, absolutePath string, avuID string, attrib string, value string, unit string) (domain.AVUMetadata, error)
@@ -139,6 +140,15 @@ func (s *pathService) RenamePath(ctx context.Context, absolutePath string, newNa
 	}
 
 	return s.catalog.RenamePath(ctx, irodsRequestContext(requestContext), absolutePath, newName)
+}
+
+func (s *pathService) RelocatePath(ctx context.Context, absolutePath string, options irods.PathRelocateOptions) (domain.PathEntry, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return domain.PathEntry{}, err
+	}
+
+	return s.catalog.RelocatePath(ctx, irodsRequestContext(requestContext), absolutePath, options)
 }
 
 func (s *pathService) GetPathMetadata(ctx context.Context, absolutePath string) ([]domain.AVUMetadata, error) {

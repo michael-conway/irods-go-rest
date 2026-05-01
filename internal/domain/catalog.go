@@ -12,7 +12,6 @@ type PathEntry struct {
 	Zone         string            `json:"zone"`
 	CmdCues      []CmdCue          `json:"cmd_cues,omitempty"`
 	Links        *PathLinks        `json:"links,omitempty"`
-	Parent       *ParentLink       `json:"parent,omitempty"`
 	PathSegments []PathSegmentLink `json:"path_segments,omitempty"`
 	Checksum     *PathChecksum     `json:"checksum,omitempty"`
 	MimeType     string            `json:"mime_type,omitempty"`
@@ -34,20 +33,21 @@ type PathChecksum struct {
 }
 
 type PathReplica struct {
-	Number            int64       `json:"number"`
-	Owner             string      `json:"owner,omitempty"`
-	ResourceName      string      `json:"resource_name,omitempty"`
-	ResourceLink      *ActionLink `json:"resource_link,omitempty"`
-	ResourceHierarchy string      `json:"resource_hierarchy,omitempty"`
-	Size              int64       `json:"size,omitempty"`
-	DisplaySize       string      `json:"display_size,omitempty"`
-	UpdatedAt         *time.Time  `json:"updated_at,omitempty"`
-	Status            string      `json:"status,omitempty"`
-	StatusSymbol      string      `json:"status_symbol,omitempty"`
-	StatusDescription string      `json:"status_description,omitempty"`
-	Checksum          string      `json:"checksum,omitempty"`
-	DataType          string      `json:"data_type,omitempty"`
-	PhysicalPath      string      `json:"physical_path,omitempty"`
+	Number            int64             `json:"number"`
+	Owner             string            `json:"owner,omitempty"`
+	ResourceName      string            `json:"resource_name,omitempty"`
+	ResourceLink      *ActionLink       `json:"resource_link,omitempty"`
+	Links             *PathReplicaLinks `json:"links,omitempty"`
+	ResourceHierarchy string            `json:"resource_hierarchy,omitempty"`
+	Size              int64             `json:"size,omitempty"`
+	DisplaySize       string            `json:"display_size,omitempty"`
+	UpdatedAt         *time.Time        `json:"updated_at,omitempty"`
+	Status            string            `json:"status,omitempty"`
+	StatusSymbol      string            `json:"status_symbol,omitempty"`
+	StatusDescription string            `json:"status_description,omitempty"`
+	Checksum          string            `json:"checksum,omitempty"`
+	DataType          string            `json:"data_type,omitempty"`
+	PhysicalPath      string            `json:"physical_path,omitempty"`
 }
 
 type AVUMetadata struct {
@@ -81,6 +81,23 @@ type PathACLEntry struct {
 }
 
 type PathLinks struct {
+	Self                  *ActionLink `json:"self,omitempty"`
+	Parent                *ActionLink `json:"parent,omitempty"`
+	Children              *ActionLink `json:"children,omitempty"`
+	Details               *ActionLink `json:"details,omitempty"`
+	Update                *ActionLink `json:"update,omitempty"`
+	Delete                *ActionLink `json:"delete,omitempty"`
+	Relocate              *ActionLink `json:"relocate,omitempty"`
+	Move                  *ActionLink `json:"move,omitempty"`
+	Copy                  *ActionLink `json:"copy,omitempty"`
+	UploadContents        *ActionLink `json:"upload_contents,omitempty"`
+	ReplaceContents       *ActionLink `json:"replace_contents,omitempty"`
+	DownloadContents      *ActionLink `json:"download_contents,omitempty"`
+	Next                  *ActionLink `json:"next,omitempty"`
+	Prev                  *ActionLink `json:"prev,omitempty"`
+	AddReplica            *ActionLink `json:"add_replica,omitempty"`
+	MoveReplica           *ActionLink `json:"move_replica,omitempty"`
+	TrimReplica           *ActionLink `json:"trim_replica,omitempty"`
 	AVUs                  *ActionLink `json:"avus,omitempty"`
 	ACLs                  *ActionLink `json:"acls,omitempty"`
 	Replicas              *ActionLink `json:"replicas,omitempty"`
@@ -91,6 +108,28 @@ type PathLinks struct {
 	CreateChildDataObject *ActionLink `json:"create_child_data_object,omitempty"`
 	SetInheritance        *ActionLink `json:"set_inheritance,omitempty"`
 	DeleteInheritance     *ActionLink `json:"delete_inheritance,omitempty"`
+}
+
+type PathChildrenLinks struct {
+	Self                  *ActionLink `json:"self,omitempty"`
+	Parent                *ActionLink `json:"parent,omitempty"`
+	Next                  *ActionLink `json:"next,omitempty"`
+	Prev                  *ActionLink `json:"prev,omitempty"`
+	CreateChildCollection *ActionLink `json:"create_child_collection,omitempty"`
+	CreateChildDataObject *ActionLink `json:"create_child_data_object,omitempty"`
+	UploadContents        *ActionLink `json:"upload_contents,omitempty"`
+}
+
+type PathReplicasLinks struct {
+	Self        *ActionLink `json:"self,omitempty"`
+	AddReplica  *ActionLink `json:"add_replica,omitempty"`
+	MoveReplica *ActionLink `json:"move_replica,omitempty"`
+	TrimReplica *ActionLink `json:"trim_replica,omitempty"`
+}
+
+type PathReplicaLinks struct {
+	Trim            *ActionLink `json:"trim,omitempty"`
+	ResourceDetails *ActionLink `json:"resource_details,omitempty"`
 }
 
 type AVULinks struct {
@@ -118,11 +157,6 @@ type CmdCue struct {
 	Operation string `json:"operation,omitempty"`
 	GoCmd     string `json:"gocmd,omitempty"`
 	ICommand  string `json:"icommand,omitempty"`
-}
-
-type ParentLink struct {
-	IRODSPath string `json:"irods_path"`
-	Href      string `json:"href"`
 }
 
 type PathSegmentLink struct {

@@ -73,7 +73,6 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("PATCH /api/v1/path", h.requireBearer(http.HandlerFunc(h.patchPath)))
 	mux.Handle("DELETE /api/v1/path", h.requireBearer(http.HandlerFunc(h.deletePath)))
 	mux.Handle("GET /api/v1/path/children", h.requireBearer(http.HandlerFunc(h.getPathChildren)))
-	mux.Handle("POST /api/v1/path/children", h.requireBearer(http.HandlerFunc(h.postPathChildren)))
 	mux.Handle("GET /api/v1/path/replicas", h.requireBearer(http.HandlerFunc(h.getPathReplicas)))
 	mux.Handle("POST /api/v1/path/replicas", h.requireBearer(http.HandlerFunc(h.postPathReplicas)))
 	mux.Handle("PATCH /api/v1/path/replicas", h.requireBearer(http.HandlerFunc(h.patchPathReplicas)))

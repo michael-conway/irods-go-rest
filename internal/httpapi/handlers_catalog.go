@@ -85,10 +85,6 @@ func (h *Handler) deletePath(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) patchPath(w http.ResponseWriter, r *http.Request) {
-	h.renamePath(w, r)
-}
-
-func (h *Handler) renamePath(w http.ResponseWriter, r *http.Request) {
 	objectPath := queryIRODSPath(r)
 	if objectPath == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "irods_path query parameter is required")
@@ -96,21 +92,37 @@ func (h *Handler) renamePath(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var request struct {
-		NewName string `json:"new_name"`
+		Operation       string `json:"operation"`
+		NewName         string `json:"new_name"`
+		DestinationPath string `json:"destination_path"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
 		return
 	}
-	if strings.TrimSpace(request.NewName) == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "new_name is required")
+
+	operation := strings.ToLower(strings.TrimSpace(request.Operation))
+	if operation == "" {
+		operation = string(irods.PathRelocateOperationMove)
+	}
+	if operation != string(irods.PathRelocateOperationMove) && operation != string(irods.PathRelocateOperationCopy) {
+		writeError(w, http.StatusBadRequest, "invalid_request", "operation must be one of move or copy")
 		return
 	}
 
-	renamed, err := h.paths.RenamePath(r.Context(), objectPath, request.NewName)
+	if strings.TrimSpace(request.DestinationPath) == "" && strings.TrimSpace(request.NewName) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "new_name or destination_path is required")
+		return
+	}
+
+	relocated, err := h.paths.RelocatePath(r.Context(), objectPath, irods.PathRelocateOptions{
+		Operation:       irods.PathRelocateOperation(operation),
+		NewName:         request.NewName,
+		DestinationPath: request.DestinationPath,
+	})
 	if err != nil {
 		lowerErr := strings.ToLower(err.Error())
-		if strings.Contains(lowerErr, "new_name") {
+		if strings.Contains(lowerErr, "new_name") || strings.Contains(lowerErr, "destination_path") || strings.Contains(lowerErr, "operation") {
 			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 			return
 		}
@@ -118,7 +130,7 @@ func (h *Handler) renamePath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, pathEntryResponse(r, renamed))
+	writeJSON(w, http.StatusOK, pathEntryResponse(r, relocated))
 }
 
 func (h *Handler) getPathChildren(w http.ResponseWriter, r *http.Request) {
@@ -155,9 +167,12 @@ func (h *Handler) getPathChildren(w http.ResponseWriter, r *http.Request) {
 			mappedChildren = append(mappedChildren, pathEntryResponse(r, child))
 		}
 
+		links := pathChildrenLinks(r, objectPath, len(mappedChildren), len(mappedChildren), searchOptions)
+
 		writeJSON(w, http.StatusOK, map[string]any{
 			"irods_path":    objectPath,
 			"path_segments": buildPathSegments(objectPath),
+			"links":         links,
 			"children":      mappedChildren,
 		})
 		return
@@ -184,10 +199,12 @@ func (h *Handler) getPathChildren(w http.ResponseWriter, r *http.Request) {
 	}
 
 	recursive := searchResult.SearchScope == irods.PathChildrenSearchScopeSubtree || searchResult.SearchScope == irods.PathChildrenSearchScopeAbsolute
+	links := pathChildrenLinks(r, objectPath, searchResult.MatchedCount, len(mappedChildren), searchOptions)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"irods_path":    objectPath,
 		"path_segments": buildPathSegments(objectPath),
+		"links":         links,
 		"children":      mappedChildren,
 		"search": map[string]any{
 			"name_pattern":   searchResult.NamePattern,
@@ -217,10 +234,12 @@ func (h *Handler) getPathReplicas(w http.ResponseWriter, r *http.Request) {
 		writePathError(w, err)
 		return
 	}
+	replicas = pathReplicaResponseList(objectPath, replicas)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"irods_path":    objectPath,
 		"path_segments": buildPathSegments(objectPath),
+		"links":         pathReplicasLinks(r, objectPath),
 		"replicas":      replicas,
 	})
 }
@@ -261,10 +280,12 @@ func (h *Handler) postPathReplicas(w http.ResponseWriter, r *http.Request) {
 		writePathError(w, err)
 		return
 	}
+	replicas = pathReplicaResponseList(objectPath, replicas)
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"irods_path":    objectPath,
 		"path_segments": buildPathSegments(objectPath),
+		"links":         pathReplicasLinks(r, objectPath),
 		"replicas":      replicas,
 	})
 }
@@ -333,10 +354,12 @@ func (h *Handler) patchPathReplicas(w http.ResponseWriter, r *http.Request) {
 		writePathError(w, err)
 		return
 	}
+	replicas = pathReplicaResponseList(objectPath, replicas)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"irods_path":    objectPath,
 		"path_segments": buildPathSegments(objectPath),
+		"links":         pathReplicasLinks(r, objectPath),
 		"replicas":      replicas,
 	})
 }
@@ -402,10 +425,12 @@ func (h *Handler) deletePathReplicas(w http.ResponseWriter, r *http.Request) {
 		writePathError(w, err)
 		return
 	}
+	replicas = pathReplicaResponseList(objectPath, replicas)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"irods_path":    objectPath,
 		"path_segments": buildPathSegments(objectPath),
+		"links":         pathReplicasLinks(r, objectPath),
 		"replicas":      replicas,
 	})
 }
@@ -645,10 +670,6 @@ func (h *Handler) deletePathACLInheritance(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handler) postPath(w http.ResponseWriter, r *http.Request) {
-	h.createPath(w, r)
-}
-
-func (h *Handler) postPathChildren(w http.ResponseWriter, r *http.Request) {
 	h.createPath(w, r)
 }
 
@@ -1148,19 +1169,8 @@ func queryPathChildrenSearchOptions(r *http.Request) (irods.PathChildrenListOpti
 		return irods.PathChildrenListOptions{}, fmt.Errorf("search_scope query parameter must be one of children, subtree, or absolute")
 	}
 
-	recursiveRaw := strings.TrimSpace(query.Get("recursive"))
-	if recursiveRaw != "" {
-		recursive, err := strconv.ParseBool(recursiveRaw)
-		if err != nil {
-			return irods.PathChildrenListOptions{}, fmt.Errorf("recursive query parameter must be a boolean")
-		}
-		if searchScope == "" {
-			if recursive {
-				options.SearchScope = irods.PathChildrenSearchScopeSubtree
-			} else {
-				options.SearchScope = irods.PathChildrenSearchScopeChildren
-			}
-		}
+	if rawRecursive := strings.TrimSpace(query.Get("recursive")); rawRecursive != "" {
+		return irods.PathChildrenListOptions{}, fmt.Errorf("recursive query parameter is no longer supported; use search_scope=children or search_scope=subtree")
 	}
 
 	if rawLimit := strings.TrimSpace(query.Get("limit")); rawLimit != "" {
@@ -1341,7 +1351,6 @@ func avuValidationFields(attrib string, value string) map[string]string {
 func pathEntryResponse(r *http.Request, entry domain.PathEntry) domain.PathEntry {
 	entry.Links = pathLinksForEntry(entry.Path, entry.Kind)
 	entry.CmdCues = pathCmdCuesForEntry(entry)
-	entry.Parent = buildParentLink(r, entry.Path)
 	entry.PathSegments = buildPathSegments(entry.Path)
 	return entry
 }
@@ -1479,37 +1488,52 @@ func pathChecksumResponse(irodsPath string, checksum domain.PathChecksum) map[st
 	}
 }
 
-func buildParentLink(r *http.Request, irodsPath string) *domain.ParentLink {
-	irodsPath = strings.TrimSpace(irodsPath)
-	if irodsPath == "" || irodsPath == "/" {
-		return nil
-	}
-
-	cleaned := path.Clean(irodsPath)
-	if cleaned == "." || cleaned == "/" {
-		return nil
-	}
-
-	parentPath := path.Dir(cleaned)
-	if parentPath == "." || parentPath == "" || parentPath == cleaned {
-		return nil
-	}
-
-	return &domain.ParentLink{
-		IRODSPath: parentPath,
-		Href:      "/api/v1/path?irods_path=" + url.QueryEscape(parentPath),
-	}
-}
-
 func pathLinksForEntry(irodsPath string, kind string) *domain.PathLinks {
 	irodsPath = strings.TrimSpace(irodsPath)
 	if irodsPath == "" {
 		return nil
 	}
 
+	pathLink := "/api/v1/path?irods_path=" + url.QueryEscape(irodsPath)
 	avuPath := "/api/v1/path/avu?irods_path=" + url.QueryEscape(irodsPath)
 	aclPath := "/api/v1/path/acl?irods_path=" + url.QueryEscape(irodsPath)
+	replicaPath := "/api/v1/path/replicas?irods_path=" + url.QueryEscape(irodsPath)
+	parentPath := path.Dir(path.Clean(irodsPath))
+	uploadPath := "/api/v1/path/contents?parent_path=" + url.QueryEscape(irodsPath)
+	dataObjectParentPath := "/"
+	if parentPath != "." && parentPath != "" {
+		dataObjectParentPath = parentPath
+	}
+
 	links := &domain.PathLinks{
+		Self: &domain.ActionLink{
+			Href:   pathLink,
+			Method: http.MethodGet,
+		},
+		Details: &domain.ActionLink{
+			Href:   pathLink,
+			Method: http.MethodGet,
+		},
+		Update: &domain.ActionLink{
+			Href:   pathLink,
+			Method: http.MethodPatch,
+		},
+		Delete: &domain.ActionLink{
+			Href:   pathLink,
+			Method: http.MethodDelete,
+		},
+		Relocate: &domain.ActionLink{
+			Href:   pathLink,
+			Method: http.MethodPatch,
+		},
+		Move: &domain.ActionLink{
+			Href:   pathLink,
+			Method: http.MethodPatch,
+		},
+		Copy: &domain.ActionLink{
+			Href:   pathLink,
+			Method: http.MethodPatch,
+		},
 		AVUs: &domain.ActionLink{
 			Href:   avuPath,
 			Method: http.MethodGet,
@@ -1531,23 +1555,56 @@ func pathLinksForEntry(irodsPath string, kind string) *domain.PathLinks {
 			Method: http.MethodGet,
 		},
 	}
+	if parentPath != "." && parentPath != "" && parentPath != path.Clean(irodsPath) {
+		links.Parent = &domain.ActionLink{
+			Href:   "/api/v1/path?irods_path=" + url.QueryEscape(parentPath),
+			Method: http.MethodGet,
+		}
+	}
 
 	if kind == "data_object" {
-		replicasPath := "/api/v1/path/replicas?irods_path=" + url.QueryEscape(irodsPath)
 		links.Replicas = &domain.ActionLink{
-			Href:   replicasPath,
+			Href:   replicaPath,
 			Method: http.MethodGet,
+		}
+		links.DownloadContents = &domain.ActionLink{
+			Href:   "/api/v1/path/contents?irods_path=" + url.QueryEscape(irodsPath),
+			Method: http.MethodGet,
+		}
+		links.ReplaceContents = &domain.ActionLink{
+			Href:   "/api/v1/path/contents?parent_path=" + url.QueryEscape(dataObjectParentPath) + "&file_name=" + url.QueryEscape(path.Base(path.Clean(irodsPath))),
+			Method: http.MethodPost,
+		}
+		links.AddReplica = &domain.ActionLink{
+			Href:   replicaPath,
+			Method: http.MethodPost,
+		}
+		links.MoveReplica = &domain.ActionLink{
+			Href:   replicaPath,
+			Method: http.MethodPatch,
+		}
+		links.TrimReplica = &domain.ActionLink{
+			Href:   replicaPath,
+			Method: http.MethodDelete,
 		}
 	}
 
 	if kind == "collection" {
 		createChildrenPath := "/api/v1/path?irods_path=" + url.QueryEscape(irodsPath)
+		links.Children = &domain.ActionLink{
+			Href:   "/api/v1/path/children?irods_path=" + url.QueryEscape(irodsPath),
+			Method: http.MethodGet,
+		}
 		links.CreateChildCollection = &domain.ActionLink{
 			Href:   createChildrenPath,
 			Method: http.MethodPost,
 		}
 		links.CreateChildDataObject = &domain.ActionLink{
 			Href:   createChildrenPath,
+			Method: http.MethodPost,
+		}
+		links.UploadContents = &domain.ActionLink{
+			Href:   uploadPath,
 			Method: http.MethodPost,
 		}
 		inheritancePath := "/api/v1/path/acl/inheritance?irods_path=" + url.QueryEscape(irodsPath)
@@ -1558,6 +1615,165 @@ func pathLinksForEntry(irodsPath string, kind string) *domain.PathLinks {
 		links.DeleteInheritance = &domain.ActionLink{
 			Href:   inheritancePath,
 			Method: http.MethodDelete,
+		}
+	}
+
+	return links
+}
+
+func actionLinkFromRequest(r *http.Request) *domain.ActionLink {
+	if r == nil || r.URL == nil {
+		return nil
+	}
+
+	href := r.URL.Path
+	if strings.TrimSpace(r.URL.RawQuery) != "" {
+		href += "?" + r.URL.RawQuery
+	}
+
+	return &domain.ActionLink{
+		Href:   href,
+		Method: http.MethodGet,
+	}
+}
+
+func pathChildrenLinks(r *http.Request, collectionPath string, total int, count int, options irods.PathChildrenListOptions) *domain.PathChildrenLinks {
+	collectionPath = strings.TrimSpace(collectionPath)
+	if collectionPath == "" {
+		return nil
+	}
+
+	links := &domain.PathChildrenLinks{
+		Self: actionLinkFromRequest(r),
+		CreateChildCollection: &domain.ActionLink{
+			Href:   "/api/v1/path?irods_path=" + url.QueryEscape(collectionPath),
+			Method: http.MethodPost,
+		},
+		CreateChildDataObject: &domain.ActionLink{
+			Href:   "/api/v1/path?irods_path=" + url.QueryEscape(collectionPath),
+			Method: http.MethodPost,
+		},
+		UploadContents: &domain.ActionLink{
+			Href:   "/api/v1/path/contents?parent_path=" + url.QueryEscape(collectionPath),
+			Method: http.MethodPost,
+		},
+	}
+
+	parentPath := path.Dir(path.Clean(collectionPath))
+	if parentPath != "." && parentPath != "" && parentPath != path.Clean(collectionPath) {
+		links.Parent = &domain.ActionLink{
+			Href:   "/api/v1/path?irods_path=" + url.QueryEscape(parentPath),
+			Method: http.MethodGet,
+		}
+	}
+
+	if r == nil || r.URL == nil || options.Limit <= 0 {
+		return links
+	}
+
+	if options.Offset > 0 {
+		prevOffset := options.Offset - options.Limit
+		if prevOffset < 0 {
+			prevOffset = 0
+		}
+		prevQuery := cloneURLValues(r.URL.Query())
+		prevQuery.Set("offset", strconv.Itoa(prevOffset))
+		prevQuery.Set("limit", strconv.Itoa(options.Limit))
+		links.Prev = &domain.ActionLink{
+			Href:   r.URL.Path + "?" + prevQuery.Encode(),
+			Method: http.MethodGet,
+		}
+	}
+
+	if options.Offset+count < total {
+		nextOffset := options.Offset + count
+		nextQuery := cloneURLValues(r.URL.Query())
+		nextQuery.Set("offset", strconv.Itoa(nextOffset))
+		nextQuery.Set("limit", strconv.Itoa(options.Limit))
+		links.Next = &domain.ActionLink{
+			Href:   r.URL.Path + "?" + nextQuery.Encode(),
+			Method: http.MethodGet,
+		}
+	}
+
+	return links
+}
+
+func cloneURLValues(values url.Values) url.Values {
+	cloned := url.Values{}
+	for key, entries := range values {
+		copied := make([]string, len(entries))
+		copy(copied, entries)
+		cloned[key] = copied
+	}
+	return cloned
+}
+
+func pathReplicasLinks(r *http.Request, irodsPath string) *domain.PathReplicasLinks {
+	irodsPath = strings.TrimSpace(irodsPath)
+	if irodsPath == "" {
+		return nil
+	}
+
+	replicaPath := "/api/v1/path/replicas?irods_path=" + url.QueryEscape(irodsPath)
+	links := &domain.PathReplicasLinks{
+		Self: actionLinkFromRequest(r),
+		AddReplica: &domain.ActionLink{
+			Href:   replicaPath,
+			Method: http.MethodPost,
+		},
+		MoveReplica: &domain.ActionLink{
+			Href:   replicaPath,
+			Method: http.MethodPatch,
+		},
+		TrimReplica: &domain.ActionLink{
+			Href:   replicaPath,
+			Method: http.MethodDelete,
+		},
+	}
+
+	if links.Self == nil {
+		links.Self = &domain.ActionLink{
+			Href:   replicaPath,
+			Method: http.MethodGet,
+		}
+	}
+
+	return links
+}
+
+func pathReplicaResponseList(irodsPath string, replicas []domain.PathReplica) []domain.PathReplica {
+	if len(replicas) == 0 {
+		return nil
+	}
+
+	mapped := make([]domain.PathReplica, 0, len(replicas))
+	for _, replica := range replicas {
+		replica.Links = pathReplicaLinks(irodsPath, replica)
+		mapped = append(mapped, replica)
+	}
+	return mapped
+}
+
+func pathReplicaLinks(irodsPath string, replica domain.PathReplica) *domain.PathReplicaLinks {
+	irodsPath = strings.TrimSpace(irodsPath)
+	if irodsPath == "" {
+		return nil
+	}
+
+	replicaPath := "/api/v1/path/replicas?irods_path=" + url.QueryEscape(irodsPath)
+	links := &domain.PathReplicaLinks{
+		Trim: &domain.ActionLink{
+			Href:   replicaPath,
+			Method: http.MethodDelete,
+		},
+	}
+
+	resourceName := strings.TrimSpace(replica.ResourceName)
+	if resourceName != "" {
+		links.ResourceDetails = &domain.ActionLink{
+			Href:   "/api/v1/resource/" + url.PathEscape(resourceName),
+			Method: http.MethodGet,
 		}
 	}
 

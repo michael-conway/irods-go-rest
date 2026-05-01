@@ -99,6 +99,19 @@ type PathReplicaTrimOptions struct {
 	MinAgeMinutes int
 }
 
+type PathRelocateOperation string
+
+const (
+	PathRelocateOperationMove PathRelocateOperation = "move"
+	PathRelocateOperationCopy PathRelocateOperation = "copy"
+)
+
+type PathRelocateOptions struct {
+	Operation       PathRelocateOperation
+	NewName         string
+	DestinationPath string
+}
+
 type CatalogService interface {
 	GetPath(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathLookupOptions) (domain.PathEntry, error)
 	GetPathChildren(ctx context.Context, requestContext *RequestContext, absolutePath string) ([]domain.PathEntry, error)
@@ -111,6 +124,7 @@ type CatalogService interface {
 	TrimPathReplica(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathReplicaTrimOptions) ([]domain.PathReplica, error)
 	DeletePath(ctx context.Context, requestContext *RequestContext, absolutePath string, force bool) error
 	RenamePath(ctx context.Context, requestContext *RequestContext, absolutePath string, newName string) (domain.PathEntry, error)
+	RelocatePath(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathRelocateOptions) (domain.PathEntry, error)
 	GetPathMetadata(ctx context.Context, requestContext *RequestContext, absolutePath string) ([]domain.AVUMetadata, error)
 	AddPathMetadata(ctx context.Context, requestContext *RequestContext, absolutePath string, attrib string, value string, unit string) (domain.AVUMetadata, error)
 	UpdatePathMetadata(ctx context.Context, requestContext *RequestContext, absolutePath string, avuID string, attrib string, value string, unit string) (domain.AVUMetadata, error)
@@ -134,6 +148,7 @@ type CatalogFileSystem interface {
 	RemoveFile(irodsPath string, force bool) error
 	RenameDir(srcPath string, destPath string) error
 	RenameFile(srcPath string, destPath string) error
+	CopyFile(srcPath string, destPath string, force bool) error
 	ListMetadata(irodsPath string) ([]*irodstypes.IRODSMeta, error)
 	AddMetadata(irodsPath string, attName string, attValue string, attUnits string) error
 	DeleteMetadata(irodsPath string, avuID int64) error
@@ -765,75 +780,110 @@ func (s *catalogService) DeletePath(ctx context.Context, requestContext *Request
 }
 
 func (s *catalogService) RenamePath(ctx context.Context, requestContext *RequestContext, absolutePath string, newName string) (domain.PathEntry, error) {
+	return s.RelocatePath(ctx, requestContext, absolutePath, PathRelocateOptions{
+		Operation: PathRelocateOperationMove,
+		NewName:   newName,
+	})
+}
+
+func (s *catalogService) RelocatePath(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathRelocateOptions) (domain.PathEntry, error) {
 	absolutePath = strings.TrimSpace(absolutePath)
-	newName = strings.TrimSpace(newName)
 	if absolutePath == "" {
 		return domain.PathEntry{}, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
 	}
-	if newName == "" {
-		return domain.PathEntry{}, fmt.Errorf("new_name is required")
+
+	operation := PathRelocateOperation(strings.ToLower(strings.TrimSpace(string(options.Operation))))
+	if operation == "" {
+		operation = PathRelocateOperationMove
+	}
+	if operation != PathRelocateOperationMove && operation != PathRelocateOperationCopy {
+		return domain.PathEntry{}, fmt.Errorf("operation must be one of move or copy")
 	}
 
-	destPath, err := resolveRenameDestination(absolutePath, newName)
+	destPath, err := resolveRelocateDestination(absolutePath, options.NewName, options.DestinationPath)
 	if err != nil {
 		return domain.PathEntry{}, err
 	}
+	if path.Clean(destPath) == path.Clean(absolutePath) {
+		return domain.PathEntry{}, fmt.Errorf("destination_path must differ from source path")
+	}
 
-	slog.Debug("catalog RenamePath start", "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+	applicationName := "irods-go-rest-move-path"
+	if operation == PathRelocateOperationCopy {
+		applicationName = "irods-go-rest-copy-path"
+	}
 
-	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-rename-path")
+	slog.Debug("catalog RelocatePath start", "path", absolutePath, "dest_path", destPath, "operation", operation, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, applicationName)
 	if err != nil {
-		logIRODSError("catalog RenamePath filesystem setup failed", err, "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		logIRODSError("catalog RelocatePath filesystem setup failed", err, "path", absolutePath, "dest_path", destPath, "operation", operation, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 		return domain.PathEntry{}, err
 	}
 	defer filesystem.Release()
 
 	entry, err := filesystem.Stat(absolutePath)
 	if err != nil {
-		logIRODSError("catalog RenamePath stat failed", err, "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		logIRODSError("catalog RelocatePath stat failed", err, "path", absolutePath, "dest_path", destPath, "operation", operation, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 		return domain.PathEntry{}, normalizePathAccessError("stat path", absolutePath, err)
 	}
 
-	if entry.IsDir() {
-		if err := filesystem.RenameDir(absolutePath, destPath); err != nil {
-			logIRODSError("catalog RenamePath rename dir failed", err, "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
-			return domain.PathEntry{}, normalizePathAccessError("rename collection", absolutePath, err)
+	if operation == PathRelocateOperationMove {
+		if entry.IsDir() {
+			if err := filesystem.RenameDir(absolutePath, destPath); err != nil {
+				logIRODSError("catalog RelocatePath rename dir failed", err, "path", absolutePath, "dest_path", destPath, "operation", operation, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+				return domain.PathEntry{}, normalizePathAccessError("move collection", absolutePath, err)
+			}
+		} else {
+			if err := filesystem.RenameFile(absolutePath, destPath); err != nil {
+				logIRODSError("catalog RelocatePath rename file failed", err, "path", absolutePath, "dest_path", destPath, "operation", operation, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+				return domain.PathEntry{}, normalizePathAccessError("move data object", absolutePath, err)
+			}
 		}
 	} else {
-		if err := filesystem.RenameFile(absolutePath, destPath); err != nil {
-			logIRODSError("catalog RenamePath rename file failed", err, "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
-			return domain.PathEntry{}, normalizePathAccessError("rename data object", absolutePath, err)
+		if entry.IsDir() {
+			if err := copyCollectionRecursive(filesystem, absolutePath, destPath); err != nil {
+				logIRODSError("catalog RelocatePath copy dir failed", err, "path", absolutePath, "dest_path", destPath, "operation", operation, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+				return domain.PathEntry{}, normalizePathAccessError("copy collection", absolutePath, err)
+			}
+		} else {
+			if err := filesystem.CopyFile(absolutePath, destPath, false); err != nil {
+				logIRODSError("catalog RelocatePath copy file failed", err, "path", absolutePath, "dest_path", destPath, "operation", operation, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+				return domain.PathEntry{}, normalizePathAccessError("copy data object", absolutePath, err)
+			}
 		}
 	}
 
-	verifyFS, renamedEntry, err := s.waitForObservedPath(ctx, requestContext, destPath, true, "irods-go-rest-rename-path-verify")
+	verifyFS, relocatedEntry, err := s.waitForObservedPath(ctx, requestContext, destPath, true, applicationName+"-verify")
 	if err != nil {
-		logIRODSError("catalog RenamePath verification failed", err, "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		logIRODSError("catalog RelocatePath destination verification failed", err, "path", absolutePath, "dest_path", destPath, "operation", operation, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 		return domain.PathEntry{}, err
 	}
 	defer verifyFS.Release()
 
-	if _, _, err := s.waitForObservedPath(ctx, requestContext, absolutePath, false, "irods-go-rest-rename-path-source-verify"); err != nil {
-		logIRODSError("catalog RenamePath source verification failed", err, "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
-		return domain.PathEntry{}, err
+	if operation == PathRelocateOperationMove {
+		if _, _, err := s.waitForObservedPath(ctx, requestContext, absolutePath, false, applicationName+"-source-verify"); err != nil {
+			logIRODSError("catalog RelocatePath source verification failed", err, "path", absolutePath, "dest_path", destPath, "operation", operation, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			return domain.PathEntry{}, err
+		}
 	}
 
 	metadata, err := verifyFS.ListMetadata(destPath)
 	if err != nil {
-		logIRODSError("catalog RenamePath metadata failed", err, "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		logIRODSError("catalog RelocatePath metadata failed", err, "path", absolutePath, "dest_path", destPath, "operation", operation, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 		return domain.PathEntry{}, normalizePathAccessError("list metadata", destPath, err)
 	}
 
-	if renamedEntry.IsDir() {
+	if relocatedEntry.IsDir() {
 		children, err := verifyFS.List(destPath)
 		if err != nil {
-			logIRODSError("catalog RenamePath list children failed", err, "path", absolutePath, "dest_path", destPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			logIRODSError("catalog RelocatePath list children failed", err, "path", absolutePath, "dest_path", destPath, "operation", operation, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 			return domain.PathEntry{}, normalizePathAccessError("list children", destPath, err)
 		}
-		return collectionPathEntry(s.cfg.IrodsZone, renamedEntry, metadata, len(children), PathLookupOptions{}), nil
+		return collectionPathEntry(s.cfg.IrodsZone, relocatedEntry, metadata, len(children), PathLookupOptions{}), nil
 	}
 
-	return dataObjectPathEntry(s.cfg.IrodsZone, renamedEntry, metadata, PathLookupOptions{}), nil
+	return dataObjectPathEntry(s.cfg.IrodsZone, relocatedEntry, metadata, PathLookupOptions{}), nil
 }
 
 func (s *catalogService) GetPathMetadata(_ context.Context, requestContext *RequestContext, absolutePath string) ([]domain.AVUMetadata, error) {
@@ -1606,6 +1656,10 @@ func (a *catalogFileSystemAdapter) RenameFile(srcPath string, destPath string) e
 	return a.filesystem.RenameFile(srcPath, destPath)
 }
 
+func (a *catalogFileSystemAdapter) CopyFile(srcPath string, destPath string, force bool) error {
+	return a.filesystem.CopyFile(srcPath, destPath, force)
+}
+
 func (a *catalogFileSystemAdapter) ListMetadata(irodsPath string) ([]*irodstypes.IRODSMeta, error) {
 	return a.filesystem.ListMetadata(irodsPath)
 }
@@ -1873,6 +1927,79 @@ func resolveRenameDestination(sourcePath string, newName string) (string, error)
 	}
 
 	return path.Clean(path.Join(parentPath, cleaned)), nil
+}
+
+func resolveRelocateDestination(sourcePath string, newName string, destinationPath string) (string, error) {
+	sourcePath = strings.TrimSpace(sourcePath)
+	destinationPath = strings.TrimSpace(destinationPath)
+	if sourcePath == "" {
+		return "", fmt.Errorf("%w: path %q", ErrNotFound, sourcePath)
+	}
+
+	if destinationPath != "" {
+		if !path.IsAbs(destinationPath) {
+			return "", fmt.Errorf("destination_path must be absolute")
+		}
+
+		cleaned := path.Clean(destinationPath)
+		if cleaned == "." || cleaned == "" || cleaned == "/" {
+			return "", fmt.Errorf("destination_path is invalid")
+		}
+
+		return cleaned, nil
+	}
+
+	return resolveRenameDestination(sourcePath, newName)
+}
+
+func copyCollectionRecursive(filesystem CatalogFileSystem, sourcePath string, destinationPath string) error {
+	if _, err := filesystem.Stat(destinationPath); err == nil {
+		return fmt.Errorf("%w: path %q already exists", ErrConflict, destinationPath)
+	} else if !isPathNotFoundError(err) {
+		return err
+	}
+
+	if err := filesystem.MakeDir(destinationPath, true); err != nil {
+		return err
+	}
+
+	entries, err := filesystem.List(sourcePath)
+	if err != nil {
+		return err
+	}
+
+	for _, child := range entries {
+		if child == nil {
+			continue
+		}
+
+		childDestinationPath := path.Join(destinationPath, path.Base(child.Path))
+		if child.IsDir() {
+			if err := copyCollectionRecursive(filesystem, child.Path, childDestinationPath); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if err := filesystem.CopyFile(child.Path, childDestinationPath, false); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func isPathNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if irodstypes.IsFileNotFoundError(err) {
+		return true
+	}
+
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "not found") || strings.Contains(message, "does not exist")
 }
 
 func metadataMap(metas []*irodstypes.IRODSMeta) map[string]string {
