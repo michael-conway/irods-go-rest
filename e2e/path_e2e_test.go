@@ -388,7 +388,7 @@ func TestGetPathChildrenWildcardSearchBasicAuthE2E(t *testing.T) {
 		return len(payload.Children), paths, payload.Search.MatchedCount
 	}
 
-	count, paths, matched := requestSearch("name_pattern=findme*&recursive=false")
+	count, paths, matched := requestSearch("name_pattern=findme*&search_scope=children")
 	if count != 1 || matched != 1 {
 		t.Fatalf("expected one non-recursive match, got count=%d matched_count=%d paths=%+v", count, matched, paths)
 	}
@@ -396,7 +396,7 @@ func TestGetPathChildrenWildcardSearchBasicAuthE2E(t *testing.T) {
 		t.Fatalf("expected non-recursive result %q, got %+v", rootMatchPath, paths)
 	}
 
-	count, paths, matched = requestSearch("name_pattern=findme*&recursive=true")
+	count, paths, matched = requestSearch("name_pattern=findme*&search_scope=subtree")
 	if count != 2 || matched != 2 {
 		t.Fatalf("expected two recursive matches, got count=%d matched_count=%d paths=%+v", count, matched, paths)
 	}
