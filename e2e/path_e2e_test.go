@@ -297,6 +297,125 @@ func TestGetPathChildrenBasicAuthE2E(t *testing.T) {
 	}
 }
 
+func TestGetPathChildrenWildcardSearchBasicAuthE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	client := newE2EHTTPClient()
+	filesystem := newE2EIRODSFilesystem(t)
+	defer filesystem.Release()
+
+	parentPath := irodsJoin(
+		"/"+e2eIRODSZone(t)+"/home/"+e2eBasicUsername(t),
+		"e2e-path-search-"+randomToken(nil, 8),
+	)
+	nestedPath := irodsJoin(parentPath, "nested")
+
+	if err := filesystem.MakeDir(parentPath, true); err != nil {
+		t.Fatalf("make parent collection %q: %v", parentPath, err)
+	}
+	if err := filesystem.MakeDir(nestedPath, true); err != nil {
+		t.Fatalf("make nested collection %q: %v", nestedPath, err)
+	}
+	defer func() {
+		if err := filesystem.RemoveDir(parentPath, true, true); err != nil && filesystem.Exists(parentPath) {
+			t.Errorf("cleanup parent collection %q: %v", parentPath, err)
+		}
+	}()
+
+	createChild := func(parent string, childName string, kind string) {
+		t.Helper()
+
+		createReq := newE2ERequest(t, http.MethodPost, pathURL(baseURL, "/api/v1/path", parent), strings.NewReader(`{"child_name":"`+childName+`","kind":"`+kind+`"}`))
+		createReq.Header.Set("Content-Type", "application/json")
+		setBasicAuth(createReq)
+
+		createResp, err := client.Do(createReq)
+		if err != nil {
+			t.Fatalf("perform create child request for %q under %q: %v", childName, parent, err)
+		}
+		defer createResp.Body.Close()
+
+		if createResp.StatusCode != http.StatusCreated {
+			body, _ := io.ReadAll(createResp.Body)
+			t.Fatalf("expected 201 creating %q under %q, got %d: %s", childName, parent, createResp.StatusCode, strings.TrimSpace(string(body)))
+		}
+	}
+
+	createChild(parentPath, "findme-root-1.txt", "data_object")
+	createChild(parentPath, "ignore-root-1.txt", "data_object")
+	createChild(nestedPath, "findme-nested-1.txt", "data_object")
+
+	rootMatchPath := irodsJoin(parentPath, "findme-root-1.txt")
+	nestedMatchPath := irodsJoin(nestedPath, "findme-nested-1.txt")
+	if !waitForIRODSPathFresh(t, rootMatchPath, 3*time.Second) {
+		t.Fatalf("expected root test file %q to exist", rootMatchPath)
+	}
+	if !waitForIRODSPathFresh(t, nestedMatchPath, 3*time.Second) {
+		t.Fatalf("expected nested test file %q to exist", nestedMatchPath)
+	}
+
+	requestSearch := func(extraQuery string) (int, []string, int) {
+		t.Helper()
+
+		req := newE2ERequest(t, http.MethodGet, pathURLWithQuery(baseURL, "/api/v1/path/children", parentPath, extraQuery), nil)
+		setBasicAuth(req)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("perform search request %q: %v", extraQuery, err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected 200 for search request %q, got %d: %s", extraQuery, resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+
+		var payload struct {
+			Children []struct {
+				Path string `json:"path"`
+			} `json:"children"`
+			Search struct {
+				MatchedCount int `json:"matched_count"`
+			} `json:"search"`
+		}
+		decodeJSON(t, resp.Body, &payload)
+
+		paths := make([]string, 0, len(payload.Children))
+		for _, child := range payload.Children {
+			paths = append(paths, child.Path)
+		}
+
+		return len(payload.Children), paths, payload.Search.MatchedCount
+	}
+
+	count, paths, matched := requestSearch("name_pattern=findme*&recursive=false")
+	if count != 1 || matched != 1 {
+		t.Fatalf("expected one non-recursive match, got count=%d matched_count=%d paths=%+v", count, matched, paths)
+	}
+	if paths[0] != rootMatchPath {
+		t.Fatalf("expected non-recursive result %q, got %+v", rootMatchPath, paths)
+	}
+
+	count, paths, matched = requestSearch("name_pattern=findme*&recursive=true")
+	if count != 2 || matched != 2 {
+		t.Fatalf("expected two recursive matches, got count=%d matched_count=%d paths=%+v", count, matched, paths)
+	}
+
+	foundRoot := false
+	foundNested := false
+	for _, candidate := range paths {
+		if candidate == rootMatchPath {
+			foundRoot = true
+		}
+		if candidate == nestedMatchPath {
+			foundNested = true
+		}
+	}
+	if !foundRoot || !foundNested {
+		t.Fatalf("expected recursive matches %q and %q, got %+v", rootMatchPath, nestedMatchPath, paths)
+	}
+}
+
 func TestPathFileCreateRenameDeleteBasicAuthE2E(t *testing.T) {
 	baseURL := requireE2EBaseURL(t)
 	client := newE2EHTTPClient()

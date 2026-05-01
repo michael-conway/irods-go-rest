@@ -128,7 +128,42 @@ func (h *Handler) getPathChildren(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	children, err := h.paths.GetPathChildren(r.Context(), objectPath)
+	searchOptions, err := queryPathChildrenSearchOptions(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	if strings.TrimSpace(searchOptions.NamePattern) == "" {
+		children, listErr := h.paths.GetPathChildren(r.Context(), objectPath)
+		if listErr != nil {
+			if errors.Is(listErr, irods.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "not_found", listErr.Error())
+				return
+			}
+			if errors.Is(listErr, irods.ErrPermissionDenied) {
+				writeError(w, http.StatusForbidden, "permission_denied", listErr.Error())
+				return
+			}
+
+			writeError(w, http.StatusInternalServerError, "internal_error", listErr.Error())
+			return
+		}
+
+		mappedChildren := make([]domain.PathEntry, 0, len(children))
+		for _, child := range children {
+			mappedChildren = append(mappedChildren, pathEntryResponse(r, child))
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"irods_path":    objectPath,
+			"path_segments": buildPathSegments(objectPath),
+			"children":      mappedChildren,
+		})
+		return
+	}
+
+	searchResult, err := h.paths.SearchPathChildren(r.Context(), objectPath, searchOptions)
 	if err != nil {
 		if errors.Is(err, irods.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
@@ -143,15 +178,24 @@ func (h *Handler) getPathChildren(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mappedChildren := make([]domain.PathEntry, 0, len(children))
-	for _, child := range children {
+	mappedChildren := make([]domain.PathEntry, 0, len(searchResult.Children))
+	for _, child := range searchResult.Children {
 		mappedChildren = append(mappedChildren, pathEntryResponse(r, child))
 	}
+
+	recursive := searchResult.SearchScope == irods.PathChildrenSearchScopeSubtree || searchResult.SearchScope == irods.PathChildrenSearchScopeAbsolute
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"irods_path":    objectPath,
 		"path_segments": buildPathSegments(objectPath),
 		"children":      mappedChildren,
+		"search": map[string]any{
+			"name_pattern":   searchResult.NamePattern,
+			"recursive":      recursive,
+			"search_scope":   searchResult.SearchScope,
+			"case_sensitive": searchResult.CaseSensitive,
+			"matched_count":  searchResult.MatchedCount,
+		},
 	})
 }
 
@@ -1070,6 +1114,88 @@ func queryVerboseLevel(r *http.Request) (int, error) {
 	default:
 		return 0, fmt.Errorf("verbose query parameter must be one of 0, 1, 2, true, false, long, or very_long")
 	}
+}
+
+func queryPathChildrenSearchOptions(r *http.Request) (irods.PathChildrenListOptions, error) {
+	query := r.URL.Query()
+	options := irods.PathChildrenListOptions{
+		NamePattern: strings.TrimSpace(query.Get("name_pattern")),
+		SearchScope: irods.PathChildrenSearchScopeChildren,
+		Sort:        strings.TrimSpace(query.Get("sort")),
+		Order:       strings.TrimSpace(query.Get("order")),
+	}
+
+	caseSensitiveRaw := strings.TrimSpace(query.Get("case_sensitive"))
+	if caseSensitiveRaw == "" {
+		options.CaseSensitive = true
+	} else {
+		caseSensitive, err := strconv.ParseBool(caseSensitiveRaw)
+		if err != nil {
+			return irods.PathChildrenListOptions{}, fmt.Errorf("case_sensitive query parameter must be a boolean")
+		}
+		options.CaseSensitive = caseSensitive
+	}
+
+	searchScope := strings.TrimSpace(query.Get("search_scope"))
+	switch strings.ToLower(searchScope) {
+	case "", string(irods.PathChildrenSearchScopeChildren):
+		options.SearchScope = irods.PathChildrenSearchScopeChildren
+	case string(irods.PathChildrenSearchScopeSubtree):
+		options.SearchScope = irods.PathChildrenSearchScopeSubtree
+	case string(irods.PathChildrenSearchScopeAbsolute):
+		options.SearchScope = irods.PathChildrenSearchScopeAbsolute
+	default:
+		return irods.PathChildrenListOptions{}, fmt.Errorf("search_scope query parameter must be one of children, subtree, or absolute")
+	}
+
+	recursiveRaw := strings.TrimSpace(query.Get("recursive"))
+	if recursiveRaw != "" {
+		recursive, err := strconv.ParseBool(recursiveRaw)
+		if err != nil {
+			return irods.PathChildrenListOptions{}, fmt.Errorf("recursive query parameter must be a boolean")
+		}
+		if searchScope == "" {
+			if recursive {
+				options.SearchScope = irods.PathChildrenSearchScopeSubtree
+			} else {
+				options.SearchScope = irods.PathChildrenSearchScopeChildren
+			}
+		}
+	}
+
+	if rawLimit := strings.TrimSpace(query.Get("limit")); rawLimit != "" {
+		limit, err := strconv.Atoi(rawLimit)
+		if err != nil || limit < 1 || limit > 1000 {
+			return irods.PathChildrenListOptions{}, fmt.Errorf("limit query parameter must be an integer from 1 through 1000")
+		}
+		options.Limit = limit
+	}
+
+	if rawOffset := strings.TrimSpace(query.Get("offset")); rawOffset != "" {
+		offset, err := strconv.Atoi(rawOffset)
+		if err != nil || offset < 0 {
+			return irods.PathChildrenListOptions{}, fmt.Errorf("offset query parameter must be a non-negative integer")
+		}
+		options.Offset = offset
+	}
+
+	if options.Sort != "" {
+		switch strings.ToLower(options.Sort) {
+		case "path", "name", "kind", "size", "created_at", "updated_at":
+		default:
+			return irods.PathChildrenListOptions{}, fmt.Errorf("sort query parameter must be one of path, name, kind, size, created_at, or updated_at")
+		}
+	}
+
+	if options.Order != "" {
+		switch strings.ToLower(options.Order) {
+		case "asc", "desc":
+		default:
+			return irods.PathChildrenListOptions{}, fmt.Errorf("order query parameter must be asc or desc")
+		}
+	}
+
+	return options, nil
 }
 
 type avuListOptions struct {
