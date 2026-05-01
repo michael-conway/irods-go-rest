@@ -112,6 +112,10 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("GET /api/v1/ticket/{ticket_name}", h.requireBearer(http.HandlerFunc(h.getTicket)))
 	mux.Handle("PATCH /api/v1/ticket/{ticket_name}", h.requireBearer(http.HandlerFunc(h.patchTicket)))
 	mux.Handle("DELETE /api/v1/ticket/{ticket_name}", h.requireBearer(http.HandlerFunc(h.deleteTicket)))
+	mux.Handle("GET /api/v1/ext/favorites", h.requireBearer(http.HandlerFunc(h.getExtFavorites)))
+	mux.Handle("POST /api/v1/ext/favorites", h.requireBearer(http.HandlerFunc(h.postExtFavorite)))
+	mux.Handle("PUT /api/v1/ext/favorites", h.requireBearer(http.HandlerFunc(h.putExtFavorite)))
+	mux.Handle("DELETE /api/v1/ext/favorites", h.requireBearer(http.HandlerFunc(h.deleteExtFavorite)))
 
 	return requestLogger(mux)
 }

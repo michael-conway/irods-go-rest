@@ -2,6 +2,7 @@ package irods
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -106,10 +107,20 @@ const (
 	PathRelocateOperationCopy PathRelocateOperation = "copy"
 )
 
+const (
+	favoritesAVUAttribute = "iRODS:Favorite"
+	favoritesAVUUnit      = "iRODS:Favorite"
+)
+
 type PathRelocateOptions struct {
 	Operation       PathRelocateOperation
 	NewName         string
 	DestinationPath string
+}
+
+type FavoritePayload struct {
+	Name         string `json:"name"`
+	AbsolutePath string `json:"absolute_path"`
 }
 
 type CatalogService interface {
@@ -137,6 +148,10 @@ type CatalogService interface {
 	GetPathChecksum(ctx context.Context, requestContext *RequestContext, absolutePath string) (domain.PathChecksum, error)
 	ComputePathChecksum(ctx context.Context, requestContext *RequestContext, absolutePath string) (domain.PathChecksum, error)
 	GetObjectContentByPath(ctx context.Context, requestContext *RequestContext, absolutePath string) (domain.ObjectContent, error)
+	ListFavorites(ctx context.Context, requestContext *RequestContext) ([]domain.Favorite, error)
+	AddFavorite(ctx context.Context, requestContext *RequestContext, name string, favoritePath string) (domain.Favorite, error)
+	RenameFavorite(ctx context.Context, requestContext *RequestContext, favoritePath string, name string) (domain.Favorite, error)
+	RemoveFavorite(ctx context.Context, requestContext *RequestContext, favoritePath string) error
 }
 
 type CatalogFileSystem interface {
@@ -1421,6 +1436,216 @@ func (s *catalogService) GetObjectContentByPath(_ context.Context, requestContex
 	}, nil
 }
 
+func (s *catalogService) ListFavorites(_ context.Context, requestContext *RequestContext) ([]domain.Favorite, error) {
+	slog.Debug("catalog ListFavorites start", "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, favoritesPath, err := s.prepareFavoritesFilesystem(requestContext, "irods-go-rest-list-favorites")
+	if err != nil {
+		return nil, err
+	}
+	defer filesystem.Release()
+
+	metadata, err := filesystem.ListMetadata(favoritesPath)
+	if err != nil {
+		logIRODSError("catalog ListFavorites list metadata failed", err, "favorites_path", favoritesPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return nil, normalizePathAccessError("list metadata", favoritesPath, err)
+	}
+
+	favoritesByPath := map[string]domain.Favorite{}
+	for _, avu := range metadata {
+		favorite, ok := decodeFavoriteFromMetadata(avu)
+		if !ok {
+			if isFavoriteMetadata(avu) {
+				slog.Warn(
+					"catalog ListFavorites skipping invalid favorite metadata entry",
+					"favorites_path", favoritesPath,
+					"avu_id", avu.AVUID,
+					"avu_value", strings.TrimSpace(avu.Value),
+					"auth_scheme", safeAuthScheme(requestContext),
+					"username", safeUsername(requestContext),
+				)
+			}
+			continue
+		}
+		favoritesByPath[favorite.AbsolutePath] = favorite
+	}
+
+	favorites := make([]domain.Favorite, 0, len(favoritesByPath))
+	for _, favorite := range favoritesByPath {
+		favorites = append(favorites, favorite)
+	}
+
+	sort.Slice(favorites, func(i, j int) bool {
+		if favorites[i].Name == favorites[j].Name {
+			return favorites[i].AbsolutePath < favorites[j].AbsolutePath
+		}
+		return favorites[i].Name < favorites[j].Name
+	})
+
+	return favorites, nil
+}
+
+func (s *catalogService) AddFavorite(_ context.Context, requestContext *RequestContext, name string, favoritePath string) (domain.Favorite, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return domain.Favorite{}, fmt.Errorf("favorite name is required")
+	}
+
+	normalizedPath, err := normalizeFavoritePath(favoritePath)
+	if err != nil {
+		return domain.Favorite{}, err
+	}
+
+	slog.Debug("catalog AddFavorite start", "favorite_name", name, "favorite_path", normalizedPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, favoritesPath, err := s.prepareFavoritesFilesystem(requestContext, "irods-go-rest-add-favorite")
+	if err != nil {
+		return domain.Favorite{}, err
+	}
+	defer filesystem.Release()
+
+	metadata, err := filesystem.ListMetadata(favoritesPath)
+	if err != nil {
+		logIRODSError("catalog AddFavorite list metadata failed", err, "favorites_path", favoritesPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.Favorite{}, normalizePathAccessError("list metadata", favoritesPath, err)
+	}
+
+	encodedValue, err := encodeFavoriteValue(name, normalizedPath)
+	if err != nil {
+		return domain.Favorite{}, err
+	}
+
+	matching := make([]*irodstypes.IRODSMeta, 0)
+	hasCanonical := false
+	for _, avu := range metadata {
+		favorite, ok := decodeFavoriteFromMetadata(avu)
+		if !ok || favorite.AbsolutePath != normalizedPath {
+			continue
+		}
+
+		matching = append(matching, avu)
+		if strings.TrimSpace(avu.Value) == encodedValue {
+			hasCanonical = true
+		}
+	}
+
+	if len(matching) == 1 && hasCanonical {
+		return domain.Favorite{Name: name, AbsolutePath: normalizedPath}, nil
+	}
+
+	for _, avu := range matching {
+		if avu == nil {
+			continue
+		}
+		if err := filesystem.DeleteMetadata(favoritesPath, avu.AVUID); err != nil {
+			logIRODSError("catalog AddFavorite delete stale favorite metadata failed", err, "favorites_path", favoritesPath, "favorite_path", normalizedPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			return domain.Favorite{}, normalizePathAccessError("delete favorite metadata", favoritesPath, err)
+		}
+	}
+
+	if err := filesystem.AddMetadata(favoritesPath, favoritesAVUAttribute, encodedValue, favoritesAVUUnit); err != nil {
+		logIRODSError("catalog AddFavorite add metadata failed", err, "favorites_path", favoritesPath, "favorite_path", normalizedPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.Favorite{}, normalizePathAccessError("add favorite metadata", favoritesPath, err)
+	}
+
+	return domain.Favorite{Name: name, AbsolutePath: normalizedPath}, nil
+}
+
+func (s *catalogService) RenameFavorite(_ context.Context, requestContext *RequestContext, favoritePath string, name string) (domain.Favorite, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return domain.Favorite{}, fmt.Errorf("favorite name is required")
+	}
+
+	normalizedPath, err := normalizeFavoritePath(favoritePath)
+	if err != nil {
+		return domain.Favorite{}, err
+	}
+
+	slog.Debug("catalog RenameFavorite start", "favorite_name", name, "favorite_path", normalizedPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, favoritesPath, err := s.prepareFavoritesFilesystem(requestContext, "irods-go-rest-rename-favorite")
+	if err != nil {
+		return domain.Favorite{}, err
+	}
+	defer filesystem.Release()
+
+	metadata, err := filesystem.ListMetadata(favoritesPath)
+	if err != nil {
+		logIRODSError("catalog RenameFavorite list metadata failed", err, "favorites_path", favoritesPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.Favorite{}, normalizePathAccessError("list metadata", favoritesPath, err)
+	}
+
+	matching := make([]*irodstypes.IRODSMeta, 0)
+	for _, avu := range metadata {
+		favorite, ok := decodeFavoriteFromMetadata(avu)
+		if !ok || favorite.AbsolutePath != normalizedPath {
+			continue
+		}
+		matching = append(matching, avu)
+	}
+
+	if len(matching) == 0 {
+		return domain.Favorite{}, fmt.Errorf("%w: favorite %q", ErrNotFound, normalizedPath)
+	}
+
+	for _, avu := range matching {
+		if avu == nil {
+			continue
+		}
+		if err := filesystem.DeleteMetadata(favoritesPath, avu.AVUID); err != nil {
+			logIRODSError("catalog RenameFavorite delete existing metadata failed", err, "favorites_path", favoritesPath, "favorite_path", normalizedPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			return domain.Favorite{}, normalizePathAccessError("delete favorite metadata", favoritesPath, err)
+		}
+	}
+
+	encodedValue, err := encodeFavoriteValue(name, normalizedPath)
+	if err != nil {
+		return domain.Favorite{}, err
+	}
+
+	if err := filesystem.AddMetadata(favoritesPath, favoritesAVUAttribute, encodedValue, favoritesAVUUnit); err != nil {
+		logIRODSError("catalog RenameFavorite add metadata failed", err, "favorites_path", favoritesPath, "favorite_path", normalizedPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return domain.Favorite{}, normalizePathAccessError("add favorite metadata", favoritesPath, err)
+	}
+
+	return domain.Favorite{Name: name, AbsolutePath: normalizedPath}, nil
+}
+
+func (s *catalogService) RemoveFavorite(_ context.Context, requestContext *RequestContext, favoritePath string) error {
+	normalizedPath, err := normalizeFavoritePath(favoritePath)
+	if err != nil {
+		return err
+	}
+
+	slog.Debug("catalog RemoveFavorite start", "favorite_path", normalizedPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, favoritesPath, err := s.prepareFavoritesFilesystem(requestContext, "irods-go-rest-remove-favorite")
+	if err != nil {
+		return err
+	}
+	defer filesystem.Release()
+
+	metadata, err := filesystem.ListMetadata(favoritesPath)
+	if err != nil {
+		logIRODSError("catalog RemoveFavorite list metadata failed", err, "favorites_path", favoritesPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return normalizePathAccessError("list metadata", favoritesPath, err)
+	}
+
+	for _, avu := range metadata {
+		favorite, ok := decodeFavoriteFromMetadata(avu)
+		if !ok || favorite.AbsolutePath != normalizedPath || avu == nil {
+			continue
+		}
+		if err := filesystem.DeleteMetadata(favoritesPath, avu.AVUID); err != nil {
+			logIRODSError("catalog RemoveFavorite delete metadata failed", err, "favorites_path", favoritesPath, "favorite_path", normalizedPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			return normalizePathAccessError("delete favorite metadata", favoritesPath, err)
+		}
+	}
+
+	return nil
+}
+
 func (s *catalogService) filesystemForRequest(requestContext *RequestContext, applicationName string) (CatalogFileSystem, error) {
 	account, err := s.accountForRequest(requestContext)
 	if err != nil {
@@ -1592,6 +1817,174 @@ func (s *catalogService) accountForRequest(requestContext *RequestContext) (*iro
 		logIRODSError("catalog unsupported auth scheme", fmt.Errorf("unsupported auth scheme %q", requestContext.AuthScheme), "http_auth_scheme", requestContext.AuthScheme, "username", requestContext.Username)
 		return nil, fmt.Errorf("unsupported auth scheme %q", requestContext.AuthScheme)
 	}
+}
+
+func (s *catalogService) requestUserHomePath(requestContext *RequestContext) (string, error) {
+	username := strings.TrimSpace(safeUsername(requestContext))
+	if username == "" {
+		return "", fmt.Errorf("username is required for extension operations")
+	}
+
+	zone := strings.TrimSpace(s.cfg.IrodsZone)
+	if zone == "" {
+		return "", fmt.Errorf("iRODS zone is not configured")
+	}
+
+	return path.Join("/", zone, "home", username), nil
+}
+
+func (s *catalogService) prepareFavoritesFilesystem(requestContext *RequestContext, applicationName string) (CatalogFileSystem, string, error) {
+	filesystem, err := s.filesystemForRequest(requestContext, applicationName)
+	if err != nil {
+		return nil, "", err
+	}
+
+	userHomePath, err := s.requestUserHomePath(requestContext)
+	if err != nil {
+		filesystem.Release()
+		return nil, "", err
+	}
+
+	favoritesPath, err := ensureFavoritesPath(filesystem, userHomePath)
+	if err != nil {
+		filesystem.Release()
+		return nil, "", err
+	}
+
+	return filesystem, favoritesPath, nil
+}
+
+func ensureFavoritesPath(filesystem CatalogFileSystem, userHomePath string) (string, error) {
+	rootPath := path.Join(userHomePath, ".irodsext")
+	favoritesCollectionPath := path.Join(rootPath, "favorites")
+	favoritesPath := path.Join(favoritesCollectionPath, "favorites")
+
+	if err := ensureCollectionPath(filesystem, rootPath); err != nil {
+		return "", err
+	}
+	if err := ensureCollectionPath(filesystem, favoritesCollectionPath); err != nil {
+		return "", err
+	}
+	if err := ensureDataObjectPath(filesystem, favoritesPath); err != nil {
+		return "", err
+	}
+
+	return favoritesPath, nil
+}
+
+func ensureCollectionPath(filesystem CatalogFileSystem, collectionPath string) error {
+	entry, err := filesystem.Stat(collectionPath)
+	if err != nil {
+		if !errors.Is(normalizePathAccessError("stat path", collectionPath, err), ErrNotFound) {
+			return normalizePathAccessError("stat path", collectionPath, err)
+		}
+		if err := filesystem.MakeDir(collectionPath, true); err != nil {
+			return normalizePathAccessError("create collection", collectionPath, err)
+		}
+		return nil
+	}
+
+	if entry == nil || !entry.IsDir() {
+		return fmt.Errorf("%w: path %q already exists", ErrConflict, collectionPath)
+	}
+
+	return nil
+}
+
+func ensureDataObjectPath(filesystem CatalogFileSystem, dataObjectPath string) error {
+	entry, err := filesystem.Stat(dataObjectPath)
+	if err == nil {
+		if entry != nil && entry.IsDir() {
+			return fmt.Errorf("%w: path %q already exists", ErrConflict, dataObjectPath)
+		}
+		return nil
+	}
+
+	if !errors.Is(normalizePathAccessError("stat path", dataObjectPath, err), ErrNotFound) {
+		return normalizePathAccessError("stat path", dataObjectPath, err)
+	}
+
+	handle, err := filesystem.CreateFile(dataObjectPath, "", "w")
+	if err != nil {
+		return normalizePathAccessError("create data object", dataObjectPath, err)
+	}
+	if err := handle.Close(); err != nil {
+		return normalizePathAccessError("close data object", dataObjectPath, err)
+	}
+
+	return nil
+}
+
+func normalizeFavoritePath(favoritePath string) (string, error) {
+	favoritePath = strings.TrimSpace(favoritePath)
+	if favoritePath == "" || !path.IsAbs(favoritePath) {
+		return "", fmt.Errorf("favorite path must be absolute")
+	}
+
+	cleaned := path.Clean(favoritePath)
+	if cleaned == "." || cleaned == "/" {
+		return "", fmt.Errorf("favorite path must be absolute")
+	}
+
+	return cleaned, nil
+}
+
+func encodeFavoriteValue(name string, favoritePath string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("favorite name is required")
+	}
+
+	normalizedPath, err := normalizeFavoritePath(favoritePath)
+	if err != nil {
+		return "", err
+	}
+
+	payload := FavoritePayload{
+		Name:         name,
+		AbsolutePath: normalizedPath,
+	}
+
+	valueBytes, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+
+	return string(valueBytes), nil
+}
+
+func decodeFavoriteFromMetadata(avu *irodstypes.IRODSMeta) (domain.Favorite, bool) {
+	if !isFavoriteMetadata(avu) {
+		return domain.Favorite{}, false
+	}
+
+	var payload FavoritePayload
+	if err := json.Unmarshal([]byte(strings.TrimSpace(avu.Value)), &payload); err != nil {
+		return domain.Favorite{}, false
+	}
+
+	favoritePath, err := normalizeFavoritePath(payload.AbsolutePath)
+	if err != nil {
+		return domain.Favorite{}, false
+	}
+
+	name := strings.TrimSpace(payload.Name)
+	if name == "" {
+		name = path.Base(favoritePath)
+	}
+
+	return domain.Favorite{
+		Name:         name,
+		AbsolutePath: favoritePath,
+	}, true
+}
+
+func isFavoriteMetadata(avu *irodstypes.IRODSMeta) bool {
+	if avu == nil {
+		return false
+	}
+
+	return strings.TrimSpace(avu.Name) == favoritesAVUAttribute && strings.TrimSpace(avu.Units) == favoritesAVUUnit
 }
 
 func logIRODSError(msg string, err error, args ...any) {
