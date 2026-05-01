@@ -181,6 +181,22 @@ Collection-specific behavior is expressed through subresources such as `/path/ch
 
 This establishes `/path` as the generic REST pattern for logical-path-oriented operations. Additional routes such as `/path/metadata` and `/path/acl` can be added later without changing the core addressing model.
 
+## Extension Endpoint Policy
+
+Opinionated, workflow-specific APIs should live in this service under an explicit extension namespace:
+
+* `/api/v1/ext/*`
+
+This keeps the core API surface (`/api/v1/path`, `/api/v1/server`, and related generic resources) focused on broadly reusable iRODS operations, while still allowing higher-level features such as file carts to be exposed without introducing a second public service.
+
+Current architectural preference:
+
+* keep one public REST origin for clients
+* reuse the same auth and CORS behavior as core endpoints
+* gate extension features by configuration when needed
+
+Only move extension functionality to a separate sidecar service when there is a clear need for independent deployment, scaling, or security isolation.
+
 The content endpoint supports restart/resume through the standard HTTP `Range` header.
 
 Example:
