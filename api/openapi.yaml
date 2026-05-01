@@ -918,6 +918,63 @@ paths:
           schema:
             type: string
           description: Full iRODS absolute logical path to a collection.
+        - in: query
+          name: name_pattern
+          required: false
+          schema:
+            type: string
+          description: Optional wildcard pattern. For `children` and `subtree` scopes the pattern is matched against child basenames and leading `/` is ignored.
+        - in: query
+          name: search_scope
+          required: false
+          schema:
+            type: string
+            enum: [children, subtree, absolute]
+            default: children
+          description: Search scope. `children` searches direct children, `subtree` searches descendants under `irods_path`, `absolute` performs full-path matching across the zone tree.
+        - in: query
+          name: recursive
+          required: false
+          schema:
+            type: boolean
+          description: Backward-compatible alias for `search_scope=subtree` when `search_scope` is not supplied.
+        - in: query
+          name: case_sensitive
+          required: false
+          schema:
+            type: boolean
+            default: true
+          description: Controls wildcard match case sensitivity.
+        - in: query
+          name: sort
+          required: false
+          schema:
+            type: string
+            enum: [path, name, kind, size, created_at, updated_at]
+          description: Optional sort field for matched results.
+        - in: query
+          name: order
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+          description: Optional sort order for matched results.
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+          description: Optional maximum number of child entries to return.
+        - in: query
+          name: offset
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: Optional number of matched entries to skip before returning results.
       responses:
         "200":
           description: Collection children
@@ -2504,6 +2561,23 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PathEntry"
+        search:
+          $ref: "#/components/schemas/PathChildrenSearchMetadata"
+    PathChildrenSearchMetadata:
+      type: object
+      properties:
+        name_pattern:
+          type: string
+        recursive:
+          type: boolean
+        search_scope:
+          type: string
+          enum: [children, subtree, absolute]
+        case_sensitive:
+          type: boolean
+        matched_count:
+          type: integer
+          minimum: 0
     PathReplicasResponse:
       type: object
       required: [irods_path, path_segments, replicas]

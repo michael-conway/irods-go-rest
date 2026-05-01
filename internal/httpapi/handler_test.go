@@ -524,6 +524,81 @@ func TestGetPathChildrenReturnsCollectionChildren(t *testing.T) {
 	}
 }
 
+func TestGetPathChildrenSearchMatchesRelativePatternAndIncludesMetadata(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/children?irods_path=/tempZone/home/test1/project&name_pattern=/child*", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"children":[`,
+		`"/tempZone/home/test1/project/child.txt"`,
+		`"search":{"case_sensitive":true,"matched_count":1,"name_pattern":"child*","recursive":false,"search_scope":"children"}`,
+	) {
+		t.Fatalf("unexpected search response body: %q", body)
+	}
+}
+
+func TestGetPathChildrenSearchSubtreeViaRecursiveFlag(t *testing.T) {
+	handler, filesystem := testHandlerWithConfig(t, nil)
+
+	now := time.Unix(1_700_000_007, 0)
+	nestedFile := &irodsfs.Entry{
+		ID:         104,
+		Type:       irodsfs.FileEntry,
+		Name:       "child2.txt",
+		Path:       "/tempZone/home/test1/project/nested/child2.txt",
+		Owner:      "alice",
+		Size:       16,
+		DataType:   "generic",
+		CreateTime: now,
+		ModifyTime: now,
+	}
+	filesystem.entriesByPath[nestedFile.Path] = nestedFile
+	filesystem.childrenByPath["/tempZone/home/test1/project/nested"] = []*irodsfs.Entry{nestedFile}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/children?irods_path=/tempZone/home/test1/project&name_pattern=child*&recursive=true", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"/tempZone/home/test1/project/child.txt"`,
+		`"/tempZone/home/test1/project/nested/child2.txt"`,
+		`"search":{"case_sensitive":true,"matched_count":2,"name_pattern":"child*","recursive":true,"search_scope":"subtree"}`,
+	) {
+		t.Fatalf("unexpected subtree search response body: %q", body)
+	}
+}
+
+func TestGetPathChildrenSearchRejectsInvalidScope(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/children?irods_path=/tempZone/home/test1/project&name_pattern=child*&search_scope=global", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
 func TestGetPathReplicasRequiresIRODSPathQuery(t *testing.T) {
 	handler := testHandler(t)
 

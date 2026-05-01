@@ -40,6 +40,32 @@ type PathLookupOptions struct {
 	VerboseLevel int
 }
 
+type PathChildrenSearchScope string
+
+const (
+	PathChildrenSearchScopeChildren PathChildrenSearchScope = "children"
+	PathChildrenSearchScopeSubtree  PathChildrenSearchScope = "subtree"
+	PathChildrenSearchScopeAbsolute PathChildrenSearchScope = "absolute"
+)
+
+type PathChildrenListOptions struct {
+	NamePattern   string
+	SearchScope   PathChildrenSearchScope
+	CaseSensitive bool
+	Sort          string
+	Order         string
+	Limit         int
+	Offset        int
+}
+
+type PathChildrenSearchResult struct {
+	Children      []domain.PathEntry
+	MatchedCount  int
+	NamePattern   string
+	SearchScope   PathChildrenSearchScope
+	CaseSensitive bool
+}
+
 type PathCreateOptions struct {
 	ChildName string
 	Kind      string
@@ -76,6 +102,7 @@ type PathReplicaTrimOptions struct {
 type CatalogService interface {
 	GetPath(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathLookupOptions) (domain.PathEntry, error)
 	GetPathChildren(ctx context.Context, requestContext *RequestContext, absolutePath string) ([]domain.PathEntry, error)
+	SearchPathChildren(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathChildrenListOptions) (PathChildrenSearchResult, error)
 	GetPathReplicas(ctx context.Context, requestContext *RequestContext, absolutePath string, verboseLevel int) ([]domain.PathReplica, error)
 	UploadPathContents(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathContentsUploadOptions) (domain.PathContentsUploadResult, error)
 	CreatePathChild(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathCreateOptions) (domain.PathEntry, error)
@@ -212,52 +239,74 @@ func (s *catalogService) GetPath(_ context.Context, requestContext *RequestConte
 	return dataObjectPathEntry(s.cfg.IrodsZone, entry, metadata, options), nil
 }
 
-func (s *catalogService) GetPathChildren(_ context.Context, requestContext *RequestContext, absolutePath string) ([]domain.PathEntry, error) {
-	absolutePath = strings.TrimSpace(absolutePath)
-	if absolutePath == "" {
-		return nil, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
+func (s *catalogService) GetPathChildren(ctx context.Context, requestContext *RequestContext, absolutePath string) ([]domain.PathEntry, error) {
+	result, err := s.SearchPathChildren(ctx, requestContext, absolutePath, PathChildrenListOptions{})
+	if err != nil {
+		return nil, err
 	}
 
-	slog.Debug("catalog GetPathChildren start", "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+	return result.Children, nil
+}
+
+func (s *catalogService) SearchPathChildren(_ context.Context, requestContext *RequestContext, absolutePath string, options PathChildrenListOptions) (PathChildrenSearchResult, error) {
+	absolutePath = strings.TrimSpace(absolutePath)
+	if absolutePath == "" {
+		return PathChildrenSearchResult{}, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
+	}
+
+	slog.Debug("catalog SearchPathChildren start", "path", absolutePath, "name_pattern", options.NamePattern, "search_scope", options.SearchScope, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 
 	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-get-path-children")
 	if err != nil {
-		logIRODSError("catalog GetPathChildren filesystem setup failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
-		return nil, err
+		logIRODSError("catalog SearchPathChildren filesystem setup failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return PathChildrenSearchResult{}, err
 	}
 	defer filesystem.Release()
 
 	entry, err := filesystem.Stat(absolutePath)
 	if err != nil {
-		logIRODSError("catalog GetPathChildren stat failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
-		return nil, normalizePathAccessError("stat path", absolutePath, err)
+		logIRODSError("catalog SearchPathChildren stat failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return PathChildrenSearchResult{}, normalizePathAccessError("stat path", absolutePath, err)
 	}
 
 	if !entry.IsDir() {
-		return nil, fmt.Errorf("%w: path %q is not a collection", ErrNotFound, absolutePath)
+		return PathChildrenSearchResult{}, fmt.Errorf("%w: path %q is not a collection", ErrNotFound, absolutePath)
 	}
 
-	children, err := filesystem.List(absolutePath)
+	normalized := normalizePathChildrenListOptions(options)
+	searchRootPath := absolutePath
+	switch normalized.SearchScope {
+	case PathChildrenSearchScopeAbsolute:
+		if strings.TrimSpace(s.cfg.IrodsZone) != "" {
+			searchRootPath = "/" + strings.TrimSpace(s.cfg.IrodsZone)
+		} else {
+			searchRootPath = "/"
+		}
+	}
+
+	entries, err := collectPathChildrenEntries(filesystem, searchRootPath, normalized.SearchScope != PathChildrenSearchScopeChildren)
 	if err != nil {
-		logIRODSError("catalog GetPathChildren list failed", err, "path", absolutePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
-		return nil, normalizePathAccessError("list children", absolutePath, err)
+		logIRODSError("catalog SearchPathChildren list failed", err, "path", searchRootPath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return PathChildrenSearchResult{}, normalizePathAccessError("list children", searchRootPath, err)
 	}
 
-	results := make([]domain.PathEntry, 0, len(children))
-	for _, child := range children {
-		if child == nil {
-			continue
-		}
-
-		if child.IsDir() {
-			results = append(results, collectionPathEntry(s.cfg.IrodsZone, child, nil, 0, PathLookupOptions{}))
-			continue
-		}
-
-		results = append(results, dataObjectPathEntry(s.cfg.IrodsZone, child, nil, PathLookupOptions{}))
+	filteredEntries, err := filterPathChildrenEntries(entries, normalized)
+	if err != nil {
+		return PathChildrenSearchResult{}, err
 	}
 
-	return results, nil
+	sortPathChildrenEntries(filteredEntries, normalized.Sort, normalized.Order)
+	matchedCount := len(filteredEntries)
+	pagedEntries := paginatePathChildrenEntries(filteredEntries, normalized.Offset, normalized.Limit)
+	results := mapPathChildrenEntries(s.cfg.IrodsZone, pagedEntries)
+
+	return PathChildrenSearchResult{
+		Children:      results,
+		MatchedCount:  matchedCount,
+		NamePattern:   normalized.NamePattern,
+		SearchScope:   normalized.SearchScope,
+		CaseSensitive: normalized.CaseSensitive,
+	}, nil
 }
 
 func (s *catalogService) GetPathReplicas(_ context.Context, requestContext *RequestContext, absolutePath string, verboseLevel int) ([]domain.PathReplica, error) {
@@ -2219,6 +2268,254 @@ func pathReplicas(entry *irodsfs.Entry, options PathLookupOptions) []domain.Path
 	}
 
 	return replicas
+}
+
+func normalizePathChildrenListOptions(options PathChildrenListOptions) PathChildrenListOptions {
+	options.NamePattern = strings.TrimSpace(options.NamePattern)
+	options.SearchScope = normalizePathChildrenSearchScope(options.SearchScope)
+	options.Sort = strings.ToLower(strings.TrimSpace(options.Sort))
+	if options.Sort == "" {
+		options.Sort = "path"
+	}
+
+	options.Order = strings.ToLower(strings.TrimSpace(options.Order))
+	if options.Order != "desc" {
+		options.Order = "asc"
+	}
+
+	if options.Offset < 0 {
+		options.Offset = 0
+	}
+	if options.Limit < 0 {
+		options.Limit = 0
+	}
+
+	// default case-sensitive matching unless explicitly disabled.
+	if !options.CaseSensitive {
+		options.CaseSensitive = false
+	} else {
+		options.CaseSensitive = true
+	}
+
+	if options.SearchScope != PathChildrenSearchScopeAbsolute {
+		options.NamePattern = strings.TrimLeft(options.NamePattern, "/")
+	}
+	return options
+}
+
+func normalizePathChildrenSearchScope(scope PathChildrenSearchScope) PathChildrenSearchScope {
+	switch strings.ToLower(strings.TrimSpace(string(scope))) {
+	case string(PathChildrenSearchScopeSubtree):
+		return PathChildrenSearchScopeSubtree
+	case string(PathChildrenSearchScopeAbsolute):
+		return PathChildrenSearchScopeAbsolute
+	default:
+		return PathChildrenSearchScopeChildren
+	}
+}
+
+func collectPathChildrenEntries(filesystem CatalogFileSystem, basePath string, recursive bool) ([]*irodsfs.Entry, error) {
+	basePath = strings.TrimSpace(basePath)
+	if basePath == "" {
+		return nil, fmt.Errorf("base path is required")
+	}
+
+	children, err := filesystem.List(basePath)
+	if err != nil {
+		return nil, err
+	}
+	if !recursive {
+		return children, nil
+	}
+
+	results := make([]*irodsfs.Entry, 0, len(children))
+	queue := make([]string, 0, len(children))
+	for _, child := range children {
+		if child == nil {
+			continue
+		}
+		results = append(results, child)
+		if child.IsDir() {
+			queue = append(queue, child.Path)
+		}
+	}
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+
+		descendants, listErr := filesystem.List(current)
+		if listErr != nil {
+			return nil, listErr
+		}
+
+		sort.SliceStable(descendants, func(i, j int) bool {
+			left := descendants[i]
+			right := descendants[j]
+			if left == nil {
+				return false
+			}
+			if right == nil {
+				return true
+			}
+			return strings.Compare(left.Path, right.Path) < 0
+		})
+
+		for _, descendant := range descendants {
+			if descendant == nil {
+				continue
+			}
+			results = append(results, descendant)
+			if descendant.IsDir() {
+				queue = append(queue, descendant.Path)
+			}
+		}
+	}
+
+	return results, nil
+}
+
+func filterPathChildrenEntries(entries []*irodsfs.Entry, options PathChildrenListOptions) ([]*irodsfs.Entry, error) {
+	if strings.TrimSpace(options.NamePattern) == "" {
+		return compactPathChildrenEntries(entries), nil
+	}
+
+	filtered := make([]*irodsfs.Entry, 0, len(entries))
+	for _, entry := range entries {
+		if entry == nil {
+			continue
+		}
+
+		target := entry.Name
+		if options.SearchScope == PathChildrenSearchScopeAbsolute {
+			target = entry.Path
+		}
+
+		matched, err := wildcardMatch(options.NamePattern, target, options.CaseSensitive)
+		if err != nil {
+			return nil, fmt.Errorf("invalid name_pattern %q: %w", options.NamePattern, err)
+		}
+		if matched {
+			filtered = append(filtered, entry)
+		}
+	}
+
+	return filtered, nil
+}
+
+func wildcardMatch(pattern string, value string, caseSensitive bool) (bool, error) {
+	if !caseSensitive {
+		pattern = strings.ToLower(pattern)
+		value = strings.ToLower(value)
+	}
+	return path.Match(pattern, value)
+}
+
+func compactPathChildrenEntries(entries []*irodsfs.Entry) []*irodsfs.Entry {
+	compacted := make([]*irodsfs.Entry, 0, len(entries))
+	for _, entry := range entries {
+		if entry != nil {
+			compacted = append(compacted, entry)
+		}
+	}
+	return compacted
+}
+
+func sortPathChildrenEntries(entries []*irodsfs.Entry, sortField string, order string) {
+	desc := strings.EqualFold(order, "desc")
+
+	sort.SliceStable(entries, func(i, j int) bool {
+		left := entries[i]
+		right := entries[j]
+		if left == nil {
+			return false
+		}
+		if right == nil {
+			return true
+		}
+
+		var cmp int
+		switch sortField {
+		case "name":
+			cmp = strings.Compare(left.Name, right.Name)
+		case "kind":
+			leftKind := "data_object"
+			rightKind := "data_object"
+			if left.IsDir() {
+				leftKind = "collection"
+			}
+			if right.IsDir() {
+				rightKind = "collection"
+			}
+			cmp = strings.Compare(leftKind, rightKind)
+		case "size":
+			if left.Size < right.Size {
+				cmp = -1
+			} else if left.Size > right.Size {
+				cmp = 1
+			}
+		case "created_at":
+			cmp = compareIRODSEntryTime(left.CreateTime, right.CreateTime)
+		case "updated_at":
+			cmp = compareIRODSEntryTime(left.ModifyTime, right.ModifyTime)
+		default:
+			cmp = strings.Compare(left.Path, right.Path)
+		}
+
+		if cmp == 0 {
+			cmp = strings.Compare(left.Path, right.Path)
+		}
+		if desc {
+			return cmp > 0
+		}
+		return cmp < 0
+	})
+}
+
+func compareIRODSEntryTime(left time.Time, right time.Time) int {
+	switch {
+	case left.Before(right):
+		return -1
+	case left.After(right):
+		return 1
+	default:
+		return 0
+	}
+}
+
+func paginatePathChildrenEntries(entries []*irodsfs.Entry, offset int, limit int) []*irodsfs.Entry {
+	if offset < 0 {
+		offset = 0
+	}
+	if limit < 0 {
+		limit = 0
+	}
+
+	if offset >= len(entries) {
+		return []*irodsfs.Entry{}
+	}
+
+	start := offset
+	end := len(entries)
+	if limit > 0 && start+limit < end {
+		end = start + limit
+	}
+	return entries[start:end]
+}
+
+func mapPathChildrenEntries(zone string, entries []*irodsfs.Entry) []domain.PathEntry {
+	results := make([]domain.PathEntry, 0, len(entries))
+	for _, child := range entries {
+		if child == nil {
+			continue
+		}
+		if child.IsDir() {
+			results = append(results, collectionPathEntry(zone, child, nil, 0, PathLookupOptions{}))
+			continue
+		}
+		results = append(results, dataObjectPathEntry(zone, child, nil, PathLookupOptions{}))
+	}
+	return results
 }
 
 func entryHasReplicaInResource(entry *irodsfs.Entry, resource string) bool {

@@ -156,6 +156,106 @@ func TestCatalogGetPathChildrenMapsChildEntries(t *testing.T) {
 	}
 }
 
+func TestCatalogSearchPathChildrenMatchesBasenamePattern(t *testing.T) {
+	service := newTestCatalogService(t, newCatalogTestFileSystem())
+
+	result, err := service.SearchPathChildren(context.Background(), bearerRequestContext(), "/tempZone/home/alice/project", PathChildrenListOptions{
+		NamePattern:   "child*",
+		SearchScope:   PathChildrenSearchScopeChildren,
+		CaseSensitive: true,
+	})
+	if err != nil {
+		t.Fatalf("SearchPathChildren returned error: %v", err)
+	}
+
+	if result.MatchedCount != 1 || len(result.Children) != 1 {
+		t.Fatalf("expected one child match, got matched_count=%d children=%d", result.MatchedCount, len(result.Children))
+	}
+	if result.Children[0].Path != "/tempZone/home/alice/project/child.txt" {
+		t.Fatalf("unexpected child match path: %q", result.Children[0].Path)
+	}
+}
+
+func TestCatalogSearchPathChildrenSupportsSubtreeAndCaseInsensitive(t *testing.T) {
+	filesystem := newCatalogTestFileSystem()
+	now := time.Unix(1_700_000_005, 0)
+	nestedFile := &irodsfs.Entry{
+		ID:         104,
+		Type:       irodsfs.FileEntry,
+		Name:       "Report.TXT",
+		Owner:      "alice",
+		Path:       "/tempZone/home/alice/project/nested/Report.TXT",
+		Size:       8,
+		DataType:   "generic",
+		CreateTime: now,
+		ModifyTime: now,
+	}
+	filesystem.entriesByPath[nestedFile.Path] = nestedFile
+	filesystem.childrenByPath["/tempZone/home/alice/project/nested"] = []*irodsfs.Entry{nestedFile}
+	service := newTestCatalogService(t, filesystem)
+
+	result, err := service.SearchPathChildren(context.Background(), bearerRequestContext(), "/tempZone/home/alice/project", PathChildrenListOptions{
+		NamePattern:   "*.txt",
+		SearchScope:   PathChildrenSearchScopeSubtree,
+		CaseSensitive: false,
+		Sort:          "path",
+		Order:         "asc",
+	})
+	if err != nil {
+		t.Fatalf("SearchPathChildren returned error: %v", err)
+	}
+
+	if result.MatchedCount != 2 || len(result.Children) != 2 {
+		t.Fatalf("expected two subtree matches, got matched_count=%d children=%d", result.MatchedCount, len(result.Children))
+	}
+	if result.Children[0].Path != "/tempZone/home/alice/project/child.txt" || result.Children[1].Path != nestedFile.Path {
+		t.Fatalf("unexpected subtree search ordering: %+v", result.Children)
+	}
+}
+
+func TestCatalogSearchPathChildrenSupportsAbsoluteScope(t *testing.T) {
+	filesystem := newCatalogTestFileSystem()
+	now := time.Unix(1_700_000_006, 0)
+	zoneRoot := &irodsfs.Entry{ID: 900, Type: irodsfs.DirectoryEntry, Name: "tempZone", Path: "/tempZone", CreateTime: now, ModifyTime: now}
+	zoneHome := &irodsfs.Entry{ID: 901, Type: irodsfs.DirectoryEntry, Name: "home", Path: "/tempZone/home", CreateTime: now, ModifyTime: now}
+	zoneAlice := &irodsfs.Entry{ID: 902, Type: irodsfs.DirectoryEntry, Name: "alice", Path: "/tempZone/home/alice", CreateTime: now, ModifyTime: now}
+	zoneFile := &irodsfs.Entry{
+		ID:         105,
+		Type:       irodsfs.FileEntry,
+		Name:       "zone-log.txt",
+		Owner:      "alice",
+		Path:       "/tempZone/home/alice/zone-log.txt",
+		Size:       8,
+		DataType:   "generic",
+		CreateTime: now,
+		ModifyTime: now,
+	}
+	filesystem.entriesByPath[zoneRoot.Path] = zoneRoot
+	filesystem.entriesByPath[zoneHome.Path] = zoneHome
+	filesystem.entriesByPath[zoneAlice.Path] = zoneAlice
+	filesystem.entriesByPath[zoneFile.Path] = zoneFile
+	filesystem.childrenByPath["/tempZone"] = []*irodsfs.Entry{zoneHome}
+	filesystem.childrenByPath["/tempZone/home"] = []*irodsfs.Entry{zoneAlice}
+	filesystem.childrenByPath["/tempZone/home/alice"] = []*irodsfs.Entry{filesystem.entriesByPath["/tempZone/home/alice/project"], filesystem.entriesByPath["/tempZone/home/alice/file.txt"], zoneFile}
+	service := newTestCatalogService(t, filesystem)
+
+	result, err := service.SearchPathChildren(context.Background(), bearerRequestContext(), "/tempZone/home/alice/project", PathChildrenListOptions{
+		NamePattern:   "/tempZone/home/alice/zone-*",
+		SearchScope:   PathChildrenSearchScopeAbsolute,
+		CaseSensitive: true,
+	})
+	if err != nil {
+		t.Fatalf("SearchPathChildren returned error: %v", err)
+	}
+
+	if result.MatchedCount != 1 || len(result.Children) != 1 {
+		t.Fatalf("expected one absolute match, got matched_count=%d children=%d", result.MatchedCount, len(result.Children))
+	}
+	if result.Children[0].Path != zoneFile.Path {
+		t.Fatalf("unexpected absolute search match path: %q", result.Children[0].Path)
+	}
+}
+
 func TestCatalogGetPathReplicasReturnsReplicaList(t *testing.T) {
 	service := newTestCatalogService(t, newCatalogTestFileSystem())
 
