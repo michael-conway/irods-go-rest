@@ -22,6 +22,18 @@ For AVUs, keep the path as `irods_path` and the AVU row identifier as the child 
 - `PUT /api/v1/path/avu/{avu_id}?irods_path=...`
 - `DELETE /api/v1/path/avu/{avu_id}?irods_path=...`
 
+For opinionated features, keep them in this repository but place them under:
+
+- `/api/v1/ext/*`
+
+Use this boundary:
+
+- core generic iRODS operations stay under `/api/v1/path*` and related generic resources
+- opinionated workflow endpoints (for example filecart) stay under `/api/v1/ext/*`
+
+Default preference is one service/origin to avoid extra CORS/auth/gateway complexity for clients.
+Only split to a sidecar if there is a concrete need for independent lifecycle, scaling, or security isolation.
+
 ## Code layout
 
 Keep the code split this way:
