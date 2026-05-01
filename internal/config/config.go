@@ -2,45 +2,69 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
+	"reflect"
 	"strings"
 
 	"github.com/cyverse/go-irodsclient/irods/types"
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/rs/zerolog"
 	"github.com/spf13/viper"
 )
 
 // RestConfig Provides configuration for drs behaviors
 type RestConfig struct {
-	PublicURL              string
-	RestLogLevel           string //info, debug
-	IrodsHost              string
-	IrodsPort              int
-	IrodsZone              string
-	IrodsAdminUser         string
-	IrodsAdminPassword     string
-	IrodsAdminPasswordFile string
-	IrodsAuthScheme        string
-	IrodsNegotiationPolicy string
-	IrodsDefaultResource   string
-	OidcUrl                string
-	OidcClientId           string
-	OidcClientSecret       string
-	OidcClientSecretFile   string
-	OidcInsecureSkipVerify bool
-	OidcRealm              string
-	OidcScope              string
+	PublicURL                string
+	RestLogLevel             string //info, debug
+	IrodsHost                string
+	IrodsPort                int
+	IrodsZone                string
+	IrodsAdminUser           string
+	IrodsAdminPassword       string
+	IrodsAdminPasswordFile   string
+	IrodsAuthScheme          string
+	IrodsNegotiationPolicy   string
+	IrodsDefaultResource     string
+	TestResource1            string
+	TestResource2            string
+	ResourceAffinity         []string
+	ReplicaTrimMinCopies     int
+	ReplicaTrimMinAgeMinutes int
+	OidcUrl                  string
+	OidcClientId             string
+	OidcClientSecret         string
+	OidcClientSecretFile     string
+	OidcInsecureSkipVerify   bool
+	OidcRealm                string
+	OidcScope                string
+}
+
+func NormalizeIRODSNegotiationPolicy(policy string) string {
+	policy = strings.TrimSpace(policy)
+	switch policy {
+	case string(types.CSNegotiationPolicyRequestTCP), string(types.CSNegotiationPolicyRequestSSL), string(types.CSNegotiationPolicyRequestDontCare):
+		return policy
+	default:
+		slog.Warn(
+			"invalid iRODS negotiation policy; defaulting to CS_NEG_DONT_CARE",
+			"configured_policy", policy,
+			"default_policy", string(types.CSNegotiationPolicyRequestDontCare),
+		)
+		return string(types.CSNegotiationPolicyRequestDontCare)
+	}
 }
 
 func (cfg *RestConfig) ToIrodsAccount() types.IRODSAccount {
 	authScheme := types.GetAuthScheme(cfg.IrodsAuthScheme)
+	normalizedPolicy := NormalizeIRODSNegotiationPolicy(cfg.IrodsNegotiationPolicy)
 
-	negotiationPolicy := types.GetCSNegotiationPolicyRequest(cfg.IrodsNegotiationPolicy)
-	negotiation := types.GetCSNegotiation(cfg.IrodsNegotiationPolicy)
+	negotiationPolicy := types.GetCSNegotiationPolicyRequest(normalizedPolicy)
+	requireNegotiation := negotiationPolicy == types.CSNegotiationPolicyRequestSSL
 
 	account := types.IRODSAccount{
 		AuthenticationScheme:    authScheme,
-		ClientServerNegotiation: negotiation.IsNegotiationRequired(),
+		ClientServerNegotiation: requireNegotiation,
 		CSNegotiationPolicy:     negotiationPolicy,
 		Host:                    cfg.IrodsHost,
 		Port:                    cfg.IrodsPort,
@@ -63,24 +87,29 @@ const ConfigFileEnvVar = "IRODS_REST_CONFIG_FILE"
 
 func bindEnvVars(v *viper.Viper) error {
 	envBindings := map[string][]string{
-		"PublicURL":              {"GOREST_PUBLIC_URL", "GOREST_PUBLICURL"},
-		"RestLogLevel":           {"GOREST_REST_LOG_LEVEL", "GOREST_RESTLOGLEVEL"},
-		"IrodsHost":              {"GOREST_IRODS_HOST", "GOREST_IRODSHOST"},
-		"IrodsPort":              {"GOREST_IRODS_PORT", "GOREST_IRODSPORT"},
-		"IrodsZone":              {"GOREST_IRODS_ZONE", "GOREST_IRODSZONE"},
-		"IrodsAdminUser":         {"GOREST_IRODS_ADMIN_USER", "GOREST_IRODSADMINUSER"},
-		"IrodsAdminPassword":     {"GOREST_IRODS_ADMIN_PASSWORD", "GOREST_IRODSADMINPASSWORD"},
-		"IrodsAdminPasswordFile": {"GOREST_IRODS_ADMIN_PASSWORD_FILE", "GOREST_IRODSADMINPASSWORDFILE"},
-		"IrodsAuthScheme":        {"GOREST_IRODS_AUTH_SCHEME", "GOREST_IRODSAUTHSCHEME"},
-		"IrodsNegotiationPolicy": {"GOREST_IRODS_NEGOTIATION_POLICY", "GOREST_IRODSNEGOTIATIONPOLICY"},
-		"IrodsDefaultResource":   {"GOREST_IRODS_DEFAULT_RESOURCE", "GOREST_IRODSDEFAULTRESOURCE"},
-		"OidcUrl":                {"GOREST_OIDC_URL", "GOREST_OIDCURL"},
-		"OidcClientId":           {"GOREST_OIDC_CLIENT_ID", "GOREST_OIDCCLIENTID"},
-		"OidcClientSecret":       {"GOREST_OIDC_CLIENT_SECRET", "GOREST_OIDCCLIENTSECRET"},
-		"OidcClientSecretFile":   {"GOREST_OIDC_CLIENT_SECRET_FILE", "GOREST_OIDCCLIENTSECRETFILE"},
-		"OidcInsecureSkipVerify": {"GOREST_OIDC_INSECURE_SKIP_VERIFY", "GOREST_OIDCINSECURESKIPVERIFY"},
-		"OidcRealm":              {"GOREST_OIDC_REALM", "GOREST_OIDCREALM"},
-		"OidcScope":              {"GOREST_OIDC_SCOPE", "GOREST_OIDCSCOPE"},
+		"PublicURL":                {"GOREST_PUBLIC_URL", "GOREST_PUBLICURL"},
+		"RestLogLevel":             {"GOREST_REST_LOG_LEVEL", "GOREST_RESTLOGLEVEL"},
+		"IrodsHost":                {"GOREST_IRODS_HOST", "GOREST_IRODSHOST"},
+		"IrodsPort":                {"GOREST_IRODS_PORT", "GOREST_IRODSPORT"},
+		"IrodsZone":                {"GOREST_IRODS_ZONE", "GOREST_IRODSZONE"},
+		"IrodsAdminUser":           {"GOREST_IRODS_ADMIN_USER", "GOREST_IRODSADMINUSER"},
+		"IrodsAdminPassword":       {"GOREST_IRODS_ADMIN_PASSWORD", "GOREST_IRODSADMINPASSWORD"},
+		"IrodsAdminPasswordFile":   {"GOREST_IRODS_ADMIN_PASSWORD_FILE", "GOREST_IRODSADMINPASSWORDFILE"},
+		"IrodsAuthScheme":          {"GOREST_IRODS_AUTH_SCHEME", "GOREST_IRODSAUTHSCHEME"},
+		"IrodsNegotiationPolicy":   {"GOREST_IRODS_NEGOTIATION_POLICY", "GOREST_IRODSNEGOTIATIONPOLICY"},
+		"IrodsDefaultResource":     {"GOREST_IRODS_DEFAULT_RESOURCE", "GOREST_IRODSDEFAULTRESOURCE"},
+		"TestResource1":            {"GOREST_TEST_RESOURCE1"},
+		"TestResource2":            {"GOREST_TEST_RESOURCE2"},
+		"ResourceAffinity":         {"GOREST_RESOURCE_AFFINITY", "GOREST_RESOURCEAFFINITY"},
+		"ReplicaTrimMinCopies":     {"GOREST_REPLICA_TRIM_MIN_COPIES"},
+		"ReplicaTrimMinAgeMinutes": {"GOREST_REPLICA_TRIM_MIN_AGE_MINUTES"},
+		"OidcUrl":                  {"GOREST_OIDC_URL", "GOREST_OIDCURL"},
+		"OidcClientId":             {"GOREST_OIDC_CLIENT_ID", "GOREST_OIDCCLIENTID"},
+		"OidcClientSecret":         {"GOREST_OIDC_CLIENT_SECRET", "GOREST_OIDCCLIENTSECRET"},
+		"OidcClientSecretFile":     {"GOREST_OIDC_CLIENT_SECRET_FILE", "GOREST_OIDCCLIENTSECRETFILE"},
+		"OidcInsecureSkipVerify":   {"GOREST_OIDC_INSECURE_SKIP_VERIFY", "GOREST_OIDCINSECURESKIPVERIFY"},
+		"OidcRealm":                {"GOREST_OIDC_REALM", "GOREST_OIDCREALM"},
+		"OidcScope":                {"GOREST_OIDC_SCOPE", "GOREST_OIDCSCOPE"},
 	}
 
 	for key, envNames := range envBindings {
@@ -158,7 +187,31 @@ func ReadRestConfig(configName string, configType string, configPaths []string) 
 	}
 	var C RestConfig
 
-	err = v.Unmarshal(&C)
+	err = v.Unmarshal(&C, func(decoderConfig *mapstructure.DecoderConfig) {
+		decoderConfig.DecodeHook = mapstructure.ComposeDecodeHookFunc(
+			mapstructure.StringToSliceHookFunc(","),
+			func(from reflect.Type, to reflect.Type, data any) (any, error) {
+				if to.Kind() != reflect.Slice || to.Elem().Kind() != reflect.String {
+					return data, nil
+				}
+
+				values, ok := data.([]string)
+				if !ok {
+					return data, nil
+				}
+
+				normalized := make([]string, 0, len(values))
+				for _, value := range values {
+					value = strings.TrimSpace(value)
+					if value == "" {
+						continue
+					}
+					normalized = append(normalized, value)
+				}
+				return normalized, nil
+			},
+		)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to decode into struct: %w", err)
 	}
@@ -166,6 +219,19 @@ func ReadRestConfig(configName string, configType string, configPaths []string) 
 	C.IrodsAdminPassword, err = resolveSecret(C.IrodsAdminPassword, C.IrodsAdminPasswordFile, "iRODS admin password")
 	if err != nil {
 		return nil, err
+	}
+
+	C.IrodsNegotiationPolicy = NormalizeIRODSNegotiationPolicy(C.IrodsNegotiationPolicy)
+	if C.ReplicaTrimMinCopies <= 0 {
+		C.ReplicaTrimMinCopies = 1
+	}
+	if C.ReplicaTrimMinAgeMinutes < 0 {
+		slog.Warn(
+			"invalid replica trim minimum age; defaulting to 0",
+			"configured_min_age_minutes", C.ReplicaTrimMinAgeMinutes,
+			"default_min_age_minutes", 0,
+		)
+		C.ReplicaTrimMinAgeMinutes = 0
 	}
 
 	C.OidcClientSecret, err = resolveSecret(C.OidcClientSecret, C.OidcClientSecretFile, "OIDC client secret")

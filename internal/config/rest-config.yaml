@@ -6,7 +6,7 @@ IrodsAdminPassword:
 IrodsAdminPasswordFile:
 IrodsAdminLoginType:
 IrodsAuthScheme:
-IrodsNegotiationPolicy: native
+IrodsNegotiationPolicy: CS_NEG_DONT_CARE
 IrodsDefaultResource:
 OidcUrl:
 OidcClientId: irods-go-rest
@@ -17,3 +17,8 @@ OidcRealm:
 OidcScope: openid profile email
 PublicUrl: http://localhost:8080
 RestLogLevel: info
+ResourceAffinity:
+  - demoResc
+  - test1-resc
+ReplicaTrimMinCopies: 1
+ReplicaTrimMinAgeMinutes: 0

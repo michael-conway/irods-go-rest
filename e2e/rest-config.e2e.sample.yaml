@@ -7,8 +7,13 @@ IrodsZone: tempZone
 IrodsAdminUser: rods
 IrodsAdminPassword: rods
 IrodsAuthScheme: native
-IrodsNegotiationPolicy: request_server_negotiation
+IrodsNegotiationPolicy: CS_NEG_DONT_CARE
 IrodsDefaultResource: demoResc
+ReplicaTrimMinCopies: 1
+ReplicaTrimMinAgeMinutes: 0
+
+TestResource1: test1-resc
+TestResource2: test1-resc2
 
 OidcUrl: https://localhost:8443
 OidcClientId: irods-go-rest

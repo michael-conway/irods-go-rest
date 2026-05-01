@@ -338,6 +338,9 @@ func generatedFileName(rng *mathrand.Rand) string {
 
 func randomToken(rng *mathrand.Rand, length int) string {
 	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+	if rng == nil {
+		rng = mathrand.New(mathrand.NewSource(time.Now().UnixNano()))
+	}
 
 	builder := strings.Builder{}
 	builder.Grow(length)

@@ -192,6 +192,40 @@ func e2eIRODSDefaultResource(t *testing.T) string {
 	return ""
 }
 
+func e2eTestResource1(t *testing.T) string {
+	if t != nil {
+		t.Helper()
+	}
+
+	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_TEST_RESOURCE1")); value != "" {
+		return value
+	}
+
+	if cfg := optionalE2ERestConfig(t); cfg != nil && strings.TrimSpace(cfg.TestResource1) != "" {
+		return strings.TrimSpace(cfg.TestResource1)
+	}
+
+	t.Fatalf("e2e tests require TestResource1 in %s or GOREST_E2E_TEST_RESOURCE1", e2eConfigFileEnvVar)
+	return ""
+}
+
+func e2eTestResource2(t *testing.T) string {
+	if t != nil {
+		t.Helper()
+	}
+
+	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_TEST_RESOURCE2")); value != "" {
+		return value
+	}
+
+	if cfg := optionalE2ERestConfig(t); cfg != nil && strings.TrimSpace(cfg.TestResource2) != "" {
+		return strings.TrimSpace(cfg.TestResource2)
+	}
+
+	t.Fatalf("e2e tests require TestResource2 in %s or GOREST_E2E_TEST_RESOURCE2", e2eConfigFileEnvVar)
+	return ""
+}
+
 func e2eIRODSUser(t *testing.T) string {
 	if t != nil {
 		t.Helper()
@@ -259,6 +293,11 @@ func newE2ERequest(t *testing.T, method string, url string, body io.Reader) *htt
 
 func setBasicAuth(req *http.Request) {
 	credentials := e2eBasicUsername(nil) + ":" + e2eBasicPassword(nil)
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(credentials)))
+}
+
+func setBasicAuthCredentials(req *http.Request, username string, password string) {
+	credentials := strings.TrimSpace(username) + ":" + strings.TrimSpace(password)
 	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(credentials)))
 }
 
