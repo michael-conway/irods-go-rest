@@ -33,6 +33,10 @@ type PathService interface {
 	GetPathChecksum(ctx context.Context, absolutePath string) (domain.PathChecksum, error)
 	ComputePathChecksum(ctx context.Context, absolutePath string) (domain.PathChecksum, error)
 	GetObjectContentByPath(ctx context.Context, absolutePath string) (domain.ObjectContent, error)
+	ListFavorites(ctx context.Context) ([]domain.Favorite, error)
+	AddFavorite(ctx context.Context, name string, favoritePath string) (domain.Favorite, error)
+	RenameFavorite(ctx context.Context, favoritePath string, name string) (domain.Favorite, error)
+	RemoveFavorite(ctx context.Context, favoritePath string) error
 }
 
 type pathService struct {
@@ -257,6 +261,42 @@ func (s *pathService) GetObjectContentByPath(ctx context.Context, absolutePath s
 	}
 
 	return s.catalog.GetObjectContentByPath(ctx, irodsRequestContext(requestContext), absolutePath)
+}
+
+func (s *pathService) ListFavorites(ctx context.Context) ([]domain.Favorite, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.catalog.ListFavorites(ctx, irodsRequestContext(requestContext))
+}
+
+func (s *pathService) AddFavorite(ctx context.Context, name string, favoritePath string) (domain.Favorite, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return domain.Favorite{}, err
+	}
+
+	return s.catalog.AddFavorite(ctx, irodsRequestContext(requestContext), name, favoritePath)
+}
+
+func (s *pathService) RenameFavorite(ctx context.Context, favoritePath string, name string) (domain.Favorite, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return domain.Favorite{}, err
+	}
+
+	return s.catalog.RenameFavorite(ctx, irodsRequestContext(requestContext), favoritePath, name)
+}
+
+func (s *pathService) RemoveFavorite(ctx context.Context, favoritePath string) error {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.catalog.RemoveFavorite(ctx, irodsRequestContext(requestContext), favoritePath)
 }
 
 func irodsRequestContext(requestContext *RequestContext) *irods.RequestContext {

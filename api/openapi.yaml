@@ -2678,6 +2678,168 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/ext/favorites:
+    get:
+      operationId: getExtFavorites
+      tags: [ext]
+      summary: List favorites for the authenticated user
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: absolute_path
+          required: false
+          schema:
+            type: string
+          description: Optional absolute iRODS path filter for a single favorite.
+      responses:
+        "200":
+          description: Favorites visible to the authenticated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FavoriteCollectionResponse"
+        "400":
+          description: Invalid favorite absolute_path filter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while listing favorites
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Favorite not found for requested absolute_path filter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: postExtFavorite
+      tags: [ext]
+      summary: Add or replace one favorite
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FavoriteUpsertRequest"
+      responses:
+        "201":
+          description: Favorite added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FavoriteResponse"
+        "400":
+          description: Invalid favorite request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while adding favorite
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    put:
+      operationId: putExtFavorite
+      tags: [ext]
+      summary: Rename one favorite by absolute path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FavoriteUpsertRequest"
+      responses:
+        "200":
+          description: Favorite renamed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FavoriteResponse"
+        "400":
+          description: Invalid favorite rename request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while renaming favorite
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Favorite not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteExtFavorite
+      tags: [ext]
+      summary: Remove one favorite by absolute path
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FavoriteDeleteRequest"
+      responses:
+        "204":
+          description: Favorite removed
+        "400":
+          description: Invalid favorite delete request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while removing favorite
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
   securitySchemes:
     BearerAuth:
@@ -3539,6 +3701,73 @@ components:
         path:
           type: string
           description: Full iRODS logical path to remove.
+    Favorite:
+      type: object
+      required: [name, absolute_path]
+      properties:
+        name:
+          type: string
+          description: User-assigned favorite display name.
+        absolute_path:
+          type: string
+          description: Absolute iRODS logical path for the favorite.
+        links:
+          $ref: "#/components/schemas/FavoriteLinks"
+    FavoriteLinks:
+      type: object
+      properties:
+        self:
+          $ref: "#/components/schemas/ActionLink"
+        details:
+          $ref: "#/components/schemas/ActionLink"
+        update:
+          $ref: "#/components/schemas/ActionLink"
+        delete:
+          $ref: "#/components/schemas/ActionLink"
+    FavoriteResponse:
+      type: object
+      required: [favorite]
+      properties:
+        favorite:
+          $ref: "#/components/schemas/Favorite"
+    FavoriteCollectionResponse:
+      type: object
+      required: [favorites, count]
+      properties:
+        favorites:
+          type: array
+          items:
+            $ref: "#/components/schemas/Favorite"
+        count:
+          type: integer
+        links:
+          type: object
+          properties:
+            self:
+              $ref: "#/components/schemas/ActionLink"
+            create:
+              $ref: "#/components/schemas/ActionLink"
+            update:
+              $ref: "#/components/schemas/ActionLink"
+            delete:
+              $ref: "#/components/schemas/ActionLink"
+    FavoriteUpsertRequest:
+      type: object
+      required: [name, absolute_path]
+      properties:
+        name:
+          type: string
+          description: Favorite display name.
+        absolute_path:
+          type: string
+          description: Absolute iRODS logical path for the favorite.
+    FavoriteDeleteRequest:
+      type: object
+      required: [absolute_path]
+      properties:
+        absolute_path:
+          type: string
+          description: Absolute iRODS logical path for the favorite to remove.
     Resource:
       type: object
       required: [id, name]

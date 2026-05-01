@@ -1746,6 +1746,127 @@ func TestGetPathContentsRejectsInvalidRange(t *testing.T) {
 	}
 }
 
+func TestExtFavoritesLifecycle(t *testing.T) {
+	handler := testHandler(t)
+
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/favorites", strings.NewReader(`{"name":"Project File","absolute_path":"/tempZone/home/test1/file.txt"}`))
+	createReq.Header.Set("Authorization", "Bearer token123")
+	createReq.Header.Set("Content-Type", "application/json")
+	createRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(createRec, createReq)
+
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", createRec.Code, createRec.Body.String())
+	}
+	if body := createRec.Body.String(); !containsAll(
+		body,
+		`"favorite":{"name":"Project File","absolute_path":"/tempZone/home/test1/file.txt"`,
+		`"self":{"href":"/api/v1/ext/favorites?absolute_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"}`,
+		`"details":{"href":"/api/v1/path?irods_path=%2FtempZone%2Fhome%2Ftest1%2Ffile.txt","method":"GET"}`,
+		`"update":{"href":"/api/v1/ext/favorites","method":"PUT"}`,
+		`"delete":{"href":"/api/v1/ext/favorites","method":"DELETE"}`,
+	) {
+		t.Fatalf("unexpected create favorite body: %q", body)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/favorites", nil)
+	listReq.Header.Set("Authorization", "Bearer token123")
+	listRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", listRec.Code, listRec.Body.String())
+	}
+	if body := listRec.Body.String(); !containsAll(
+		body,
+		`"favorites":[`,
+		`"name":"Project File"`,
+		`"absolute_path":"/tempZone/home/test1/file.txt"`,
+		`"count":1`,
+		`"links":{"self":{"href":"/api/v1/ext/favorites","method":"GET"}`,
+		`"create":{"href":"/api/v1/ext/favorites","method":"POST"}`,
+		`"update":{"href":"/api/v1/ext/favorites","method":"PUT"}`,
+		`"delete":{"href":"/api/v1/ext/favorites","method":"DELETE"}`,
+	) {
+		t.Fatalf("unexpected list favorites body: %q", body)
+	}
+
+	renameReq := httptest.NewRequest(http.MethodPut, "/api/v1/ext/favorites", strings.NewReader(`{"name":"Renamed Favorite","absolute_path":"/tempZone/home/test1/file.txt"}`))
+	renameReq.Header.Set("Authorization", "Bearer token123")
+	renameReq.Header.Set("Content-Type", "application/json")
+	renameRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(renameRec, renameReq)
+	if renameRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", renameRec.Code, renameRec.Body.String())
+	}
+	if body := renameRec.Body.String(); !containsAll(body, `"favorite":{"name":"Renamed Favorite","absolute_path":"/tempZone/home/test1/file.txt"`) {
+		t.Fatalf("unexpected rename favorite body: %q", body)
+	}
+
+	filterReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/favorites?absolute_path=/tempZone/home/test1/file.txt", nil)
+	filterReq.Header.Set("Authorization", "Bearer token123")
+	filterRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(filterRec, filterReq)
+	if filterRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", filterRec.Code, filterRec.Body.String())
+	}
+	if body := filterRec.Body.String(); !containsAll(body, `"count":1`, `"name":"Renamed Favorite"`) {
+		t.Fatalf("unexpected filtered favorite body: %q", body)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/ext/favorites", strings.NewReader(`{"absolute_path":"/tempZone/home/test1/file.txt"}`))
+	deleteReq.Header.Set("Authorization", "Bearer token123")
+	deleteReq.Header.Set("Content-Type", "application/json")
+	deleteRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", deleteRec.Code, deleteRec.Body.String())
+	}
+
+	listAfterDeleteReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/favorites", nil)
+	listAfterDeleteReq.Header.Set("Authorization", "Bearer token123")
+	listAfterDeleteRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(listAfterDeleteRec, listAfterDeleteReq)
+	if listAfterDeleteRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", listAfterDeleteRec.Code, listAfterDeleteRec.Body.String())
+	}
+	if body := listAfterDeleteRec.Body.String(); !containsAll(body, `"favorites":[]`, `"count":0`) {
+		t.Fatalf("unexpected favorites after delete body: %q", body)
+	}
+}
+
+func TestExtFavoritesValidationAndNotFound(t *testing.T) {
+	handler := testHandler(t)
+
+	invalidCreateReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/favorites", strings.NewReader(`{"name":"","absolute_path":"relative/path"}`))
+	invalidCreateReq.Header.Set("Authorization", "Bearer token123")
+	invalidCreateReq.Header.Set("Content-Type", "application/json")
+	invalidCreateRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(invalidCreateRec, invalidCreateReq)
+	if invalidCreateRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", invalidCreateRec.Code, invalidCreateRec.Body.String())
+	}
+	if body := invalidCreateRec.Body.String(); !containsAll(body, `"name":"name is required"`, `"absolute_path":"absolute_path must be an absolute iRODS path"`) {
+		t.Fatalf("unexpected invalid create favorite body: %q", body)
+	}
+
+	renameMissingReq := httptest.NewRequest(http.MethodPut, "/api/v1/ext/favorites", strings.NewReader(`{"name":"new","absolute_path":"/tempZone/home/test1/missing.txt"}`))
+	renameMissingReq.Header.Set("Authorization", "Bearer token123")
+	renameMissingReq.Header.Set("Content-Type", "application/json")
+	renameMissingRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(renameMissingRec, renameMissingReq)
+	if renameMissingRec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", renameMissingRec.Code, renameMissingRec.Body.String())
+	}
+
+	invalidFilterReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/favorites?absolute_path=relative/path", nil)
+	invalidFilterReq.Header.Set("Authorization", "Bearer token123")
+	invalidFilterRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(invalidFilterRec, invalidFilterReq)
+	if invalidFilterRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", invalidFilterRec.Code, invalidFilterRec.Body.String())
+	}
+}
+
 type stubAuthService struct{}
 
 func (stubAuthService) AuthorizationURL(state string) (string, error) {
