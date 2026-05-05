@@ -220,6 +220,7 @@ Run it with the service bound on port `8080`:
 
 ```bash
 docker run --rm -p 8080:8080 \
+  -e IRODS_REST_ADDR=:8080 \
   -e GOREST_IRODS_HOST=irods-provider \
   -e GOREST_IRODS_PORT=1247 \
   -e GOREST_OIDC_URL=http://keycloak:8080 \

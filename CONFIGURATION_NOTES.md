@@ -22,6 +22,7 @@ These are the settings you will usually care about:
 
 ```bash
 GOREST_PUBLIC_URL=http://localhost:8080
+IRODS_REST_ADDR=:8080
 GOREST_REST_LOG_LEVEL=info
 
 GOREST_IRODS_HOST=irods-provider
@@ -39,6 +40,11 @@ GOREST_OIDC_CLIENT_ID=irods-go-rest
 GOREST_OIDC_SCOPE="openid profile email"
 GOREST_OIDC_INSECURE_SKIP_VERIFY=false
 ```
+
+`PublicURL` is the externally reachable URL used for redirects and generated
+links. `IRODS_REST_ADDR` is the socket address the HTTP server binds to. In
+containers, use `IRODS_REST_ADDR=:8080` so Docker port publishing can reach the
+service.
 
 If your local Keycloak uses a self-signed certificate, you can temporarily use:
 

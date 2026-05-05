@@ -16,6 +16,7 @@ import (
 // RestConfig Provides configuration for drs behaviors
 type RestConfig struct {
 	PublicURL                string
+	ListenAddr               string
 	RestLogLevel             string //info, debug
 	IrodsHost                string
 	IrodsPort                int
@@ -88,6 +89,7 @@ const ConfigFileEnvVar = "IRODS_REST_CONFIG_FILE"
 func bindEnvVars(v *viper.Viper) error {
 	envBindings := map[string][]string{
 		"PublicURL":                {"GOREST_PUBLIC_URL", "GOREST_PUBLICURL"},
+		"ListenAddr":               {"IRODS_REST_ADDR", "GOREST_LISTEN_ADDR", "GOREST_LISTENADDR"},
 		"RestLogLevel":             {"GOREST_REST_LOG_LEVEL", "GOREST_RESTLOGLEVEL"},
 		"IrodsHost":                {"GOREST_IRODS_HOST", "GOREST_IRODSHOST"},
 		"IrodsPort":                {"GOREST_IRODS_PORT", "GOREST_IRODSPORT"},

@@ -20,8 +20,9 @@ func main() {
 	}
 
 	log.Printf(
-		"loaded config: public_url=%q oidc_url=%q oidc_realm=%q oidc_client_id=%q irods_host=%q irods_port=%d",
+		"loaded config: public_url=%q listen_addr=%q oidc_url=%q oidc_realm=%q oidc_client_id=%q irods_host=%q irods_port=%d",
 		cfg.PublicURL,
+		cfg.ListenAddr,
 		cfg.OidcUrl,
 		cfg.OidcRealm,
 		cfg.OidcClientId,

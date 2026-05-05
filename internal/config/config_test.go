@@ -27,6 +27,7 @@ func TestReadRestConfigEnvOverride(t *testing.T) {
 	t.Setenv("GOREST_RESOURCE_AFFINITY", "demoResc, edgeResc ,  archiveResc  ")
 	t.Setenv("GOREST_REPLICA_TRIM_MIN_COPIES", "4")
 	t.Setenv("GOREST_REPLICA_TRIM_MIN_AGE_MINUTES", "12")
+	t.Setenv("IRODS_REST_ADDR", ":18080")
 
 	cfg, err := ReadRestConfig("rest-config", "yaml", []string{dir})
 	if err != nil {
@@ -52,6 +53,9 @@ func TestReadRestConfigEnvOverride(t *testing.T) {
 	}
 	if cfg.ReplicaTrimMinAgeMinutes != 12 {
 		t.Fatalf("expected ReplicaTrimMinAgeMinutes from env override, got %d", cfg.ReplicaTrimMinAgeMinutes)
+	}
+	if cfg.ListenAddr != ":18080" {
+		t.Fatalf("expected ListenAddr from IRODS_REST_ADDR override, got %q", cfg.ListenAddr)
 	}
 }
 

@@ -16,6 +16,7 @@ OidcInsecureSkipVerify: false
 OidcRealm:
 OidcScope: openid profile email
 PublicUrl: http://localhost:8080
+ListenAddr:
 RestLogLevel: info
 ResourceAffinity:
   - demoResc
