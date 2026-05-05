@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/michael-conway/irods-go-rest/internal/auth"
@@ -19,7 +20,8 @@ type App struct {
 	server *http.Server
 }
 
-func listenAddr(publicURL string) string {
+func publicURLListenAddr(publicURL string) string {
+	publicURL = strings.TrimSpace(publicURL)
 	if publicURL == "" {
 		return ""
 	}
@@ -30,6 +32,14 @@ func listenAddr(publicURL string) string {
 	}
 
 	return publicURL
+}
+
+func serverListenAddr(cfg config.RestConfig) string {
+	if listenAddr := strings.TrimSpace(cfg.ListenAddr); listenAddr != "" {
+		return listenAddr
+	}
+
+	return publicURLListenAddr(cfg.PublicURL)
 }
 
 func New(cfg config.RestConfig) *App {
@@ -46,7 +56,7 @@ func New(cfg config.RestConfig) *App {
 
 	return &App{
 		server: &http.Server{
-			Addr:              listenAddr(cfg.PublicURL),
+			Addr:              serverListenAddr(cfg),
 			Handler:           handler.Routes(),
 			ReadHeaderTimeout: 5 * time.Second,
 		},
