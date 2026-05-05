@@ -145,7 +145,13 @@ func fixtureLocalRootPath() (string, error) {
 func newE2EIRODSFilesystem(t *testing.T) *irodsfs.FileSystem {
 	t.Helper()
 
-	authScheme := irodstypes.GetAuthScheme(e2eIRODSAuthScheme(t))
+	requestAuthScheme := irodstypes.GetAuthScheme(e2eIRODSAuthScheme(t))
+	adminAuthScheme := requestAuthScheme
+	cfg := optionalE2ERestConfig(t)
+	if cfg != nil {
+		requestAuthScheme = cfg.RequestAuthScheme()
+		adminAuthScheme = cfg.AdminAuthScheme()
+	}
 	targetUser := e2eBasicUsername(t)
 	uploaderUser := e2eIRODSUser(t)
 	defaultResource := e2eIRODSDefaultResource(t)
@@ -163,7 +169,7 @@ func newE2EIRODSFilesystem(t *testing.T) *irodsfs.FileSystem {
 			e2eIRODSZone(t),
 			uploaderUser,
 			e2eIRODSZone(t),
-			authScheme,
+			adminAuthScheme,
 			e2eIRODSPassword(t),
 			defaultResource,
 		)
@@ -173,7 +179,7 @@ func newE2EIRODSFilesystem(t *testing.T) *irodsfs.FileSystem {
 			e2eIRODSPort(t),
 			targetUser,
 			e2eIRODSZone(t),
-			authScheme,
+			requestAuthScheme,
 			e2eIRODSPassword(t),
 			defaultResource,
 		)
@@ -182,7 +188,7 @@ func newE2EIRODSFilesystem(t *testing.T) *irodsfs.FileSystem {
 	if err != nil {
 		t.Fatalf("create iRODS account: %v", err)
 	}
-	if cfg := optionalE2ERestConfig(t); cfg != nil {
+	if cfg != nil {
 		cfg.ApplyIRODSConnectionConfig(account)
 	}
 

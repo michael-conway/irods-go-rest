@@ -115,6 +115,7 @@ config-file override in real runs:
 * `IrodsZone`
 * `IrodsAdminUser`
 * `IrodsAdminPassword`
+* `IrodsAdminLoginType`
 * `IrodsAuthScheme`
 * `IrodsNegotiationPolicy`
 * `IrodsDefaultResource`

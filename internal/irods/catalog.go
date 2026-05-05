@@ -1755,7 +1755,7 @@ func (s *catalogService) accountForRequest(requestContext *RequestContext) (*iro
 			s.cfg.IrodsPort,
 			requestContext.Username,
 			s.cfg.IrodsZone,
-			irodstypes.GetAuthScheme(s.cfg.IrodsAuthScheme),
+			s.cfg.RequestAuthScheme(),
 			requestContext.BasicPassword,
 			s.cfg.IrodsDefaultResource,
 		)
@@ -1778,7 +1778,7 @@ func (s *catalogService) accountForRequest(requestContext *RequestContext) (*iro
 			s.cfg.IrodsPort,
 			s.cfg.IrodsAdminUser,
 			s.cfg.IrodsZone,
-			irodstypes.GetAuthScheme(s.cfg.IrodsAuthScheme),
+			s.cfg.AdminAuthScheme(),
 			s.cfg.IrodsAdminPassword,
 			requestContext.Ticket,
 			s.cfg.IrodsDefaultResource,
@@ -1804,7 +1804,7 @@ func (s *catalogService) accountForRequest(requestContext *RequestContext) (*iro
 			s.cfg.IrodsZone,
 			s.cfg.IrodsAdminUser,
 			s.cfg.IrodsZone,
-			irodstypes.GetAuthScheme(s.cfg.IrodsAuthScheme),
+			s.cfg.AdminAuthScheme(),
 			s.cfg.IrodsAdminPassword,
 			s.cfg.IrodsDefaultResource,
 		)

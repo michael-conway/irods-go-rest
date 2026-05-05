@@ -20,7 +20,7 @@ func main() {
 	}
 
 	log.Printf(
-		"loaded config: public_url=%q listen_addr=%q oidc_url=%q oidc_realm=%q oidc_client_id=%q irods_host=%q irods_port=%d",
+		"loaded config: public_url=%q listen_addr=%q oidc_url=%q oidc_realm=%q oidc_client_id=%q irods_host=%q irods_port=%d irods_admin_login_type=%q irods_auth_scheme=%q irods_negotiation_policy=%q",
 		cfg.PublicURL,
 		cfg.ListenAddr,
 		cfg.OidcUrl,
@@ -28,6 +28,9 @@ func main() {
 		cfg.OidcClientId,
 		cfg.IrodsHost,
 		cfg.IrodsPort,
+		cfg.IrodsAdminLoginType,
+		cfg.IrodsAuthScheme,
+		cfg.IrodsNegotiationPolicy,
 	)
 
 	application := app.New(*cfg)
