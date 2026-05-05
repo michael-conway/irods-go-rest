@@ -1763,7 +1763,7 @@ func (s *catalogService) accountForRequest(requestContext *RequestContext) (*iro
 			logIRODSError("catalog direct account creation failed", err, "http_auth_scheme", requestContext.AuthScheme, "irods_proxy_user", requestContext.Username, "irods_client_user", requestContext.Username, "irods_zone", s.cfg.IrodsZone)
 			return nil, fmt.Errorf("create iRODS account: %w", err)
 		}
-		return account, nil
+		return s.cfg.ApplyIRODSConnectionConfig(account), nil
 	case "bearer-ticket":
 		slog.Debug(
 			"catalog resolved ticket iRODS account",
@@ -1787,7 +1787,7 @@ func (s *catalogService) accountForRequest(requestContext *RequestContext) (*iro
 			logIRODSError("catalog ticket account creation failed", err, "http_auth_scheme", requestContext.AuthScheme, "irods_proxy_user", s.cfg.IrodsAdminUser, "irods_client_user", s.cfg.IrodsAdminUser, "irods_zone", s.cfg.IrodsZone)
 			return nil, fmt.Errorf("create iRODS ticket account: %w", err)
 		}
-		return account, nil
+		return s.cfg.ApplyIRODSConnectionConfig(account), nil
 	case "bearer":
 		slog.Debug(
 			"catalog resolved proxy iRODS account",
@@ -1812,7 +1812,7 @@ func (s *catalogService) accountForRequest(requestContext *RequestContext) (*iro
 			logIRODSError("catalog proxy account creation failed", err, "http_auth_scheme", requestContext.AuthScheme, "irods_proxy_user", s.cfg.IrodsAdminUser, "irods_client_user", requestContext.Username, "irods_zone", s.cfg.IrodsZone)
 			return nil, fmt.Errorf("create iRODS proxy account: %w", err)
 		}
-		return account, nil
+		return s.cfg.ApplyIRODSConnectionConfig(account), nil
 	default:
 		logIRODSError("catalog unsupported auth scheme", fmt.Errorf("unsupported auth scheme %q", requestContext.AuthScheme), "http_auth_scheme", requestContext.AuthScheme, "username", requestContext.Username)
 		return nil, fmt.Errorf("unsupported auth scheme %q", requestContext.AuthScheme)

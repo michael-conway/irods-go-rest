@@ -90,6 +90,7 @@ func integrationBearerRequestContext(t *testing.T) *RequestContext {
 func newIntegrationIRODSFilesystem(t *testing.T) *irodsfs.FileSystem {
 	t.Helper()
 
+	cfg := integrationCatalogConfig(t)
 	authScheme := irodstypes.GetAuthScheme(integrationIRODSAuthScheme(t))
 	targetUser := integrationBasicUsername(t)
 	defaultResource := integrationIRODSDefaultResource(t)
@@ -125,6 +126,7 @@ func newIntegrationIRODSFilesystem(t *testing.T) *irodsfs.FileSystem {
 	if err != nil {
 		t.Fatalf("create iRODS account: %v", err)
 	}
+	cfg.ApplyIRODSConnectionConfig(account)
 
 	filesystem, err := irodsfs.NewFileSystemWithDefault(account, "irods-go-rest-integration-test")
 	if err != nil {

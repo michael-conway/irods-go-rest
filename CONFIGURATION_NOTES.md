@@ -30,6 +30,7 @@ GOREST_IRODS_PORT=1247
 GOREST_IRODS_ZONE=tempZone
 GOREST_IRODS_ADMIN_USER=rods
 GOREST_IRODS_DEFAULT_RESOURCE=demoResc
+GOREST_IRODS_NEGOTIATION_POLICY=CS_NEG_DONT_CARE
 GOREST_RESOURCE_AFFINITY=demoResc,edgeResc
 GOREST_REPLICA_TRIM_MIN_COPIES=1
 GOREST_REPLICA_TRIM_MIN_AGE_MINUTES=0
@@ -53,6 +54,43 @@ GOREST_OIDC_INSECURE_SKIP_VERIFY=true
 ```
 
 Use that only for local development.
+
+## iRODS SSL
+
+For SSL-configured iRODS servers, set the negotiation policy to require SSL and
+provide the optional SSL settings needed by that zone:
+
+```yaml
+IrodsNegotiationPolicy: CS_NEG_REQUIRE
+IrodsSSLConfig:
+  CACertificateFile: /etc/irods/ca.pem
+  CACertificatePath:
+  EncryptionKeySize: 32
+  EncryptionAlgorithm: AES-256-CBC
+  EncryptionSaltSize: 8
+  EncryptionNumHashRounds: 16
+  VerifyServer: hostname
+  DHParamsFile:
+  ServerName: irods.example.org
+```
+
+Environment variable equivalents:
+
+```bash
+GOREST_IRODS_NEGOTIATION_POLICY=CS_NEG_REQUIRE
+GOREST_IRODS_SSL_CA_CERTIFICATE_FILE=/etc/irods/ca.pem
+GOREST_IRODS_SSL_CA_CERTIFICATE_PATH=
+GOREST_IRODS_ENCRYPTION_KEY_SIZE=32
+GOREST_IRODS_ENCRYPTION_ALGORITHM=AES-256-CBC
+GOREST_IRODS_ENCRYPTION_SALT_SIZE=8
+GOREST_IRODS_ENCRYPTION_NUM_HASH_ROUNDS=16
+GOREST_IRODS_SSL_VERIFY_SERVER=hostname
+GOREST_IRODS_SSL_DH_PARAMS_FILE=
+GOREST_IRODS_SSL_SERVER_NAME=irods.example.org
+```
+
+`VerifyServer` accepts `hostname`, `cert`, or `none`. Empty encryption settings
+default to the go-irodsclient defaults.
 
 ## Resource affinity
 

@@ -182,6 +182,9 @@ func newE2EIRODSFilesystem(t *testing.T) *irodsfs.FileSystem {
 	if err != nil {
 		t.Fatalf("create iRODS account: %v", err)
 	}
+	if cfg := optionalE2ERestConfig(t); cfg != nil {
+		cfg.ApplyIRODSConnectionConfig(account)
+	}
 
 	filesystem, err := irodsfs.NewFileSystemWithDefault(account, "irods-go-rest-e2e-fixture")
 	if err != nil {
