@@ -6,6 +6,7 @@ IrodsPort: 1247
 IrodsZone: tempZone
 IrodsAdminUser: rods
 IrodsAdminPassword: rods
+IrodsAdminLoginType: native
 IrodsAuthScheme: native
 IrodsNegotiationPolicy: CS_NEG_DONT_CARE
 IrodsSSLConfig:

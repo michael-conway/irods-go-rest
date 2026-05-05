@@ -29,6 +29,8 @@ GOREST_IRODS_HOST=irods-provider
 GOREST_IRODS_PORT=1247
 GOREST_IRODS_ZONE=tempZone
 GOREST_IRODS_ADMIN_USER=rods
+GOREST_IRODS_ADMIN_LOGIN_TYPE=native
+GOREST_IRODS_AUTH_SCHEME=native
 GOREST_IRODS_DEFAULT_RESOURCE=demoResc
 GOREST_IRODS_NEGOTIATION_POLICY=CS_NEG_DONT_CARE
 GOREST_RESOURCE_AFFINITY=demoResc,edgeResc
@@ -91,6 +93,12 @@ GOREST_IRODS_SSL_SERVER_NAME=irods.example.org
 
 `VerifyServer` accepts `hostname`, `cert`, or `none`. Empty encryption settings
 default to the go-irodsclient defaults.
+
+`IrodsAdminLoginType` controls the admin/proxy account used by bearer-token and
+ticket-backed requests. `IrodsAuthScheme` controls direct user credentials, such
+as Basic auth requests. PAM auth requires SSL in go-irodsclient; if the iRODS
+server returns `CS_NEG_REFUSE`, use native auth for that connection path or
+enable SSL negotiation on the iRODS server.
 
 ## Resource affinity
 

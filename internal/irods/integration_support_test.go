@@ -91,7 +91,8 @@ func newIntegrationIRODSFilesystem(t *testing.T) *irodsfs.FileSystem {
 	t.Helper()
 
 	cfg := integrationCatalogConfig(t)
-	authScheme := irodstypes.GetAuthScheme(integrationIRODSAuthScheme(t))
+	requestAuthScheme := cfg.RequestAuthScheme()
+	adminAuthScheme := cfg.AdminAuthScheme()
 	targetUser := integrationBasicUsername(t)
 	defaultResource := integrationIRODSDefaultResource(t)
 	var (
@@ -107,7 +108,7 @@ func newIntegrationIRODSFilesystem(t *testing.T) *irodsfs.FileSystem {
 			integrationIRODSZone(t),
 			integrationIRODSUser(t),
 			integrationIRODSZone(t),
-			authScheme,
+			adminAuthScheme,
 			integrationIRODSPassword(t),
 			defaultResource,
 		)
@@ -117,7 +118,7 @@ func newIntegrationIRODSFilesystem(t *testing.T) *irodsfs.FileSystem {
 			integrationIRODSPort(t),
 			targetUser,
 			integrationIRODSZone(t),
-			authScheme,
+			requestAuthScheme,
 			integrationBasicPassword(t),
 			defaultResource,
 		)

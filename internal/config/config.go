@@ -24,6 +24,7 @@ type RestConfig struct {
 	IrodsAdminUser           string
 	IrodsAdminPassword       string
 	IrodsAdminPasswordFile   string
+	IrodsAdminLoginType      string
 	IrodsAuthScheme          string
 	IrodsNegotiationPolicy   string
 	IrodsSSLConfig           IrodsSSLConfig
@@ -67,6 +68,19 @@ func NormalizeIRODSNegotiationPolicy(policy string) string {
 		)
 		return string(types.CSNegotiationPolicyRequestDontCare)
 	}
+}
+
+func (cfg *RestConfig) AdminAuthScheme() types.AuthScheme {
+	adminLoginType := strings.TrimSpace(cfg.IrodsAdminLoginType)
+	if adminLoginType == "" {
+		adminLoginType = strings.TrimSpace(cfg.IrodsAuthScheme)
+	}
+
+	return types.GetAuthScheme(adminLoginType)
+}
+
+func (cfg *RestConfig) RequestAuthScheme() types.AuthScheme {
+	return types.GetAuthScheme(cfg.IrodsAuthScheme)
 }
 
 func (cfg *RestConfig) ToIRODSSSLConfig() *types.IRODSSSLConfig {
@@ -137,10 +151,8 @@ func (cfg *RestConfig) ApplyIRODSConnectionConfig(account *types.IRODSAccount) *
 }
 
 func (cfg *RestConfig) ToIrodsAccount() types.IRODSAccount {
-	authScheme := types.GetAuthScheme(cfg.IrodsAuthScheme)
-
 	account := types.IRODSAccount{
-		AuthenticationScheme: authScheme,
+		AuthenticationScheme: cfg.AdminAuthScheme(),
 		Host:                 cfg.IrodsHost,
 		Port:                 cfg.IrodsPort,
 		ClientUser:           cfg.IrodsAdminUser,
@@ -176,6 +188,7 @@ func bindEnvVars(v *viper.Viper) error {
 		"IrodsAdminUser":                         {"GOREST_IRODS_ADMIN_USER", "GOREST_IRODSADMINUSER"},
 		"IrodsAdminPassword":                     {"GOREST_IRODS_ADMIN_PASSWORD", "GOREST_IRODSADMINPASSWORD"},
 		"IrodsAdminPasswordFile":                 {"GOREST_IRODS_ADMIN_PASSWORD_FILE", "GOREST_IRODSADMINPASSWORDFILE"},
+		"IrodsAdminLoginType":                    {"GOREST_IRODS_ADMIN_LOGIN_TYPE", "GOREST_IRODS_ADMIN_AUTH_SCHEME", "GOREST_IRODSADMINLOGINTYPE"},
 		"IrodsAuthScheme":                        {"GOREST_IRODS_AUTH_SCHEME", "GOREST_IRODSAUTHSCHEME"},
 		"IrodsNegotiationPolicy":                 {"GOREST_IRODS_NEGOTIATION_POLICY", "GOREST_IRODSNEGOTIATIONPOLICY"},
 		"IrodsSSLConfig.CACertificateFile":       {"GOREST_IRODS_SSL_CA_CERTIFICATE_FILE", "GOREST_IRODSSSLCACERTIFICATEFILE"},

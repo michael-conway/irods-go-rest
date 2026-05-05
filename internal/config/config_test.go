@@ -30,6 +30,7 @@ func TestReadRestConfigEnvOverride(t *testing.T) {
 	t.Setenv("GOREST_REPLICA_TRIM_MIN_COPIES", "4")
 	t.Setenv("GOREST_REPLICA_TRIM_MIN_AGE_MINUTES", "12")
 	t.Setenv("IRODS_REST_ADDR", ":18080")
+	t.Setenv("GOREST_IRODS_ADMIN_LOGIN_TYPE", "native")
 
 	cfg, err := ReadRestConfig("rest-config", "yaml", []string{dir})
 	if err != nil {
@@ -58,6 +59,9 @@ func TestReadRestConfigEnvOverride(t *testing.T) {
 	}
 	if cfg.ListenAddr != ":18080" {
 		t.Fatalf("expected ListenAddr from IRODS_REST_ADDR override, got %q", cfg.ListenAddr)
+	}
+	if cfg.IrodsAdminLoginType != "native" {
+		t.Fatalf("expected IrodsAdminLoginType from env override, got %q", cfg.IrodsAdminLoginType)
 	}
 }
 
@@ -176,6 +180,28 @@ func TestReadRestConfigIRODSSSLConfigYAML(t *testing.T) {
 	}
 	if account.SSLConfiguration.ServerName != "irods.example.org" {
 		t.Fatalf("expected SSL server name on account, got %q", account.SSLConfiguration.ServerName)
+	}
+}
+
+func TestAdminAuthSchemeFallsBackToRequestAuthScheme(t *testing.T) {
+	cfg := RestConfig{IrodsAuthScheme: "pam"}
+
+	if got := cfg.AdminAuthScheme(); got != irodstypes.AuthSchemePAM {
+		t.Fatalf("expected admin auth scheme to fall back to request auth scheme, got %q", got)
+	}
+}
+
+func TestAdminAuthSchemeUsesAdminLoginType(t *testing.T) {
+	cfg := RestConfig{
+		IrodsAdminLoginType: "native",
+		IrodsAuthScheme:     "pam",
+	}
+
+	if got := cfg.AdminAuthScheme(); got != irodstypes.AuthSchemeNative {
+		t.Fatalf("expected admin auth scheme from IrodsAdminLoginType, got %q", got)
+	}
+	if got := cfg.RequestAuthScheme(); got != irodstypes.AuthSchemePAM {
+		t.Fatalf("expected request auth scheme from IrodsAuthScheme, got %q", got)
 	}
 }
 

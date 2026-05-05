@@ -974,6 +974,49 @@ func TestCatalogAccountForRequestAppliesSSLConnectionConfig(t *testing.T) {
 	}
 }
 
+func TestCatalogAccountForRequestUsesAdminLoginTypeForProxyAccounts(t *testing.T) {
+	cfg := config.RestConfig{
+		IrodsZone:              "commonsProdZone",
+		IrodsHost:              "ehsincvlp01.niehs.nih.gov",
+		IrodsPort:              1247,
+		IrodsAdminLoginType:    "native",
+		IrodsAuthScheme:        "pam",
+		IrodsNegotiationPolicy: "CS_NEG_DONT_CARE",
+		IrodsAdminUser:         "odsadmin",
+		IrodsAdminPassword:     "secret",
+		IrodsDefaultResource:   "commons_resc1",
+	}
+	service := &catalogService{cfg: cfg}
+
+	bearerAccount, err := service.accountForRequest(&RequestContext{AuthScheme: "bearer", Username: "alice"})
+	if err != nil {
+		t.Fatalf("accountForRequest bearer returned error: %v", err)
+	}
+	if bearerAccount.AuthenticationScheme != irodstypes.AuthSchemeNative {
+		t.Fatalf("expected bearer proxy account to use native admin auth, got %q", bearerAccount.AuthenticationScheme)
+	}
+	if bearerAccount.ClientServerNegotiation {
+		t.Fatal("expected bearer proxy account not to require SSL negotiation with native admin auth and CS_NEG_DONT_CARE")
+	}
+	if bearerAccount.CSNegotiationPolicy != irodstypes.CSNegotiationPolicyRequestDontCare {
+		t.Fatalf("expected DONT_CARE policy for bearer proxy account, got %q", bearerAccount.CSNegotiationPolicy)
+	}
+
+	basicAccount, err := service.accountForRequest(&RequestContext{AuthScheme: "basic", Username: "alice", BasicPassword: "secret"})
+	if err != nil {
+		t.Fatalf("accountForRequest basic returned error: %v", err)
+	}
+	if basicAccount.AuthenticationScheme != irodstypes.AuthSchemePAM {
+		t.Fatalf("expected basic account to use request PAM auth, got %q", basicAccount.AuthenticationScheme)
+	}
+	if !basicAccount.ClientServerNegotiation {
+		t.Fatal("expected basic PAM account to require SSL negotiation")
+	}
+	if basicAccount.CSNegotiationPolicy != irodstypes.CSNegotiationPolicyRequestSSL {
+		t.Fatalf("expected SSL policy for basic PAM account, got %q", basicAccount.CSNegotiationPolicy)
+	}
+}
+
 func newTestCatalogService(t *testing.T, filesystem *catalogTestFileSystem) CatalogService {
 	t.Helper()
 
