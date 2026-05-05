@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
 )
 
 func writeTestFile(t *testing.T, dir string, name string, contents string) string {
@@ -122,6 +124,100 @@ func TestReadRestConfigResourceAffinityYAMLList(t *testing.T) {
 
 	if len(cfg.ResourceAffinity) != 3 || cfg.ResourceAffinity[0] != "demoResc" || cfg.ResourceAffinity[1] != "edgeResc" || cfg.ResourceAffinity[2] != "archiveResc" {
 		t.Fatalf("expected ResourceAffinity list from YAML, got %+v", cfg.ResourceAffinity)
+	}
+}
+
+func TestReadRestConfigIRODSSSLConfigYAML(t *testing.T) {
+	dir := t.TempDir()
+	configBody := "" +
+		"IrodsHost: localhost\n" +
+		"IrodsPort: 1247\n" +
+		"IrodsZone: tempZone\n" +
+		"IrodsAdminUser: rods\n" +
+		"IrodsAuthScheme: native\n" +
+		"IrodsNegotiationPolicy: CS_NEG_REQUIRE\n" +
+		"IrodsSSLConfig:\n" +
+		"  CACertificateFile: /etc/irods/ca.pem\n" +
+		"  CACertificatePath: /etc/irods/certs\n" +
+		"  EncryptionKeySize: 32\n" +
+		"  EncryptionAlgorithm: AES-256-CBC\n" +
+		"  EncryptionSaltSize: 8\n" +
+		"  EncryptionNumHashRounds: 16\n" +
+		"  VerifyServer: hostname\n" +
+		"  DHParamsFile: /etc/irods/dhparams.pem\n" +
+		"  ServerName: irods.example.org\n"
+
+	writeTestFile(t, dir, "rest-config.yaml", configBody)
+
+	cfg, err := ReadRestConfig("rest-config", "yaml", []string{dir})
+	if err != nil {
+		t.Fatalf("error reading config: %v", err)
+	}
+
+	if cfg.IrodsSSLConfig.CACertificateFile != "/etc/irods/ca.pem" {
+		t.Fatalf("expected CA certificate file from YAML, got %q", cfg.IrodsSSLConfig.CACertificateFile)
+	}
+	if cfg.IrodsSSLConfig.ServerName != "irods.example.org" {
+		t.Fatalf("expected SSL server name from YAML, got %q", cfg.IrodsSSLConfig.ServerName)
+	}
+
+	account := cfg.ToIrodsAccount()
+	if !account.ClientServerNegotiation {
+		t.Fatal("expected client-server negotiation for SSL policy")
+	}
+	if account.CSNegotiationPolicy != irodstypes.CSNegotiationPolicyRequestSSL {
+		t.Fatalf("expected SSL negotiation policy, got %q", account.CSNegotiationPolicy)
+	}
+	if account.SSLConfiguration == nil {
+		t.Fatal("expected SSL configuration on account")
+	}
+	if account.SSLConfiguration.VerifyServer != irodstypes.SSLVerifyServerHostname {
+		t.Fatalf("expected hostname verification, got %q", account.SSLConfiguration.VerifyServer)
+	}
+	if account.SSLConfiguration.ServerName != "irods.example.org" {
+		t.Fatalf("expected SSL server name on account, got %q", account.SSLConfiguration.ServerName)
+	}
+}
+
+func TestReadRestConfigIRODSSSLConfigEnvOverride(t *testing.T) {
+	dir := t.TempDir()
+	configBody := "" +
+		"IrodsHost: localhost\n" +
+		"IrodsPort: 1247\n" +
+		"IrodsZone: tempZone\n" +
+		"IrodsAdminUser: rods\n" +
+		"IrodsAuthScheme: native\n" +
+		"IrodsNegotiationPolicy: CS_NEG_DONT_CARE\n" +
+		"RestLogLevel: info\n"
+
+	writeTestFile(t, dir, "rest-config.yaml", configBody)
+
+	t.Setenv("GOREST_IRODS_SSL_CA_CERTIFICATE_FILE", "/env/ca.pem")
+	t.Setenv("GOREST_IRODS_SSL_VERIFY_SERVER", "none")
+	t.Setenv("GOREST_IRODS_SSL_SERVER_NAME", "env-irods.example.org")
+	t.Setenv("GOREST_IRODS_ENCRYPTION_KEY_SIZE", "64")
+
+	cfg, err := ReadRestConfig("rest-config", "yaml", []string{dir})
+	if err != nil {
+		t.Fatalf("error reading config: %v", err)
+	}
+
+	if cfg.IrodsSSLConfig.CACertificateFile != "/env/ca.pem" {
+		t.Fatalf("expected SSL CA file from env override, got %q", cfg.IrodsSSLConfig.CACertificateFile)
+	}
+	if cfg.IrodsSSLConfig.VerifyServer != "none" {
+		t.Fatalf("expected SSL verify server from env override, got %q", cfg.IrodsSSLConfig.VerifyServer)
+	}
+	if cfg.IrodsSSLConfig.EncryptionKeySize != 64 {
+		t.Fatalf("expected SSL encryption key size from env override, got %d", cfg.IrodsSSLConfig.EncryptionKeySize)
+	}
+
+	sslConfig := cfg.ToIRODSSSLConfig()
+	if sslConfig.VerifyServer != irodstypes.SSLVerifyServerNone {
+		t.Fatalf("expected no server verification, got %q", sslConfig.VerifyServer)
+	}
+	if sslConfig.ServerName != "env-irods.example.org" {
+		t.Fatalf("expected SSL server name from env override, got %q", sslConfig.ServerName)
 	}
 }
 

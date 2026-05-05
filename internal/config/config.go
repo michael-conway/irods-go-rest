@@ -26,6 +26,7 @@ type RestConfig struct {
 	IrodsAdminPasswordFile   string
 	IrodsAuthScheme          string
 	IrodsNegotiationPolicy   string
+	IrodsSSLConfig           IrodsSSLConfig
 	IrodsDefaultResource     string
 	TestResource1            string
 	TestResource2            string
@@ -39,6 +40,18 @@ type RestConfig struct {
 	OidcInsecureSkipVerify   bool
 	OidcRealm                string
 	OidcScope                string
+}
+
+type IrodsSSLConfig struct {
+	CACertificateFile       string
+	CACertificatePath       string
+	EncryptionKeySize       int
+	EncryptionAlgorithm     string
+	EncryptionSaltSize      int
+	EncryptionNumHashRounds int
+	VerifyServer            string
+	DHParamsFile            string
+	ServerName              string
 }
 
 func NormalizeIRODSNegotiationPolicy(policy string) string {
@@ -56,28 +69,89 @@ func NormalizeIRODSNegotiationPolicy(policy string) string {
 	}
 }
 
-func (cfg *RestConfig) ToIrodsAccount() types.IRODSAccount {
-	authScheme := types.GetAuthScheme(cfg.IrodsAuthScheme)
-	normalizedPolicy := NormalizeIRODSNegotiationPolicy(cfg.IrodsNegotiationPolicy)
+func (cfg *RestConfig) ToIRODSSSLConfig() *types.IRODSSSLConfig {
+	sslConfig := cfg.IrodsSSLConfig
 
+	verifyServerName := strings.TrimSpace(sslConfig.VerifyServer)
+	if verifyServerName == "" {
+		verifyServerName = defaultIRODSSSLVerifyServer
+	}
+
+	verifyServer, err := types.GetSSLVerifyServer(verifyServerName)
+	if err != nil {
+		slog.Warn(
+			"invalid iRODS SSL verify server; defaulting to go-irodsclient value",
+			"configured_verify_server", verifyServerName,
+			"default_verify_server", defaultIRODSSSLVerifyServer,
+		)
+		verifyServer, _ = types.GetSSLVerifyServer(defaultIRODSSSLVerifyServer)
+	}
+
+	encryptionKeySize := sslConfig.EncryptionKeySize
+	if encryptionKeySize <= 0 {
+		encryptionKeySize = defaultIRODSEncryptionKeySize
+	}
+
+	encryptionAlgorithm := strings.TrimSpace(sslConfig.EncryptionAlgorithm)
+	if encryptionAlgorithm == "" {
+		encryptionAlgorithm = defaultIRODSEncryptionAlgorithm
+	}
+
+	encryptionSaltSize := sslConfig.EncryptionSaltSize
+	if encryptionSaltSize <= 0 {
+		encryptionSaltSize = defaultIRODSEncryptionSaltSize
+	}
+
+	encryptionNumHashRounds := sslConfig.EncryptionNumHashRounds
+	if encryptionNumHashRounds <= 0 {
+		encryptionNumHashRounds = defaultIRODSEncryptionNumHashRounds
+	}
+
+	return &types.IRODSSSLConfig{
+		CACertificateFile:       strings.TrimSpace(sslConfig.CACertificateFile),
+		CACertificatePath:       strings.TrimSpace(sslConfig.CACertificatePath),
+		EncryptionKeySize:       encryptionKeySize,
+		EncryptionAlgorithm:     encryptionAlgorithm,
+		EncryptionSaltSize:      encryptionSaltSize,
+		EncryptionNumHashRounds: encryptionNumHashRounds,
+		VerifyServer:            verifyServer,
+		DHParamsFile:            strings.TrimSpace(sslConfig.DHParamsFile),
+		ServerName:              strings.TrimSpace(sslConfig.ServerName),
+	}
+}
+
+func (cfg *RestConfig) ApplyIRODSConnectionConfig(account *types.IRODSAccount) *types.IRODSAccount {
+	if account == nil {
+		return nil
+	}
+
+	normalizedPolicy := NormalizeIRODSNegotiationPolicy(cfg.IrodsNegotiationPolicy)
 	negotiationPolicy := types.GetCSNegotiationPolicyRequest(normalizedPolicy)
 	requireNegotiation := negotiationPolicy == types.CSNegotiationPolicyRequestSSL
 
+	account.SetCSNegotiation(requireNegotiation, negotiationPolicy)
+	account.SetSSLConfiguration(cfg.ToIRODSSSLConfig())
+	account.FixAuthConfiguration()
+
+	return account
+}
+
+func (cfg *RestConfig) ToIrodsAccount() types.IRODSAccount {
+	authScheme := types.GetAuthScheme(cfg.IrodsAuthScheme)
+
 	account := types.IRODSAccount{
-		AuthenticationScheme:    authScheme,
-		ClientServerNegotiation: requireNegotiation,
-		CSNegotiationPolicy:     negotiationPolicy,
-		Host:                    cfg.IrodsHost,
-		Port:                    cfg.IrodsPort,
-		ClientUser:              cfg.IrodsAdminUser,
-		ClientZone:              cfg.IrodsZone,
-		ProxyUser:               cfg.IrodsAdminUser,
-		ProxyZone:               cfg.IrodsZone,
-		Password:                cfg.IrodsAdminPassword,
-		DefaultResource:         cfg.IrodsDefaultResource,
+		AuthenticationScheme: authScheme,
+		Host:                 cfg.IrodsHost,
+		Port:                 cfg.IrodsPort,
+		ClientUser:           cfg.IrodsAdminUser,
+		ClientZone:           cfg.IrodsZone,
+		ProxyUser:            cfg.IrodsAdminUser,
+		ProxyZone:            cfg.IrodsZone,
+		Password:             cfg.IrodsAdminPassword,
+		DefaultResource:      cfg.IrodsDefaultResource,
 	}
 
-	account.FixAuthConfiguration()
+	cfg.ApplyIRODSConnectionConfig(&account)
 
 	return account
 }
@@ -85,33 +159,47 @@ func (cfg *RestConfig) ToIrodsAccount() types.IRODSAccount {
 const DefaultConfigName = "rest-config"
 const DefaultConfigType = "yaml"
 const ConfigFileEnvVar = "IRODS_REST_CONFIG_FILE"
+const defaultIRODSEncryptionAlgorithm = "AES-256-CBC"
+const defaultIRODSEncryptionKeySize = 32
+const defaultIRODSEncryptionSaltSize = 8
+const defaultIRODSEncryptionNumHashRounds = 16
+const defaultIRODSSSLVerifyServer = "hostname"
 
 func bindEnvVars(v *viper.Viper) error {
 	envBindings := map[string][]string{
-		"PublicURL":                {"GOREST_PUBLIC_URL", "GOREST_PUBLICURL"},
-		"ListenAddr":               {"IRODS_REST_ADDR", "GOREST_LISTEN_ADDR", "GOREST_LISTENADDR"},
-		"RestLogLevel":             {"GOREST_REST_LOG_LEVEL", "GOREST_RESTLOGLEVEL"},
-		"IrodsHost":                {"GOREST_IRODS_HOST", "GOREST_IRODSHOST"},
-		"IrodsPort":                {"GOREST_IRODS_PORT", "GOREST_IRODSPORT"},
-		"IrodsZone":                {"GOREST_IRODS_ZONE", "GOREST_IRODSZONE"},
-		"IrodsAdminUser":           {"GOREST_IRODS_ADMIN_USER", "GOREST_IRODSADMINUSER"},
-		"IrodsAdminPassword":       {"GOREST_IRODS_ADMIN_PASSWORD", "GOREST_IRODSADMINPASSWORD"},
-		"IrodsAdminPasswordFile":   {"GOREST_IRODS_ADMIN_PASSWORD_FILE", "GOREST_IRODSADMINPASSWORDFILE"},
-		"IrodsAuthScheme":          {"GOREST_IRODS_AUTH_SCHEME", "GOREST_IRODSAUTHSCHEME"},
-		"IrodsNegotiationPolicy":   {"GOREST_IRODS_NEGOTIATION_POLICY", "GOREST_IRODSNEGOTIATIONPOLICY"},
-		"IrodsDefaultResource":     {"GOREST_IRODS_DEFAULT_RESOURCE", "GOREST_IRODSDEFAULTRESOURCE"},
-		"TestResource1":            {"GOREST_TEST_RESOURCE1"},
-		"TestResource2":            {"GOREST_TEST_RESOURCE2"},
-		"ResourceAffinity":         {"GOREST_RESOURCE_AFFINITY", "GOREST_RESOURCEAFFINITY"},
-		"ReplicaTrimMinCopies":     {"GOREST_REPLICA_TRIM_MIN_COPIES"},
-		"ReplicaTrimMinAgeMinutes": {"GOREST_REPLICA_TRIM_MIN_AGE_MINUTES"},
-		"OidcUrl":                  {"GOREST_OIDC_URL", "GOREST_OIDCURL"},
-		"OidcClientId":             {"GOREST_OIDC_CLIENT_ID", "GOREST_OIDCCLIENTID"},
-		"OidcClientSecret":         {"GOREST_OIDC_CLIENT_SECRET", "GOREST_OIDCCLIENTSECRET"},
-		"OidcClientSecretFile":     {"GOREST_OIDC_CLIENT_SECRET_FILE", "GOREST_OIDCCLIENTSECRETFILE"},
-		"OidcInsecureSkipVerify":   {"GOREST_OIDC_INSECURE_SKIP_VERIFY", "GOREST_OIDCINSECURESKIPVERIFY"},
-		"OidcRealm":                {"GOREST_OIDC_REALM", "GOREST_OIDCREALM"},
-		"OidcScope":                {"GOREST_OIDC_SCOPE", "GOREST_OIDCSCOPE"},
+		"PublicURL":                              {"GOREST_PUBLIC_URL", "GOREST_PUBLICURL"},
+		"ListenAddr":                             {"IRODS_REST_ADDR", "GOREST_LISTEN_ADDR", "GOREST_LISTENADDR"},
+		"RestLogLevel":                           {"GOREST_REST_LOG_LEVEL", "GOREST_RESTLOGLEVEL"},
+		"IrodsHost":                              {"GOREST_IRODS_HOST", "GOREST_IRODSHOST"},
+		"IrodsPort":                              {"GOREST_IRODS_PORT", "GOREST_IRODSPORT"},
+		"IrodsZone":                              {"GOREST_IRODS_ZONE", "GOREST_IRODSZONE"},
+		"IrodsAdminUser":                         {"GOREST_IRODS_ADMIN_USER", "GOREST_IRODSADMINUSER"},
+		"IrodsAdminPassword":                     {"GOREST_IRODS_ADMIN_PASSWORD", "GOREST_IRODSADMINPASSWORD"},
+		"IrodsAdminPasswordFile":                 {"GOREST_IRODS_ADMIN_PASSWORD_FILE", "GOREST_IRODSADMINPASSWORDFILE"},
+		"IrodsAuthScheme":                        {"GOREST_IRODS_AUTH_SCHEME", "GOREST_IRODSAUTHSCHEME"},
+		"IrodsNegotiationPolicy":                 {"GOREST_IRODS_NEGOTIATION_POLICY", "GOREST_IRODSNEGOTIATIONPOLICY"},
+		"IrodsSSLConfig.CACertificateFile":       {"GOREST_IRODS_SSL_CA_CERTIFICATE_FILE", "GOREST_IRODSSSLCACERTIFICATEFILE"},
+		"IrodsSSLConfig.CACertificatePath":       {"GOREST_IRODS_SSL_CA_CERTIFICATE_PATH", "GOREST_IRODSSSLCACERTIFICATEPATH"},
+		"IrodsSSLConfig.EncryptionKeySize":       {"GOREST_IRODS_ENCRYPTION_KEY_SIZE", "GOREST_IRODSENCRYPTIONKEYSIZE"},
+		"IrodsSSLConfig.EncryptionAlgorithm":     {"GOREST_IRODS_ENCRYPTION_ALGORITHM", "GOREST_IRODSENCRYPTIONALGORITHM"},
+		"IrodsSSLConfig.EncryptionSaltSize":      {"GOREST_IRODS_ENCRYPTION_SALT_SIZE", "GOREST_IRODSENCRYPTIONSALTSIZE"},
+		"IrodsSSLConfig.EncryptionNumHashRounds": {"GOREST_IRODS_ENCRYPTION_NUM_HASH_ROUNDS", "GOREST_IRODSENCRYPTIONNUMHASHROUNDS"},
+		"IrodsSSLConfig.VerifyServer":            {"GOREST_IRODS_SSL_VERIFY_SERVER", "GOREST_IRODSSSLVERIFYSERVER"},
+		"IrodsSSLConfig.DHParamsFile":            {"GOREST_IRODS_SSL_DH_PARAMS_FILE", "GOREST_IRODSSSLDHPARAMSFILE"},
+		"IrodsSSLConfig.ServerName":              {"GOREST_IRODS_SSL_SERVER_NAME", "GOREST_IRODSSSLSERVERNAME"},
+		"IrodsDefaultResource":                   {"GOREST_IRODS_DEFAULT_RESOURCE", "GOREST_IRODSDEFAULTRESOURCE"},
+		"TestResource1":                          {"GOREST_TEST_RESOURCE1"},
+		"TestResource2":                          {"GOREST_TEST_RESOURCE2"},
+		"ResourceAffinity":                       {"GOREST_RESOURCE_AFFINITY", "GOREST_RESOURCEAFFINITY"},
+		"ReplicaTrimMinCopies":                   {"GOREST_REPLICA_TRIM_MIN_COPIES"},
+		"ReplicaTrimMinAgeMinutes":               {"GOREST_REPLICA_TRIM_MIN_AGE_MINUTES"},
+		"OidcUrl":                                {"GOREST_OIDC_URL", "GOREST_OIDCURL"},
+		"OidcClientId":                           {"GOREST_OIDC_CLIENT_ID", "GOREST_OIDCCLIENTID"},
+		"OidcClientSecret":                       {"GOREST_OIDC_CLIENT_SECRET", "GOREST_OIDCCLIENTSECRET"},
+		"OidcClientSecretFile":                   {"GOREST_OIDC_CLIENT_SECRET_FILE", "GOREST_OIDCCLIENTSECRETFILE"},
+		"OidcInsecureSkipVerify":                 {"GOREST_OIDC_INSECURE_SKIP_VERIFY", "GOREST_OIDCINSECURESKIPVERIFY"},
+		"OidcRealm":                              {"GOREST_OIDC_REALM", "GOREST_OIDCREALM"},
+		"OidcScope":                              {"GOREST_OIDC_SCOPE", "GOREST_OIDCSCOPE"},
 	}
 
 	for key, envNames := range envBindings {

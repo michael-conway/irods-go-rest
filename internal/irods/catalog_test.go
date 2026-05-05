@@ -893,6 +893,87 @@ func TestCatalogListTicketsFiltersToRequestOwner(t *testing.T) {
 	}
 }
 
+func TestCatalogAccountForRequestAppliesSSLConnectionConfig(t *testing.T) {
+	cfg := config.RestConfig{
+		IrodsZone:              "tempZone",
+		IrodsHost:              "irods.local",
+		IrodsPort:              1247,
+		IrodsAuthScheme:        "native",
+		IrodsNegotiationPolicy: "CS_NEG_REQUIRE",
+		IrodsAdminUser:         "rods",
+		IrodsAdminPassword:     "rods",
+		IrodsDefaultResource:   "demoResc",
+		IrodsSSLConfig: config.IrodsSSLConfig{
+			CACertificateFile:   "/etc/irods/ca.pem",
+			EncryptionKeySize:   32,
+			EncryptionAlgorithm: "AES-256-CBC",
+			EncryptionSaltSize:  8,
+			VerifyServer:        "hostname",
+			ServerName:          "irods.ssl.local",
+		},
+	}
+	service := &catalogService{cfg: cfg}
+
+	tests := []struct {
+		name       string
+		ctx        *RequestContext
+		wantClient string
+		wantProxy  string
+		wantTicket string
+	}{
+		{
+			name:       "basic",
+			ctx:        &RequestContext{AuthScheme: "basic", Username: "alice", BasicPassword: "secret"},
+			wantClient: "alice",
+			wantProxy:  "alice",
+		},
+		{
+			name:       "ticket",
+			ctx:        &RequestContext{AuthScheme: "bearer-ticket", Ticket: "ticket-token"},
+			wantClient: "rods",
+			wantProxy:  "rods",
+			wantTicket: "ticket-token",
+		},
+		{
+			name:       "bearer",
+			ctx:        &RequestContext{AuthScheme: "bearer", Username: "alice"},
+			wantClient: "alice",
+			wantProxy:  "rods",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			account, err := service.accountForRequest(tt.ctx)
+			if err != nil {
+				t.Fatalf("accountForRequest returned error: %v", err)
+			}
+
+			if !account.ClientServerNegotiation {
+				t.Fatal("expected client-server negotiation for SSL policy")
+			}
+			if account.CSNegotiationPolicy != irodstypes.CSNegotiationPolicyRequestSSL {
+				t.Fatalf("expected SSL negotiation policy, got %q", account.CSNegotiationPolicy)
+			}
+			if account.SSLConfiguration == nil {
+				t.Fatal("expected SSL configuration on account")
+			}
+			if account.SSLConfiguration.CACertificateFile != "/etc/irods/ca.pem" {
+				t.Fatalf("expected CA file on account, got %q", account.SSLConfiguration.CACertificateFile)
+			}
+			if account.SSLConfiguration.ServerName != "irods.ssl.local" {
+				t.Fatalf("expected SSL server name on account, got %q", account.SSLConfiguration.ServerName)
+			}
+			if account.ClientUser != tt.wantClient || account.ProxyUser != tt.wantProxy {
+				t.Fatalf("unexpected account user mapping: client=%q proxy=%q", account.ClientUser, account.ProxyUser)
+			}
+			if account.Ticket != tt.wantTicket {
+				t.Fatalf("expected ticket %q, got %q", tt.wantTicket, account.Ticket)
+			}
+		})
+	}
+}
+
 func newTestCatalogService(t *testing.T, filesystem *catalogTestFileSystem) CatalogService {
 	t.Helper()
 
