@@ -32,6 +32,7 @@ type RestConfig struct {
 	TestResource1            string
 	TestResource2            string
 	ResourceAffinity         []string
+	S3BucketMappingFile      string
 	ReplicaTrimMinCopies     int
 	ReplicaTrimMinAgeMinutes int
 	OidcUrl                  string
@@ -204,6 +205,7 @@ func bindEnvVars(v *viper.Viper) error {
 		"TestResource1":                          {"GOREST_TEST_RESOURCE1"},
 		"TestResource2":                          {"GOREST_TEST_RESOURCE2"},
 		"ResourceAffinity":                       {"GOREST_RESOURCE_AFFINITY", "GOREST_RESOURCEAFFINITY"},
+		"S3BucketMappingFile":                    {"GOREST_S3_BUCKET_MAPPING_FILE", "GOREST_S3BUCKETMAPPINGFILE"},
 		"ReplicaTrimMinCopies":                   {"GOREST_REPLICA_TRIM_MIN_COPIES"},
 		"ReplicaTrimMinAgeMinutes":               {"GOREST_REPLICA_TRIM_MIN_AGE_MINUTES"},
 		"OidcUrl":                                {"GOREST_OIDC_URL", "GOREST_OIDCURL"},

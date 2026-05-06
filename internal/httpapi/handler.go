@@ -34,6 +34,7 @@ const swaggerUIHTML = `<!DOCTYPE html>
 type Handler struct {
 	cfg        config.RestConfig
 	paths      restservice.PathService
+	s3Admin    restservice.S3AdminService
 	serverInfo restservice.ServerInfoService
 	resources  restservice.ResourceService
 	users      restservice.UserService
@@ -44,10 +45,11 @@ type Handler struct {
 	webSession *auth.SessionStore
 }
 
-func NewHandler(cfg config.RestConfig, paths restservice.PathService, serverInfo restservice.ServerInfoService, resources restservice.ResourceService, users restservice.UserService, userGroups restservice.UserGroupService, tickets restservice.TicketService, authFlow auth.AuthFlowService, verifier auth.TokenVerifier, webSession *auth.SessionStore) *Handler {
+func NewHandler(cfg config.RestConfig, paths restservice.PathService, s3Admin restservice.S3AdminService, serverInfo restservice.ServerInfoService, resources restservice.ResourceService, users restservice.UserService, userGroups restservice.UserGroupService, tickets restservice.TicketService, authFlow auth.AuthFlowService, verifier auth.TokenVerifier, webSession *auth.SessionStore) *Handler {
 	return &Handler{
 		cfg:        cfg,
 		paths:      paths,
+		s3Admin:    s3Admin,
 		serverInfo: serverInfo,
 		resources:  resources,
 		users:      users,
@@ -116,6 +118,14 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("POST /api/v1/ext/favorites", h.requireBearer(http.HandlerFunc(h.postExtFavorite)))
 	mux.Handle("PUT /api/v1/ext/favorites", h.requireBearer(http.HandlerFunc(h.putExtFavorite)))
 	mux.Handle("DELETE /api/v1/ext/favorites", h.requireBearer(http.HandlerFunc(h.deleteExtFavorite)))
+	mux.Handle("GET /api/v1/ext/s3/buckets", h.requireBearer(http.HandlerFunc(h.getExtS3Buckets)))
+	mux.Handle("POST /api/v1/ext/s3/buckets", h.requireBearer(http.HandlerFunc(h.postExtS3Bucket)))
+	mux.Handle("PUT /api/v1/ext/s3/buckets", h.requireBearer(http.HandlerFunc(h.putExtS3Bucket)))
+	// TODO: Temporary S3 mapping reconciliation endpoint. Remove after bucket mapping is managed by the dedicated S3 admin service flow.
+	mux.Handle("POST /api/v1/ext/s3/buckets/refresh-mapping", h.requireBearer(http.HandlerFunc(h.postExtS3BucketMappingRefresh)))
+	mux.Handle("GET /api/v1/ext/s3/buckets/by-path", h.requireBearer(http.HandlerFunc(h.getExtS3BucketByPath)))
+	mux.Handle("GET /api/v1/ext/s3/buckets/{bucket_id}", h.requireBearer(http.HandlerFunc(h.getExtS3Bucket)))
+	mux.Handle("DELETE /api/v1/ext/s3/buckets/{bucket_id}", h.requireBearer(http.HandlerFunc(h.deleteExtS3Bucket)))
 
 	return requestLogger(mux)
 }

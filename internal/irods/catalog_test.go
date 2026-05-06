@@ -13,6 +13,7 @@ import (
 	irodsfs "github.com/cyverse/go-irodsclient/fs"
 	irodscommon "github.com/cyverse/go-irodsclient/irods/common"
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
+	s3adminext "github.com/michael-conway/go-irodsclient-extensions/s3admin"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 )
 
@@ -1548,6 +1549,35 @@ func (f *catalogTestFileSystem) ListMetadata(irodsPath string) ([]*irodstypes.IR
 	}
 
 	return f.metadataByPath[irodsPath], nil
+}
+
+func (f *catalogTestFileSystem) SearchByMeta(metaName string, metaValue string) ([]s3adminext.Entry, error) {
+	entries := make([]s3adminext.Entry, 0)
+	for irodsPath, metadataList := range f.metadataByPath {
+		entry := f.entriesByPath[irodsPath]
+		if entry == nil {
+			continue
+		}
+		for _, metadata := range metadataList {
+			if metadata == nil || metadata.Name != metaName {
+				continue
+			}
+			if metaValue != "%" && metadata.Value != metaValue {
+				continue
+			}
+
+			entryType := s3adminext.EntryTypeFile
+			if entry.IsDir() {
+				entryType = s3adminext.EntryTypeDirectory
+			}
+			entries = append(entries, s3adminext.Entry{
+				Path: entry.Path,
+				Type: entryType,
+			})
+			break
+		}
+	}
+	return entries, nil
 }
 
 func (f *catalogTestFileSystem) AddMetadata(irodsPath string, attName string, attValue string, attUnits string) error {
