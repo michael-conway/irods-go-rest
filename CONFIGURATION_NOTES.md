@@ -34,6 +34,7 @@ GOREST_IRODS_AUTH_SCHEME=native
 GOREST_IRODS_DEFAULT_RESOURCE=demoResc
 GOREST_IRODS_NEGOTIATION_POLICY=CS_NEG_DONT_CARE
 GOREST_RESOURCE_AFFINITY=demoResc,edgeResc
+GOREST_S3_BUCKET_MAPPING_FILE=/config/irods-s3-bucket-mapping.json
 GOREST_REPLICA_TRIM_MIN_COPIES=1
 GOREST_REPLICA_TRIM_MIN_AGE_MINUTES=0
 
@@ -104,6 +105,18 @@ enable SSL negotiation on the iRODS server.
 
 `ResourceAffinity` is optional and represents iRODS resources that are
 considered proximate to this service instance.
+
+`S3ApiSupported` gates `/api/v1/ext/s3/*` administration routes. When it is
+false, those endpoints return a not-supported response.
+
+`S3BucketMappingFile` must be the absolute path to the iRODS S3 API local-file
+bucket mapping JSON. The REST service rewrites this file after successful bucket
+AVU mutations so the S3 API can reload the mapping.
+
+`S3UserMappingFile` must be the absolute path to the iRODS S3 API local-file user
+mapping JSON. The REST service rewrites this file after successful S3 user secret
+updates and when the user mapping refresh endpoint rebuilds the file from
+`iRODS:S3:Secret` AVUs.
 
 Supported forms:
 

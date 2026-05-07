@@ -44,6 +44,8 @@ The current convention for E2E tests is:
 * `GOREST_E2E_SKIP_TLS_VERIFY` - optional, set to `true` when the docker test framework uses self-signed TLS
 * `GOREST_E2E_BASIC_USERNAME` - optional Basic auth username override; otherwise read from `E2E.BasicUsername`
 * `GOREST_E2E_BASIC_PASSWORD` - optional Basic auth password override; otherwise read from `E2E.BasicPassword`
+* `GOREST_E2E_S3_SECOND_USERNAME` - optional second Basic auth username for S3 user-secret E2E tests; defaults to `test2`
+* `GOREST_E2E_S3_SECOND_PASSWORD` - optional second Basic auth password for S3 user-secret E2E tests; defaults to the normal Basic auth password
 * `GOREST_E2E_IRODS_HOST` - optional direct iRODS host override for fixture upload; if unset, E2E setup falls back to top-level `IrodsHost` from `GOREST_E2E_CONFIG_FILE`
 * `GOREST_E2E_IRODS_PORT` - optional direct iRODS port override for fixture upload; if unset, E2E setup falls back to top-level `IrodsPort` from `GOREST_E2E_CONFIG_FILE`
 * `GOREST_E2E_IRODS_ZONE` - optional iRODS zone override for fixture upload; if unset, E2E setup falls back to top-level `IrodsZone` from `GOREST_E2E_CONFIG_FILE`
