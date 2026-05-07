@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path"
 	"strings"
 	"testing"
@@ -17,6 +19,7 @@ import (
 	irodsfs "github.com/cyverse/go-irodsclient/fs"
 	irodscommon "github.com/cyverse/go-irodsclient/irods/common"
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
+	s3adminext "github.com/michael-conway/go-irodsclient-extensions/s3admin"
 	"github.com/michael-conway/irods-go-rest/internal/auth"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 	"github.com/michael-conway/irods-go-rest/internal/irods"
@@ -1867,6 +1870,408 @@ func TestExtFavoritesValidationAndNotFound(t *testing.T) {
 	}
 }
 
+func TestExtS3BucketsLifecycle(t *testing.T) {
+	mappingPath := path.Join(t.TempDir(), "bucket-mapping.json")
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.S3ApiSupported = true
+		cfg.S3BucketMappingFile = mappingPath
+	})
+
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/buckets", strings.NewReader(`{"bucket_name":"project-bucket","irods_path":"/tempZone/home/test1/project"}`))
+	createReq.Header.Set("Authorization", "Bearer token123")
+	createReq.Header.Set("Content-Type", "application/json")
+	createRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(createRec, createReq)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", createRec.Code, createRec.Body.String())
+	}
+	if body := createRec.Body.String(); !containsAll(body, `"bucket_id":"project-bucket"`, `"irods_path":"/tempZone/home/test1/project"`, `"self":{"href":"/api/v1/ext/s3/buckets/project-bucket","method":"GET"}`) {
+		t.Fatalf("unexpected create bucket body: %q", body)
+	}
+
+	autoCreateReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/buckets", strings.NewReader(`{"auto_generate":true,"irods_path":"/tempZone/home/test1/project/nested"}`))
+	autoCreateReq.Header.Set("Authorization", "Bearer token123")
+	autoCreateReq.Header.Set("Content-Type", "application/json")
+	autoCreateRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(autoCreateRec, autoCreateReq)
+	if autoCreateRec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 auto-creating bucket, got %d: %s", autoCreateRec.Code, autoCreateRec.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/buckets?irods_path=/tempZone/home/test1/project&recursive=true", nil)
+	listReq.Header.Set("Authorization", "Bearer token123")
+	listRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 listing buckets, got %d: %s", listRec.Code, listRec.Body.String())
+	}
+	if body := listRec.Body.String(); !containsAll(body, `"buckets":[`, `"bucket_id":"project-bucket"`, `"irods_path":"/tempZone/home/test1/project"`, `"irods_path":"/tempZone/home/test1/project/nested"`, `"count":2`) {
+		t.Fatalf("unexpected list buckets body: %q", body)
+	}
+
+	getByIDReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/buckets/project-bucket?irods_path=/tempZone/home/test1/project&recursive=true", nil)
+	getByIDReq.Header.Set("Authorization", "Bearer token123")
+	getByIDRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(getByIDRec, getByIDReq)
+	if getByIDRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 getting bucket by id, got %d: %s", getByIDRec.Code, getByIDRec.Body.String())
+	}
+	if body := getByIDRec.Body.String(); !containsAll(body, `"bucket_id":"project-bucket"`, `"irods_path":"/tempZone/home/test1/project"`) {
+		t.Fatalf("unexpected get bucket by id body: %q", body)
+	}
+
+	getByPathReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/buckets/by-path?irods_path=/tempZone/home/test1/project", nil)
+	getByPathReq.Header.Set("Authorization", "Bearer token123")
+	getByPathRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(getByPathRec, getByPathReq)
+	if getByPathRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 getting bucket by path, got %d: %s", getByPathRec.Code, getByPathRec.Body.String())
+	}
+	if body := getByPathRec.Body.String(); !containsAll(body, `"bucket_id":"project-bucket"`, `"irods_path":"/tempZone/home/test1/project"`) {
+		t.Fatalf("unexpected get bucket by path body: %q", body)
+	}
+
+	updateReq := httptest.NewRequest(http.MethodPut, "/api/v1/ext/s3/buckets", strings.NewReader(`{"bucket_name":"project-renamed","irods_path":"/tempZone/home/test1/project"}`))
+	updateReq.Header.Set("Authorization", "Bearer token123")
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(updateRec, updateReq)
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 updating bucket, got %d: %s", updateRec.Code, updateRec.Body.String())
+	}
+	if body := updateRec.Body.String(); !containsAll(body, `"bucket_id":"project-renamed"`, `"irods_path":"/tempZone/home/test1/project"`) {
+		t.Fatalf("unexpected update bucket body: %q", body)
+	}
+
+	duplicateReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/buckets", strings.NewReader(`{"bucket_name":"project-renamed","irods_path":"/tempZone/home/test1/project/nested"}`))
+	duplicateReq.Header.Set("Authorization", "Bearer token123")
+	duplicateReq.Header.Set("Content-Type", "application/json")
+	duplicateRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(duplicateRec, duplicateReq)
+	if duplicateRec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for duplicate bucket, got %d: %s", duplicateRec.Code, duplicateRec.Body.String())
+	}
+
+	autoBucketID := assertS3BucketMappingPath(t, mappingPath, "/tempZone/home/test1/project/nested")
+	if err := os.WriteFile(mappingPath, []byte(`{"stale-bucket":"/tempZone/home/test1/stale"}`), 0o644); err != nil {
+		t.Fatalf("write stale S3 bucket mapping file: %v", err)
+	}
+
+	nonAdminRefreshReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/buckets/refresh-mapping", nil)
+	nonAdminRefreshReq.Header.Set("Authorization", "Bearer token123")
+	nonAdminRefreshRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(nonAdminRefreshRec, nonAdminRefreshReq)
+	if nonAdminRefreshRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 refreshing bucket mapping as non-admin, got %d: %s", nonAdminRefreshRec.Code, nonAdminRefreshRec.Body.String())
+	}
+	if body := nonAdminRefreshRec.Body.String(); !strings.Contains(body, "insufficient privilege") {
+		t.Fatalf("expected insufficient privilege response, got %s", body)
+	}
+
+	refreshReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/buckets/refresh-mapping", nil)
+	refreshReq.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("otheradmin:secret")))
+	refreshRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(refreshRec, refreshReq)
+	if refreshRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 refreshing bucket mapping, got %d: %s", refreshRec.Code, refreshRec.Body.String())
+	}
+	if body := refreshRec.Body.String(); !containsAll(body, `"bucket_mapping":`, `"mapping_file_path":`, `"bucket_id":"project-renamed"`, `"bucket_id":"`+autoBucketID+`"`, `"count":2`) {
+		t.Fatalf("unexpected refresh body: %s", body)
+	}
+	assertS3BucketMappingFile(t, mappingPath, "project-renamed", "/tempZone/home/test1/project")
+	assertS3BucketMappingFile(t, mappingPath, autoBucketID, "/tempZone/home/test1/project/nested")
+	if mapping := readS3BucketMappingFile(t, mappingPath); mapping["stale-bucket"] != "" {
+		t.Fatalf("expected stale mapping to be removed after refresh, got %+v", mapping)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/ext/s3/buckets/project-renamed", nil)
+	deleteReq.Header.Set("Authorization", "Bearer token123")
+	deleteRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 deleting bucket, got %d: %s", deleteRec.Code, deleteRec.Body.String())
+	}
+
+	mapping := readS3BucketMappingFile(t, mappingPath)
+	if _, ok := mapping["project-renamed"]; ok {
+		t.Fatalf("expected deleted bucket to be removed from mapping, got %+v", mapping)
+	}
+}
+
+func TestExtS3BucketsValidationAndConfiguration(t *testing.T) {
+	unsupportedHandler := testHandler(t)
+
+	unsupportedReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/buckets", nil)
+	unsupportedReq.Header.Set("Authorization", "Bearer token123")
+	unsupportedRec := httptest.NewRecorder()
+	unsupportedHandler.Routes().ServeHTTP(unsupportedRec, unsupportedReq)
+	if unsupportedRec.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501 for unsupported S3 API, got %d: %s", unsupportedRec.Code, unsupportedRec.Body.String())
+	}
+
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.S3ApiSupported = true
+	})
+
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/buckets", strings.NewReader(`{"bucket_name":"","irods_path":"relative/path"}`))
+	createReq.Header.Set("Authorization", "Bearer token123")
+	createReq.Header.Set("Content-Type", "application/json")
+	createRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(createRec, createReq)
+	if createRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", createRec.Code, createRec.Body.String())
+	}
+	if body := createRec.Body.String(); !containsAll(body, `"bucket_name":"bucket_name is required unless auto_generate is true"`, `"irods_path":"irods_path must be an absolute iRODS path"`) {
+		t.Fatalf("unexpected validation body: %q", body)
+	}
+
+	bucketIDOnlyReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/buckets", strings.NewReader(`{"bucket_id":"legacy-bucket","irods_path":"/tempZone/home/test1/project"}`))
+	bucketIDOnlyReq.Header.Set("Authorization", "Bearer token123")
+	bucketIDOnlyReq.Header.Set("Content-Type", "application/json")
+	bucketIDOnlyRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(bucketIDOnlyRec, bucketIDOnlyReq)
+	if bucketIDOnlyRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for bucket_id-only S3 bucket request, got %d: %s", bucketIDOnlyRec.Code, bucketIDOnlyRec.Body.String())
+	}
+	if body := bucketIDOnlyRec.Body.String(); !containsAll(body, `"bucket_name":"bucket_name is required unless auto_generate is true"`) {
+		t.Fatalf("expected bucket_name validation field in response, got %s", body)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/buckets?irods_path=/tempZone/home/test1/project", nil)
+	listReq.Header.Set("Authorization", "Bearer token123")
+	listRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 for missing S3BucketMappingFile, got %d: %s", listRec.Code, listRec.Body.String())
+	}
+}
+
+func TestExtS3UserSecretsLifecycle(t *testing.T) {
+	dir := t.TempDir()
+	bucketMappingPath := path.Join(dir, "bucket-mapping.json")
+	userMappingPath := path.Join(dir, "user-mapping.json")
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.S3ApiSupported = true
+		cfg.S3BucketMappingFile = bucketMappingPath
+		cfg.S3UserMappingFile = userMappingPath
+	})
+
+	initialSecret := "Aa1Bb~2Cc3.-Dd4Ee5Ff6Gg7Hh8Ii9_Jj0Kk1Ll2"
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"test1","secret_key":"`+initialSecret+`"}`))
+	createReq.Header.Set("Authorization", "Bearer token123")
+	createReq.Header.Set("Content-Type", "application/json")
+	createRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(createRec, createReq)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 creating S3 user secret, got %d: %s", createRec.Code, createRec.Body.String())
+	}
+	if body := createRec.Body.String(); !containsAll(body, `"user_name":"test1"`, `"secret_key":"`+initialSecret+`"`, `"irods_path":"/tempZone/home/test1/.irodsext/s3admin/irods-s3-api-secret.txt"`) {
+		t.Fatalf("unexpected create user secret body: %q", body)
+	}
+	assertS3UserMappingFile(t, userMappingPath, "test1", initialSecret)
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets/test1", nil)
+	getReq.Header.Set("Authorization", "Bearer token123")
+	getRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 getting S3 user secret, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+	if body := getRec.Body.String(); !containsAll(body, `"user_name":"test1"`, `"secret_key":"`+initialSecret+`"`, `"self":{"href":"/api/v1/ext/s3/user-secrets/test1","method":"GET"}`) {
+		t.Fatalf("unexpected get user secret body: %q", body)
+	}
+
+	updatedSecret := strings.Repeat("Z", s3adminext.S3UserSecretKeyLength)
+	updateReq := httptest.NewRequest(http.MethodPut, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"test1","secret_key":"`+updatedSecret+`"}`))
+	updateReq.Header.Set("Authorization", "Bearer token123")
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(updateRec, updateReq)
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 updating S3 user secret, got %d: %s", updateRec.Code, updateRec.Body.String())
+	}
+	assertS3UserMappingFile(t, userMappingPath, "test1", updatedSecret)
+
+	generateReq := httptest.NewRequest(http.MethodPut, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"test1","auto_generate":true}`))
+	generateReq.Header.Set("Authorization", "Bearer token123")
+	generateReq.Header.Set("Content-Type", "application/json")
+	generateRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(generateRec, generateReq)
+	if generateRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 generating S3 user secret, got %d: %s", generateRec.Code, generateRec.Body.String())
+	}
+	generatedSecret := readS3UserMappingFile(t, userMappingPath)["test1"].SecretKey
+	if generatedSecret == "" || generatedSecret == updatedSecret {
+		t.Fatalf("expected generated secret to replace previous mapping, got %q", generatedSecret)
+	}
+
+	nonAdminListReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets", nil)
+	nonAdminListReq.Header.Set("Authorization", "Bearer token123")
+	nonAdminListRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(nonAdminListRec, nonAdminListReq)
+	if nonAdminListRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 listing user secrets as non-admin, got %d: %s", nonAdminListRec.Code, nonAdminListRec.Body.String())
+	}
+
+	adminListReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets", nil)
+	adminListReq.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("otheradmin:secret")))
+	adminListRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(adminListRec, adminListReq)
+	if adminListRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 listing user secrets as rodsadmin, got %d: %s", adminListRec.Code, adminListRec.Body.String())
+	}
+	if body := adminListRec.Body.String(); !containsAll(body, `"user_secrets":`, `"user_name":"test1"`, `"secret_key":"`+generatedSecret+`"`, `"count":1`) {
+		t.Fatalf("unexpected user secret list body: %s", body)
+	}
+
+	if err := os.WriteFile(userMappingPath, []byte(`{"stale":{"secret_key":"stale","username":"stale"}}`), 0o644); err != nil {
+		t.Fatalf("write stale S3 user mapping file: %v", err)
+	}
+
+	nonAdminRefreshReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/user-secrets/refresh-mapping", nil)
+	nonAdminRefreshReq.Header.Set("Authorization", "Bearer token123")
+	nonAdminRefreshRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(nonAdminRefreshRec, nonAdminRefreshReq)
+	if nonAdminRefreshRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 refreshing user mapping as non-admin, got %d: %s", nonAdminRefreshRec.Code, nonAdminRefreshRec.Body.String())
+	}
+	if body := nonAdminRefreshRec.Body.String(); !strings.Contains(body, "insufficient privilege") {
+		t.Fatalf("expected insufficient privilege response, got %s", body)
+	}
+
+	refreshReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/user-secrets/refresh-mapping", nil)
+	refreshReq.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("otheradmin:secret")))
+	refreshRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(refreshRec, refreshReq)
+	if refreshRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 refreshing S3 user mapping, got %d: %s", refreshRec.Code, refreshRec.Body.String())
+	}
+	if body := refreshRec.Body.String(); !containsAll(body, `"user_mapping":`, `"user_name":"test1"`, `"count":1`) {
+		t.Fatalf("unexpected user mapping refresh body: %s", body)
+	}
+	assertS3UserMappingFile(t, userMappingPath, "test1", generatedSecret)
+	if mapping := readS3UserMappingFile(t, userMappingPath); mapping["stale"].SecretKey != "" {
+		t.Fatalf("expected stale user mapping to be removed after refresh, got %+v", mapping)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/ext/s3/user-secrets/test1", nil)
+	deleteReq.Header.Set("Authorization", "Bearer token123")
+	deleteRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 deleting S3 user secret, got %d: %s", deleteRec.Code, deleteRec.Body.String())
+	}
+	if mapping := readS3UserMappingFile(t, userMappingPath); mapping["test1"].SecretKey != "" {
+		t.Fatalf("expected deleted user secret to be removed from mapping, got %+v", mapping)
+	}
+
+	getAfterDeleteReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets/test1", nil)
+	getAfterDeleteReq.Header.Set("Authorization", "Bearer token123")
+	getAfterDeleteRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(getAfterDeleteRec, getAfterDeleteReq)
+	if getAfterDeleteRec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 getting deleted S3 user secret, got %d: %s", getAfterDeleteRec.Code, getAfterDeleteRec.Body.String())
+	}
+}
+
+func TestExtS3UserSecretsValidationAndConfiguration(t *testing.T) {
+	unsupportedHandler := testHandler(t)
+
+	unsupportedReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets/test1", nil)
+	unsupportedReq.Header.Set("Authorization", "Bearer token123")
+	unsupportedRec := httptest.NewRecorder()
+	unsupportedHandler.Routes().ServeHTTP(unsupportedRec, unsupportedReq)
+	if unsupportedRec.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501 for unsupported S3 API user secret endpoint, got %d: %s", unsupportedRec.Code, unsupportedRec.Body.String())
+	}
+
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.S3ApiSupported = true
+	})
+
+	invalidReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"","secret_key":""}`))
+	invalidReq.Header.Set("Authorization", "Bearer token123")
+	invalidReq.Header.Set("Content-Type", "application/json")
+	invalidRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(invalidRec, invalidReq)
+	if invalidRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 validating S3 user secret, got %d: %s", invalidRec.Code, invalidRec.Body.String())
+	}
+	if body := invalidRec.Body.String(); !containsAll(body, `"user_name":"user_name is required"`, `"secret_key":"secret_key is required unless auto_generate is true"`) {
+		t.Fatalf("unexpected S3 user secret validation body: %q", body)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets/test1", nil)
+	getReq.Header.Set("Authorization", "Bearer token123")
+	getRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 for missing S3UserMappingFile, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+}
+
+func assertS3BucketMappingFile(t *testing.T, mappingPath string, bucketID string, expectedPath string) {
+	t.Helper()
+
+	mapping := readS3BucketMappingFile(t, mappingPath)
+	if mapping[bucketID] != expectedPath {
+		t.Fatalf("expected mapping %q -> %q, got %+v", bucketID, expectedPath, mapping)
+	}
+}
+
+func assertS3BucketMappingPath(t *testing.T, mappingPath string, expectedPath string) string {
+	t.Helper()
+
+	mapping := readS3BucketMappingFile(t, mappingPath)
+	for bucketID, irodsPath := range mapping {
+		if irodsPath == expectedPath {
+			return bucketID
+		}
+	}
+	t.Fatalf("expected mapping path %q, got %+v", expectedPath, mapping)
+	return ""
+}
+
+func readS3BucketMappingFile(t *testing.T, mappingPath string) map[string]string {
+	t.Helper()
+
+	content, err := os.ReadFile(mappingPath)
+	if err != nil {
+		t.Fatalf("read s3 bucket mapping file %q: %v", mappingPath, err)
+	}
+
+	mapping := map[string]string{}
+	if err := json.Unmarshal(content, &mapping); err != nil {
+		t.Fatalf("decode s3 bucket mapping file %q: %v", mappingPath, err)
+	}
+	return mapping
+}
+
+func assertS3UserMappingFile(t *testing.T, mappingPath string, userName string, expectedSecretKey string) {
+	t.Helper()
+
+	mapping := readS3UserMappingFile(t, mappingPath)
+	entry := mapping[userName]
+	if entry.SecretKey != expectedSecretKey || entry.Username != userName {
+		t.Fatalf("expected user mapping %q -> %q, got %+v", userName, expectedSecretKey, mapping)
+	}
+}
+
+func readS3UserMappingFile(t *testing.T, mappingPath string) map[string]s3adminext.UserMappingEntry {
+	t.Helper()
+
+	content, err := os.ReadFile(mappingPath)
+	if err != nil {
+		t.Fatalf("read s3 user mapping file %q: %v", mappingPath, err)
+	}
+
+	mapping := map[string]s3adminext.UserMappingEntry{}
+	if err := json.Unmarshal(content, &mapping); err != nil {
+		t.Fatalf("decode s3 user mapping file %q: %v", mappingPath, err)
+	}
+	return mapping
+}
+
 type stubAuthService struct{}
 
 func (stubAuthService) AuthorizationURL(state string) (string, error) {
@@ -1934,6 +2339,7 @@ func testHandlerWithConfig(t *testing.T, mutate func(*config.RestConfig)) (*Hand
 	return NewHandler(
 		*cfg,
 		restservice.NewPathService(irods.NewCatalogServiceWithFactory(*cfg, factory)),
+		restservice.NewS3AdminService(irods.NewCatalogServiceWithFactory(*cfg, factory)),
 		restservice.NewServerInfoService(irods.NewServerInfoServiceWithFactory(*cfg, factory)),
 		restservice.NewResourceService(irods.NewResourceServiceWithFactory(*cfg, factory)),
 		restservice.NewUserService(irods.NewUserServiceWithFactory(*cfg, factory)),
@@ -1964,6 +2370,30 @@ type testCatalogFileSystem struct {
 func newTestCatalogFileSystem() *testCatalogFileSystem {
 	now := time.Unix(1_700_000_000, 0)
 
+	zoneRoot := &irodsfs.Entry{
+		ID:         90,
+		Type:       irodsfs.DirectoryEntry,
+		Name:       "tempZone",
+		Path:       "/tempZone",
+		CreateTime: now,
+		ModifyTime: now,
+	}
+	homeRoot := &irodsfs.Entry{
+		ID:         91,
+		Type:       irodsfs.DirectoryEntry,
+		Name:       "home",
+		Path:       "/tempZone/home",
+		CreateTime: now,
+		ModifyTime: now,
+	}
+	userHome := &irodsfs.Entry{
+		ID:         92,
+		Type:       irodsfs.DirectoryEntry,
+		Name:       "test1",
+		Path:       "/tempZone/home/test1",
+		CreateTime: now,
+		ModifyTime: now,
+	}
 	project := &irodsfs.Entry{
 		ID:         100,
 		Type:       irodsfs.DirectoryEntry,
@@ -2031,13 +2461,19 @@ func newTestCatalogFileSystem() *testCatalogFileSystem {
 
 	return &testCatalogFileSystem{
 		entriesByPath: map[string]*irodsfs.Entry{
-			project.Path: project,
-			file.Path:    file,
-			child.Path:   child,
-			nested.Path:  nested,
+			zoneRoot.Path: zoneRoot,
+			homeRoot.Path: homeRoot,
+			userHome.Path: userHome,
+			project.Path:  project,
+			file.Path:     file,
+			child.Path:    child,
+			nested.Path:   nested,
 		},
 		childrenByPath: map[string][]*irodsfs.Entry{
-			project.Path: {child, nested},
+			zoneRoot.Path: {homeRoot},
+			homeRoot.Path: {userHome},
+			userHome.Path: {project, file},
+			project.Path:  {child, nested},
 		},
 		metadataByPath: map[string][]*irodstypes.IRODSMeta{
 			project.Path: {{
@@ -2150,6 +2586,12 @@ func newTestCatalogFileSystem() *testCatalogFileSystem {
 			userKey("rods", "tempZone"): {
 				ID:   303,
 				Name: "rods",
+				Zone: "tempZone",
+				Type: irodstypes.IRODSUserRodsAdmin,
+			},
+			userKey("otheradmin", "tempZone"): {
+				ID:   306,
+				Name: "otheradmin",
 				Zone: "tempZone",
 				Type: irodstypes.IRODSUserRodsAdmin,
 			},
@@ -2443,6 +2885,36 @@ func (f *testCatalogFileSystem) TrimDataObject(irodsPath string, resource string
 
 func (f *testCatalogFileSystem) ListMetadata(irodsPath string) ([]*irodstypes.IRODSMeta, error) {
 	return f.metadataByPath[irodsPath], nil
+}
+
+func (f *testCatalogFileSystem) SearchByMeta(metaName string, metaValue string) ([]s3adminext.Entry, error) {
+	entries := make([]s3adminext.Entry, 0)
+	for irodsPath, metadataList := range f.metadataByPath {
+		entry := f.entriesByPath[irodsPath]
+		if entry == nil {
+			continue
+		}
+
+		for _, metadata := range metadataList {
+			if metadata == nil || metadata.Name != metaName {
+				continue
+			}
+			if metaValue != "%" && metadata.Value != metaValue {
+				continue
+			}
+
+			entryType := s3adminext.EntryTypeFile
+			if entry.IsDir() {
+				entryType = s3adminext.EntryTypeDirectory
+			}
+			entries = append(entries, s3adminext.Entry{
+				Path: entry.Path,
+				Type: entryType,
+			})
+			break
+		}
+	}
+	return entries, nil
 }
 
 func (f *testCatalogFileSystem) AddMetadata(irodsPath string, attName string, attValue string, attUnits string) error {

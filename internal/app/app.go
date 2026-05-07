@@ -45,6 +45,7 @@ func serverListenAddr(cfg config.RestConfig) string {
 func New(cfg config.RestConfig) *App {
 	catalog := irods.NewCatalogService(cfg)
 	paths := restservice.NewPathService(catalog)
+	s3Admin := restservice.NewS3AdminService(catalog)
 	serverInfo := restservice.NewServerInfoService(irods.NewServerInfoService(cfg))
 	resources := restservice.NewResourceService(irods.NewResourceService(cfg))
 	users := restservice.NewUserService(irods.NewUserService(cfg))
@@ -52,7 +53,7 @@ func New(cfg config.RestConfig) *App {
 	tickets := restservice.NewTicketService(irods.NewTicketService(cfg))
 	authService := auth.NewKeycloakService(cfg)
 	sessionStore := auth.NewSessionStore()
-	handler := httpapi.NewHandler(cfg, paths, serverInfo, resources, users, userGroups, tickets, authService, authService, sessionStore)
+	handler := httpapi.NewHandler(cfg, paths, s3Admin, serverInfo, resources, users, userGroups, tickets, authService, authService, sessionStore)
 
 	return &App{
 		server: &http.Server{

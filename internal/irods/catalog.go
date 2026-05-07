@@ -21,6 +21,8 @@ import (
 	irodscommon "github.com/cyverse/go-irodsclient/irods/common"
 	irodslibfs "github.com/cyverse/go-irodsclient/irods/fs"
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
+	s3adminext "github.com/michael-conway/go-irodsclient-extensions/s3admin"
+	s3adminirodsfs "github.com/michael-conway/go-irodsclient-extensions/s3admin/irodsfs"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 	"github.com/michael-conway/irods-go-rest/internal/domain"
 	"github.com/michael-conway/irods-go-rest/internal/logutil"
@@ -29,6 +31,8 @@ import (
 var ErrNotFound = errors.New("resource not found")
 var ErrPermissionDenied = errors.New("permission denied")
 var ErrConflict = errors.New("conflict")
+var ErrS3AdminNotConfigured = errors.New("s3admin not configured")
+var ErrS3AdminNotSupported = errors.New("s3 api operation not supported")
 
 type RequestContext struct {
 	AuthScheme    string
@@ -152,6 +156,17 @@ type CatalogService interface {
 	AddFavorite(ctx context.Context, requestContext *RequestContext, name string, favoritePath string) (domain.Favorite, error)
 	RenameFavorite(ctx context.Context, requestContext *RequestContext, favoritePath string, name string) (domain.Favorite, error)
 	RemoveFavorite(ctx context.Context, requestContext *RequestContext, favoritePath string) error
+	ListS3Buckets(ctx context.Context, requestContext *RequestContext, options S3BucketListOptions) ([]domain.S3Bucket, error)
+	GetS3Bucket(ctx context.Context, requestContext *RequestContext, bucketID string, options S3BucketListOptions) (domain.S3Bucket, error)
+	GetS3BucketByPath(ctx context.Context, requestContext *RequestContext, irodsPath string) (domain.S3Bucket, error)
+	UpsertS3Bucket(ctx context.Context, requestContext *RequestContext, irodsPath string, options S3BucketUpsertOptions) (domain.S3Bucket, bool, error)
+	DeleteS3Bucket(ctx context.Context, requestContext *RequestContext, bucketID string) error
+	RebuildS3BucketMapping(ctx context.Context, requestContext *RequestContext) (domain.S3BucketMappingRefresh, error)
+	ListS3UserSecrets(ctx context.Context, requestContext *RequestContext) ([]domain.S3UserSecret, error)
+	GetS3UserSecret(ctx context.Context, requestContext *RequestContext, userName string) (domain.S3UserSecret, error)
+	StoreS3UserSecret(ctx context.Context, requestContext *RequestContext, userName string, options S3UserSecretStoreOptions) (domain.S3UserSecret, error)
+	DeleteS3UserSecret(ctx context.Context, requestContext *RequestContext, userName string) error
+	RebuildS3UserMapping(ctx context.Context, requestContext *RequestContext) (domain.S3UserSecretMappingRefresh, error)
 }
 
 type CatalogFileSystem interface {
@@ -165,6 +180,7 @@ type CatalogFileSystem interface {
 	RenameFile(srcPath string, destPath string) error
 	CopyFile(srcPath string, destPath string, force bool) error
 	ListMetadata(irodsPath string) ([]*irodstypes.IRODSMeta, error)
+	SearchByMeta(metaName string, metaValue string) ([]s3adminext.Entry, error)
 	AddMetadata(irodsPath string, attName string, attValue string, attUnits string) error
 	DeleteMetadata(irodsPath string, avuID int64) error
 	ListACLs(irodsPath string) ([]*irodstypes.IRODSAccess, error)
@@ -207,8 +223,10 @@ type CatalogFileHandle interface {
 type CatalogFileSystemFactory func(account *irodstypes.IRODSAccount, applicationName string) (CatalogFileSystem, error)
 
 type catalogService struct {
-	cfg              config.RestConfig
-	createFileSystem CatalogFileSystemFactory
+	cfg                 config.RestConfig
+	createFileSystem    CatalogFileSystemFactory
+	s3BucketMappingFile *s3adminext.MappingFile
+	s3UserMappingFile   *s3adminext.UserMappingFile
 }
 
 func NewCatalogService(cfg config.RestConfig) CatalogService {
@@ -218,14 +236,34 @@ func NewCatalogService(cfg config.RestConfig) CatalogService {
 			return nil, err
 		}
 
-		return &catalogFileSystemAdapter{filesystem: filesystem}, nil
+		return &catalogFileSystemAdapter{
+			filesystem: filesystem,
+			s3Adapter:  s3adminirodsfs.NewAdapterWithProxyAccount(filesystem, account, applicationName),
+		}, nil
 	})
 }
 
 func NewCatalogServiceWithFactory(cfg config.RestConfig, factory CatalogFileSystemFactory) CatalogService {
+	var s3BucketMappingFile *s3adminext.MappingFile
+	if mappingPath := strings.TrimSpace(cfg.S3BucketMappingFile); mappingPath != "" {
+		mappingFile, err := s3adminext.NewMappingFile(mappingPath)
+		if err == nil {
+			s3BucketMappingFile = mappingFile
+		}
+	}
+	var s3UserMappingFile *s3adminext.UserMappingFile
+	if mappingPath := strings.TrimSpace(cfg.S3UserMappingFile); mappingPath != "" {
+		mappingFile, err := s3adminext.NewUserMappingFile(mappingPath)
+		if err == nil {
+			s3UserMappingFile = mappingFile
+		}
+	}
+
 	return &catalogService{
-		cfg:              cfg,
-		createFileSystem: factory,
+		cfg:                 cfg,
+		createFileSystem:    factory,
+		s3BucketMappingFile: s3BucketMappingFile,
+		s3UserMappingFile:   s3UserMappingFile,
 	}
 }
 
@@ -2015,6 +2053,7 @@ type catalogObjectReader struct {
 
 type catalogFileSystemAdapter struct {
 	filesystem *irodsfs.FileSystem
+	s3Adapter  *s3adminirodsfs.Adapter
 }
 
 func (a *catalogFileSystemAdapter) Stat(irodsPath string) (*irodsfs.Entry, error) {
@@ -2055,6 +2094,27 @@ func (a *catalogFileSystemAdapter) CopyFile(srcPath string, destPath string, for
 
 func (a *catalogFileSystemAdapter) ListMetadata(irodsPath string) ([]*irodstypes.IRODSMeta, error) {
 	return a.filesystem.ListMetadata(irodsPath)
+}
+
+func (a *catalogFileSystemAdapter) SearchByMeta(metaName string, metaValue string) ([]s3adminext.Entry, error) {
+	if a.s3Adapter != nil {
+		return a.s3Adapter.SearchByMeta(metaName, metaValue)
+	}
+	return s3adminirodsfs.SearchByMeta(a.filesystem, metaName, metaValue)
+}
+
+func (a *catalogFileSystemAdapter) S3AdminFilesystem() s3adminext.Filesystem {
+	if a.s3Adapter != nil {
+		return a.s3Adapter
+	}
+	return s3adminirodsfs.NewAdapter(a.filesystem)
+}
+
+func (a *catalogFileSystemAdapter) S3AdminUserMappingFilesystem() s3adminext.UserMappingFilesystem {
+	if a.s3Adapter != nil {
+		return a.s3Adapter
+	}
+	return s3adminirodsfs.NewAdapter(a.filesystem)
 }
 
 func (a *catalogFileSystemAdapter) AddMetadata(irodsPath string, attName string, attValue string, attUnits string) error {
