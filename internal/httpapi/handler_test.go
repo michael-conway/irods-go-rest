@@ -1873,6 +1873,7 @@ func TestExtFavoritesValidationAndNotFound(t *testing.T) {
 func TestExtS3BucketsLifecycle(t *testing.T) {
 	mappingPath := path.Join(t.TempDir(), "bucket-mapping.json")
 	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.S3ApiSupported = true
 		cfg.S3BucketMappingFile = mappingPath
 	})
 
@@ -1956,8 +1957,19 @@ func TestExtS3BucketsLifecycle(t *testing.T) {
 		t.Fatalf("write stale S3 bucket mapping file: %v", err)
 	}
 
+	nonAdminRefreshReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/buckets/refresh-mapping", nil)
+	nonAdminRefreshReq.Header.Set("Authorization", "Bearer token123")
+	nonAdminRefreshRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(nonAdminRefreshRec, nonAdminRefreshReq)
+	if nonAdminRefreshRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 refreshing bucket mapping as non-admin, got %d: %s", nonAdminRefreshRec.Code, nonAdminRefreshRec.Body.String())
+	}
+	if body := nonAdminRefreshRec.Body.String(); !strings.Contains(body, "insufficient privilege") {
+		t.Fatalf("expected insufficient privilege response, got %s", body)
+	}
+
 	refreshReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/buckets/refresh-mapping", nil)
-	refreshReq.Header.Set("Authorization", "Bearer token123")
+	refreshReq.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("otheradmin:secret")))
 	refreshRec := httptest.NewRecorder()
 	handler.Routes().ServeHTTP(refreshRec, refreshReq)
 	if refreshRec.Code != http.StatusOK {
@@ -1987,7 +1999,19 @@ func TestExtS3BucketsLifecycle(t *testing.T) {
 }
 
 func TestExtS3BucketsValidationAndConfiguration(t *testing.T) {
-	handler := testHandler(t)
+	unsupportedHandler := testHandler(t)
+
+	unsupportedReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/buckets", nil)
+	unsupportedReq.Header.Set("Authorization", "Bearer token123")
+	unsupportedRec := httptest.NewRecorder()
+	unsupportedHandler.Routes().ServeHTTP(unsupportedRec, unsupportedReq)
+	if unsupportedRec.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501 for unsupported S3 API, got %d: %s", unsupportedRec.Code, unsupportedRec.Body.String())
+	}
+
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.S3ApiSupported = true
+	})
 
 	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/buckets", strings.NewReader(`{"bucket_name":"","irods_path":"relative/path"}`))
 	createReq.Header.Set("Authorization", "Bearer token123")
@@ -2019,6 +2043,170 @@ func TestExtS3BucketsValidationAndConfiguration(t *testing.T) {
 	handler.Routes().ServeHTTP(listRec, listReq)
 	if listRec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503 for missing S3BucketMappingFile, got %d: %s", listRec.Code, listRec.Body.String())
+	}
+}
+
+func TestExtS3UserSecretsLifecycle(t *testing.T) {
+	dir := t.TempDir()
+	bucketMappingPath := path.Join(dir, "bucket-mapping.json")
+	userMappingPath := path.Join(dir, "user-mapping.json")
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.S3ApiSupported = true
+		cfg.S3BucketMappingFile = bucketMappingPath
+		cfg.S3UserMappingFile = userMappingPath
+	})
+
+	initialSecret := "Aa1Bb~2Cc3.-Dd4Ee5Ff6Gg7Hh8Ii9_Jj0Kk1Ll2"
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"test1","secret_key":"`+initialSecret+`"}`))
+	createReq.Header.Set("Authorization", "Bearer token123")
+	createReq.Header.Set("Content-Type", "application/json")
+	createRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(createRec, createReq)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 creating S3 user secret, got %d: %s", createRec.Code, createRec.Body.String())
+	}
+	if body := createRec.Body.String(); !containsAll(body, `"user_name":"test1"`, `"secret_key":"`+initialSecret+`"`, `"irods_path":"/tempZone/home/test1/.irodsext/s3admin/irods-s3-api-secret.txt"`) {
+		t.Fatalf("unexpected create user secret body: %q", body)
+	}
+	assertS3UserMappingFile(t, userMappingPath, "test1", initialSecret)
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets/test1", nil)
+	getReq.Header.Set("Authorization", "Bearer token123")
+	getRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 getting S3 user secret, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+	if body := getRec.Body.String(); !containsAll(body, `"user_name":"test1"`, `"secret_key":"`+initialSecret+`"`, `"self":{"href":"/api/v1/ext/s3/user-secrets/test1","method":"GET"}`) {
+		t.Fatalf("unexpected get user secret body: %q", body)
+	}
+
+	updatedSecret := strings.Repeat("Z", s3adminext.S3UserSecretKeyLength)
+	updateReq := httptest.NewRequest(http.MethodPut, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"test1","secret_key":"`+updatedSecret+`"}`))
+	updateReq.Header.Set("Authorization", "Bearer token123")
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(updateRec, updateReq)
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 updating S3 user secret, got %d: %s", updateRec.Code, updateRec.Body.String())
+	}
+	assertS3UserMappingFile(t, userMappingPath, "test1", updatedSecret)
+
+	generateReq := httptest.NewRequest(http.MethodPut, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"test1","auto_generate":true}`))
+	generateReq.Header.Set("Authorization", "Bearer token123")
+	generateReq.Header.Set("Content-Type", "application/json")
+	generateRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(generateRec, generateReq)
+	if generateRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 generating S3 user secret, got %d: %s", generateRec.Code, generateRec.Body.String())
+	}
+	generatedSecret := readS3UserMappingFile(t, userMappingPath)["test1"].SecretKey
+	if generatedSecret == "" || generatedSecret == updatedSecret {
+		t.Fatalf("expected generated secret to replace previous mapping, got %q", generatedSecret)
+	}
+
+	nonAdminListReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets", nil)
+	nonAdminListReq.Header.Set("Authorization", "Bearer token123")
+	nonAdminListRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(nonAdminListRec, nonAdminListReq)
+	if nonAdminListRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 listing user secrets as non-admin, got %d: %s", nonAdminListRec.Code, nonAdminListRec.Body.String())
+	}
+
+	adminListReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets", nil)
+	adminListReq.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("otheradmin:secret")))
+	adminListRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(adminListRec, adminListReq)
+	if adminListRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 listing user secrets as rodsadmin, got %d: %s", adminListRec.Code, adminListRec.Body.String())
+	}
+	if body := adminListRec.Body.String(); !containsAll(body, `"user_secrets":`, `"user_name":"test1"`, `"secret_key":"`+generatedSecret+`"`, `"count":1`) {
+		t.Fatalf("unexpected user secret list body: %s", body)
+	}
+
+	if err := os.WriteFile(userMappingPath, []byte(`{"stale":{"secret_key":"stale","username":"stale"}}`), 0o644); err != nil {
+		t.Fatalf("write stale S3 user mapping file: %v", err)
+	}
+
+	nonAdminRefreshReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/user-secrets/refresh-mapping", nil)
+	nonAdminRefreshReq.Header.Set("Authorization", "Bearer token123")
+	nonAdminRefreshRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(nonAdminRefreshRec, nonAdminRefreshReq)
+	if nonAdminRefreshRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 refreshing user mapping as non-admin, got %d: %s", nonAdminRefreshRec.Code, nonAdminRefreshRec.Body.String())
+	}
+	if body := nonAdminRefreshRec.Body.String(); !strings.Contains(body, "insufficient privilege") {
+		t.Fatalf("expected insufficient privilege response, got %s", body)
+	}
+
+	refreshReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/user-secrets/refresh-mapping", nil)
+	refreshReq.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("otheradmin:secret")))
+	refreshRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(refreshRec, refreshReq)
+	if refreshRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 refreshing S3 user mapping, got %d: %s", refreshRec.Code, refreshRec.Body.String())
+	}
+	if body := refreshRec.Body.String(); !containsAll(body, `"user_mapping":`, `"user_name":"test1"`, `"count":1`) {
+		t.Fatalf("unexpected user mapping refresh body: %s", body)
+	}
+	assertS3UserMappingFile(t, userMappingPath, "test1", generatedSecret)
+	if mapping := readS3UserMappingFile(t, userMappingPath); mapping["stale"].SecretKey != "" {
+		t.Fatalf("expected stale user mapping to be removed after refresh, got %+v", mapping)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/ext/s3/user-secrets/test1", nil)
+	deleteReq.Header.Set("Authorization", "Bearer token123")
+	deleteRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 deleting S3 user secret, got %d: %s", deleteRec.Code, deleteRec.Body.String())
+	}
+	if mapping := readS3UserMappingFile(t, userMappingPath); mapping["test1"].SecretKey != "" {
+		t.Fatalf("expected deleted user secret to be removed from mapping, got %+v", mapping)
+	}
+
+	getAfterDeleteReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets/test1", nil)
+	getAfterDeleteReq.Header.Set("Authorization", "Bearer token123")
+	getAfterDeleteRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(getAfterDeleteRec, getAfterDeleteReq)
+	if getAfterDeleteRec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 getting deleted S3 user secret, got %d: %s", getAfterDeleteRec.Code, getAfterDeleteRec.Body.String())
+	}
+}
+
+func TestExtS3UserSecretsValidationAndConfiguration(t *testing.T) {
+	unsupportedHandler := testHandler(t)
+
+	unsupportedReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets/test1", nil)
+	unsupportedReq.Header.Set("Authorization", "Bearer token123")
+	unsupportedRec := httptest.NewRecorder()
+	unsupportedHandler.Routes().ServeHTTP(unsupportedRec, unsupportedReq)
+	if unsupportedRec.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501 for unsupported S3 API user secret endpoint, got %d: %s", unsupportedRec.Code, unsupportedRec.Body.String())
+	}
+
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.S3ApiSupported = true
+	})
+
+	invalidReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"","secret_key":""}`))
+	invalidReq.Header.Set("Authorization", "Bearer token123")
+	invalidReq.Header.Set("Content-Type", "application/json")
+	invalidRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(invalidRec, invalidReq)
+	if invalidRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 validating S3 user secret, got %d: %s", invalidRec.Code, invalidRec.Body.String())
+	}
+	if body := invalidRec.Body.String(); !containsAll(body, `"user_name":"user_name is required"`, `"secret_key":"secret_key is required unless auto_generate is true"`) {
+		t.Fatalf("unexpected S3 user secret validation body: %q", body)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets/test1", nil)
+	getReq.Header.Set("Authorization", "Bearer token123")
+	getRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 for missing S3UserMappingFile, got %d: %s", getRec.Code, getRec.Body.String())
 	}
 }
 
@@ -2055,6 +2243,31 @@ func readS3BucketMappingFile(t *testing.T, mappingPath string) map[string]string
 	mapping := map[string]string{}
 	if err := json.Unmarshal(content, &mapping); err != nil {
 		t.Fatalf("decode s3 bucket mapping file %q: %v", mappingPath, err)
+	}
+	return mapping
+}
+
+func assertS3UserMappingFile(t *testing.T, mappingPath string, userName string, expectedSecretKey string) {
+	t.Helper()
+
+	mapping := readS3UserMappingFile(t, mappingPath)
+	entry := mapping[userName]
+	if entry.SecretKey != expectedSecretKey || entry.Username != userName {
+		t.Fatalf("expected user mapping %q -> %q, got %+v", userName, expectedSecretKey, mapping)
+	}
+}
+
+func readS3UserMappingFile(t *testing.T, mappingPath string) map[string]s3adminext.UserMappingEntry {
+	t.Helper()
+
+	content, err := os.ReadFile(mappingPath)
+	if err != nil {
+		t.Fatalf("read s3 user mapping file %q: %v", mappingPath, err)
+	}
+
+	mapping := map[string]s3adminext.UserMappingEntry{}
+	if err := json.Unmarshal(content, &mapping); err != nil {
+		t.Fatalf("decode s3 user mapping file %q: %v", mappingPath, err)
 	}
 	return mapping
 }
@@ -2373,6 +2586,12 @@ func newTestCatalogFileSystem() *testCatalogFileSystem {
 			userKey("rods", "tempZone"): {
 				ID:   303,
 				Name: "rods",
+				Zone: "tempZone",
+				Type: irodstypes.IRODSUserRodsAdmin,
+			},
+			userKey("otheradmin", "tempZone"): {
+				ID:   306,
+				Name: "otheradmin",
 				Zone: "tempZone",
 				Type: irodstypes.IRODSUserRodsAdmin,
 			},

@@ -14,6 +14,11 @@ type S3AdminService interface {
 	UpsertBucket(ctx context.Context, irodsPath string, options irods.S3BucketUpsertOptions) (domain.S3Bucket, bool, error)
 	DeleteBucket(ctx context.Context, bucketID string) error
 	RebuildBucketMapping(ctx context.Context) (domain.S3BucketMappingRefresh, error)
+	ListUserSecrets(ctx context.Context) ([]domain.S3UserSecret, error)
+	GetUserSecret(ctx context.Context, userName string) (domain.S3UserSecret, error)
+	StoreUserSecret(ctx context.Context, userName string, options irods.S3UserSecretStoreOptions) (domain.S3UserSecret, error)
+	DeleteUserSecret(ctx context.Context, userName string) error
+	RebuildUserMapping(ctx context.Context) (domain.S3UserSecretMappingRefresh, error)
 }
 
 type s3AdminService struct {
@@ -76,4 +81,49 @@ func (s *s3AdminService) RebuildBucketMapping(ctx context.Context) (domain.S3Buc
 	}
 
 	return s.catalog.RebuildS3BucketMapping(ctx, irodsRequestContext(requestContext))
+}
+
+func (s *s3AdminService) ListUserSecrets(ctx context.Context) ([]domain.S3UserSecret, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.catalog.ListS3UserSecrets(ctx, irodsRequestContext(requestContext))
+}
+
+func (s *s3AdminService) GetUserSecret(ctx context.Context, userName string) (domain.S3UserSecret, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return domain.S3UserSecret{}, err
+	}
+
+	return s.catalog.GetS3UserSecret(ctx, irodsRequestContext(requestContext), userName)
+}
+
+func (s *s3AdminService) StoreUserSecret(ctx context.Context, userName string, options irods.S3UserSecretStoreOptions) (domain.S3UserSecret, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return domain.S3UserSecret{}, err
+	}
+
+	return s.catalog.StoreS3UserSecret(ctx, irodsRequestContext(requestContext), userName, options)
+}
+
+func (s *s3AdminService) DeleteUserSecret(ctx context.Context, userName string) error {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.catalog.DeleteS3UserSecret(ctx, irodsRequestContext(requestContext), userName)
+}
+
+func (s *s3AdminService) RebuildUserMapping(ctx context.Context) (domain.S3UserSecretMappingRefresh, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return domain.S3UserSecretMappingRefresh{}, err
+	}
+
+	return s.catalog.RebuildS3UserMapping(ctx, irodsRequestContext(requestContext))
 }

@@ -45,3 +45,23 @@ type S3BucketMappingRefresh struct {
 	Buckets         []S3Bucket `json:"buckets"`
 	Count           int        `json:"count"`
 }
+
+type S3UserSecret struct {
+	UserName     string             `json:"user_name"`
+	UserHomePath string             `json:"user_home_path,omitempty"`
+	IRODSPath    string             `json:"irods_path,omitempty"`
+	SecretKey    string             `json:"secret_key,omitempty"`
+	Links        *S3UserSecretLinks `json:"links,omitempty"`
+}
+
+type S3UserSecretLinks struct {
+	Self   *ActionLink `json:"self,omitempty"`
+	Update *ActionLink `json:"update,omitempty"`
+	Delete *ActionLink `json:"delete,omitempty"`
+}
+
+type S3UserSecretMappingRefresh struct {
+	MappingFilePath string         `json:"mapping_file_path,omitempty"`
+	Users           []S3UserSecret `json:"users"`
+	Count           int            `json:"count"`
+}

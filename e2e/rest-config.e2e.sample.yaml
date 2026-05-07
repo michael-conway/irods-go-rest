@@ -20,7 +20,9 @@ IrodsSSLConfig:
   DHParamsFile:
   ServerName:
 IrodsDefaultResource: demoResc
+S3ApiSupported: true
 S3BucketMappingFile: /tmp/irods-s3-bucket-mapping.json
+S3UserMappingFile: /tmp/irods-s3-user-mapping.json
 ReplicaTrimMinCopies: 1
 ReplicaTrimMinAgeMinutes: 0
 

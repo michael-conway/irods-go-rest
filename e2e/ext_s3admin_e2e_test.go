@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 )
@@ -43,12 +44,7 @@ func TestS3AdminBucketsLifecycleBasicAuthE2E(t *testing.T) {
 		"bucket_name": rootBucketID,
 		"irods_path":  fixture.collectionPath,
 	})
-	if createStatus == http.StatusNotFound || createStatus == http.StatusMethodNotAllowed || createStatus == http.StatusNotImplemented {
-		t.Skipf("s3admin extension endpoint not available yet (status=%d)", createStatus)
-	}
-	if createStatus == http.StatusServiceUnavailable {
-		t.Skipf("s3admin extension endpoint not configured: %s", strings.TrimSpace(createBody))
-	}
+	skipIfS3AdminEndpointUnavailable(t, "s3admin create bucket", createStatus, createBody)
 	if createStatus != http.StatusCreated {
 		t.Fatalf("expected 201 creating S3 bucket, got %d: %s", createStatus, strings.TrimSpace(createBody))
 	}
@@ -129,7 +125,8 @@ func TestS3AdminBucketsLifecycleBasicAuthE2E(t *testing.T) {
 		t.Fatalf("expected 409 creating duplicate S3 bucket name, got %d: %s", duplicateStatus, strings.TrimSpace(duplicateBody))
 	}
 
-	refreshStatus, refreshBody := requestS3AdminE2E(t, client, http.MethodPost, bucketsURL+"/refresh-mapping", nil)
+	refreshStatus, refreshBody := requestS3AdminE2EAs(t, client, http.MethodPost, bucketsURL+"/refresh-mapping", nil, e2eIRODSUser(t), e2eIRODSPassword(t))
+	skipIfS3AdminEndpointUnavailable(t, "s3admin bucket mapping refresh", refreshStatus, refreshBody)
 	if refreshStatus != http.StatusOK {
 		t.Fatalf("expected 200 refreshing S3 bucket mapping, got %d: %s", refreshStatus, strings.TrimSpace(refreshBody))
 	}
@@ -148,8 +145,88 @@ func TestS3AdminBucketsLifecycleBasicAuthE2E(t *testing.T) {
 	}
 }
 
+func TestS3AdminUserSecretsBasicAuthE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	client := newE2EHTTPClient()
+	userSecretsURL := strings.TrimRight(baseURL, "/") + "/api/v1/ext/s3/user-secrets"
+
+	test1User := e2eBasicUsername(t)
+	test1Password := e2eBasicPassword(t)
+	test2User := e2eS3AdminSecondUsername()
+	test2Password := e2eS3AdminSecondPassword(t)
+	adminUser := e2eIRODSUser(t)
+	adminPassword := e2eIRODSPassword(t)
+
+	test1Secret := "Aa1Bb~2Cc3.-Dd4Ee5Ff6Gg7Hh8Ii9_Jj0Kk1Ll2"
+	test2Secret := "Bb2Cc~3Dd4.-Ee5Ff6Gg7Hh8Ii9Jj0_Kk1Ll2Mm3"
+
+	t.Cleanup(func() {
+		for _, user := range []struct {
+			name     string
+			password string
+		}{
+			{name: test1User, password: test1Password},
+			{name: test2User, password: test2Password},
+		} {
+			status, body := requestS3AdminE2EAs(t, client, http.MethodDelete, userSecretsURL+"/"+url.PathEscape(user.name), nil, user.name, user.password)
+			if status != http.StatusNoContent && status != http.StatusNotFound && status != http.StatusServiceUnavailable && status != http.StatusNotImplemented && status != http.StatusForbidden {
+				t.Logf("cleanup delete S3 user secret for %q returned %d: %s", user.name, status, strings.TrimSpace(body))
+			}
+		}
+	})
+
+	test1CreateStatus, test1CreateBody := requestS3AdminE2EAs(t, client, http.MethodPost, userSecretsURL, map[string]any{
+		"user_name":  test1User,
+		"secret_key": test1Secret,
+	}, test1User, test1Password)
+	skipIfS3AdminEndpointUnavailable(t, "s3 user secret create", test1CreateStatus, test1CreateBody)
+	if test1CreateStatus != http.StatusCreated {
+		t.Fatalf("expected 201 creating S3 secret for %s, got %d: %s", test1User, test1CreateStatus, strings.TrimSpace(test1CreateBody))
+	}
+	assertS3UserSecretE2E(t, decodeS3UserSecretResponseE2E(t, test1CreateBody), test1User, test1Secret)
+
+	test2CreateStatus, test2CreateBody := requestS3AdminE2EAs(t, client, http.MethodPost, userSecretsURL, map[string]any{
+		"user_name":  test2User,
+		"secret_key": test2Secret,
+	}, test2User, test2Password)
+	if test2CreateStatus != http.StatusCreated {
+		t.Fatalf("expected 201 creating S3 secret for %s, got %d: %s", test2User, test2CreateStatus, strings.TrimSpace(test2CreateBody))
+	}
+	assertS3UserSecretE2E(t, decodeS3UserSecretResponseE2E(t, test2CreateBody), test2User, test2Secret)
+
+	test1GetStatus, test1GetBody := requestS3AdminE2EAs(t, client, http.MethodGet, userSecretsURL+"/"+url.PathEscape(test1User), nil, test1User, test1Password)
+	if test1GetStatus != http.StatusOK {
+		t.Fatalf("expected 200 getting S3 secret for %s, got %d: %s", test1User, test1GetStatus, strings.TrimSpace(test1GetBody))
+	}
+	assertS3UserSecretE2E(t, decodeS3UserSecretResponseE2E(t, test1GetBody), test1User, test1Secret)
+
+	listStatus, listBody := requestS3AdminE2EAs(t, client, http.MethodGet, userSecretsURL, nil, adminUser, adminPassword)
+	skipIfS3AdminEndpointUnavailable(t, "s3 user secret list", listStatus, listBody)
+	if listStatus != http.StatusOK {
+		t.Fatalf("expected 200 listing S3 user secrets as rodsadmin, got %d: %s", listStatus, strings.TrimSpace(listBody))
+	}
+	listedUserSecrets := decodeS3UserSecretListResponseE2E(t, listBody)
+	assertS3UserSecretPresentE2E(t, listedUserSecrets, test1User, test1Secret)
+	assertS3UserSecretPresentE2E(t, listedUserSecrets, test2User, test2Secret)
+
+	refreshStatus, refreshBody := requestS3AdminE2EAs(t, client, http.MethodPost, userSecretsURL+"/refresh-mapping", nil, adminUser, adminPassword)
+	skipIfS3AdminEndpointUnavailable(t, "s3 user mapping refresh", refreshStatus, refreshBody)
+	if refreshStatus != http.StatusOK {
+		t.Fatalf("expected 200 rebuilding S3 user mapping as rodsadmin, got %d: %s", refreshStatus, strings.TrimSpace(refreshBody))
+	}
+	refreshedUserSecrets := decodeS3UserSecretMappingRefreshResponseE2E(t, refreshBody)
+	assertS3UserSecretPresentE2E(t, refreshedUserSecrets, test1User, test1Secret)
+	assertS3UserSecretPresentE2E(t, refreshedUserSecrets, test2User, test2Secret)
+}
+
 type s3BucketE2E struct {
 	BucketID  string `json:"bucket_id"`
+	IRODSPath string `json:"irods_path"`
+}
+
+type s3UserSecretE2E struct {
+	UserName  string `json:"user_name"`
+	SecretKey string `json:"secret_key"`
 	IRODSPath string `json:"irods_path"`
 }
 
@@ -168,6 +245,11 @@ func createE2ES3AdminCollection(t *testing.T, parentPath string) string {
 
 func requestS3AdminE2E(t *testing.T, client *http.Client, method string, requestURL string, payload any) (int, string) {
 	t.Helper()
+	return requestS3AdminE2EAs(t, client, method, requestURL, payload, e2eBasicUsername(t), e2eBasicPassword(t))
+}
+
+func requestS3AdminE2EAs(t *testing.T, client *http.Client, method string, requestURL string, payload any, username string, password string) (int, string) {
+	t.Helper()
 
 	var bodyReader io.Reader
 	if payload != nil {
@@ -182,7 +264,7 @@ func requestS3AdminE2E(t *testing.T, client *http.Client, method string, request
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	setBasicAuth(req)
+	setBasicAuthCredentials(req, username, password)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -198,6 +280,32 @@ func requestS3AdminE2E(t *testing.T, client *http.Client, method string, request
 	return resp.StatusCode, string(body)
 }
 
+func e2eS3AdminSecondUsername() string {
+	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_S3_SECOND_USERNAME")); value != "" {
+		return value
+	}
+	return "test2"
+}
+
+func e2eS3AdminSecondPassword(t *testing.T) string {
+	t.Helper()
+	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_S3_SECOND_PASSWORD")); value != "" {
+		return value
+	}
+	return e2eBasicPassword(t)
+}
+
+func skipIfS3AdminEndpointUnavailable(t *testing.T, operation string, status int, responseBody string) {
+	t.Helper()
+
+	switch status {
+	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:
+		t.Skipf("%s endpoint not available yet (status=%d): %s", operation, status, strings.TrimSpace(responseBody))
+	case http.StatusServiceUnavailable:
+		t.Skipf("%s endpoint not configured: %s", operation, strings.TrimSpace(responseBody))
+	}
+}
+
 func decodeS3BucketResponseE2E(t *testing.T, responseBody string) s3BucketE2E {
 	t.Helper()
 
@@ -208,6 +316,52 @@ func decodeS3BucketResponseE2E(t *testing.T, responseBody string) s3BucketE2E {
 		t.Fatalf("decode S3 bucket response: %v", err)
 	}
 	return payload.Bucket
+}
+
+func decodeS3UserSecretResponseE2E(t *testing.T, responseBody string) s3UserSecretE2E {
+	t.Helper()
+
+	var payload struct {
+		UserSecret s3UserSecretE2E `json:"user_secret"`
+	}
+	if err := json.Unmarshal([]byte(responseBody), &payload); err != nil {
+		t.Fatalf("decode S3 user secret response: %v", err)
+	}
+	return payload.UserSecret
+}
+
+func decodeS3UserSecretListResponseE2E(t *testing.T, responseBody string) []s3UserSecretE2E {
+	t.Helper()
+
+	var payload struct {
+		UserSecrets []s3UserSecretE2E `json:"user_secrets"`
+		Count       int               `json:"count"`
+	}
+	if err := json.Unmarshal([]byte(responseBody), &payload); err != nil {
+		t.Fatalf("decode S3 user secret list response: %v", err)
+	}
+	if payload.Count != len(payload.UserSecrets) {
+		t.Fatalf("expected S3 user secret count %d to match list length %d: %s", payload.Count, len(payload.UserSecrets), responseBody)
+	}
+	return payload.UserSecrets
+}
+
+func decodeS3UserSecretMappingRefreshResponseE2E(t *testing.T, responseBody string) []s3UserSecretE2E {
+	t.Helper()
+
+	var payload struct {
+		UserMapping struct {
+			Users []s3UserSecretE2E `json:"users"`
+			Count int               `json:"count"`
+		} `json:"user_mapping"`
+	}
+	if err := json.Unmarshal([]byte(responseBody), &payload); err != nil {
+		t.Fatalf("decode S3 user mapping refresh response: %v", err)
+	}
+	if payload.UserMapping.Count != len(payload.UserMapping.Users) {
+		t.Fatalf("expected S3 user mapping refresh count %d to match list length %d: %s", payload.UserMapping.Count, len(payload.UserMapping.Users), responseBody)
+	}
+	return payload.UserMapping.Users
 }
 
 func decodeS3BucketListResponseE2E(t *testing.T, responseBody string) []s3BucketE2E {
@@ -242,6 +396,25 @@ func decodeS3BucketMappingRefreshResponseE2E(t *testing.T, responseBody string) 
 		t.Fatalf("expected S3 bucket refresh count %d to match list length %d: %s", payload.BucketMapping.Count, len(payload.BucketMapping.Buckets), responseBody)
 	}
 	return payload.BucketMapping.Buckets
+}
+
+func assertS3UserSecretE2E(t *testing.T, userSecret s3UserSecretE2E, expectedUserName string, expectedSecretKey string) {
+	t.Helper()
+
+	if userSecret.UserName != expectedUserName || userSecret.SecretKey != expectedSecretKey {
+		t.Fatalf("expected S3 user secret for %q with key %q, got %+v", expectedUserName, expectedSecretKey, userSecret)
+	}
+}
+
+func assertS3UserSecretPresentE2E(t *testing.T, userSecrets []s3UserSecretE2E, expectedUserName string, expectedSecretKey string) {
+	t.Helper()
+
+	for _, userSecret := range userSecrets {
+		if userSecret.UserName == expectedUserName && userSecret.SecretKey == expectedSecretKey {
+			return
+		}
+	}
+	t.Fatalf("expected S3 user secret for %q in response: %+v", expectedUserName, userSecrets)
 }
 
 func assertS3BucketEqualE2E(t *testing.T, bucket s3BucketE2E, expectedBucketID string, expectedPath string) {

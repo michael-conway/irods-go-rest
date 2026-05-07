@@ -27,7 +27,9 @@ func TestReadRestConfigEnvOverride(t *testing.T) {
 	t.Setenv("GOREST_OIDC_CLIENT_SECRET", "env-secret")
 	t.Setenv("GOREST_REST_LOG_LEVEL", "debug")
 	t.Setenv("GOREST_RESOURCE_AFFINITY", "demoResc, edgeResc ,  archiveResc  ")
+	t.Setenv("GOREST_S3_API_SUPPORTED", "true")
 	t.Setenv("GOREST_S3_BUCKET_MAPPING_FILE", "/tmp/s3-buckets.json")
+	t.Setenv("GOREST_S3_USER_MAPPING_FILE", "/tmp/s3-users.json")
 	t.Setenv("GOREST_REPLICA_TRIM_MIN_COPIES", "4")
 	t.Setenv("GOREST_REPLICA_TRIM_MIN_AGE_MINUTES", "12")
 	t.Setenv("IRODS_REST_ADDR", ":18080")
@@ -54,6 +56,12 @@ func TestReadRestConfigEnvOverride(t *testing.T) {
 	}
 	if cfg.S3BucketMappingFile != "/tmp/s3-buckets.json" {
 		t.Fatalf("expected S3BucketMappingFile from env override, got %q", cfg.S3BucketMappingFile)
+	}
+	if !cfg.S3ApiSupported {
+		t.Fatal("expected S3ApiSupported from env override")
+	}
+	if cfg.S3UserMappingFile != "/tmp/s3-users.json" {
+		t.Fatalf("expected S3UserMappingFile from env override, got %q", cfg.S3UserMappingFile)
 	}
 	if cfg.ReplicaTrimMinCopies != 4 {
 		t.Fatalf("expected ReplicaTrimMinCopies from env override, got %d", cfg.ReplicaTrimMinCopies)

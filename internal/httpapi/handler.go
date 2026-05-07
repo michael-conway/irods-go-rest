@@ -126,6 +126,12 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("GET /api/v1/ext/s3/buckets/by-path", h.requireBearer(http.HandlerFunc(h.getExtS3BucketByPath)))
 	mux.Handle("GET /api/v1/ext/s3/buckets/{bucket_id}", h.requireBearer(http.HandlerFunc(h.getExtS3Bucket)))
 	mux.Handle("DELETE /api/v1/ext/s3/buckets/{bucket_id}", h.requireBearer(http.HandlerFunc(h.deleteExtS3Bucket)))
+	mux.Handle("GET /api/v1/ext/s3/user-secrets", h.requireBearer(http.HandlerFunc(h.getExtS3UserSecrets)))
+	mux.Handle("POST /api/v1/ext/s3/user-secrets", h.requireBearer(http.HandlerFunc(h.postExtS3UserSecret)))
+	mux.Handle("PUT /api/v1/ext/s3/user-secrets", h.requireBearer(http.HandlerFunc(h.putExtS3UserSecret)))
+	mux.Handle("POST /api/v1/ext/s3/user-secrets/refresh-mapping", h.requireBearer(http.HandlerFunc(h.postExtS3UserMappingRefresh)))
+	mux.Handle("GET /api/v1/ext/s3/user-secrets/{user_name}", h.requireBearer(http.HandlerFunc(h.getExtS3UserSecret)))
+	mux.Handle("DELETE /api/v1/ext/s3/user-secrets/{user_name}", h.requireBearer(http.HandlerFunc(h.deleteExtS3UserSecret)))
 
 	return requestLogger(mux)
 }

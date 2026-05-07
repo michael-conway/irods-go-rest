@@ -3215,6 +3215,303 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/ext/s3/user-secrets:
+    get:
+      operationId: getExtS3UserSecrets
+      tags: [ext]
+      summary: List iRODS S3 API secret keys
+      description: Requires the authenticated iRODS user to have rodsadmin type.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      responses:
+        "200":
+          description: User secret keys discovered from iRODS S3 secret marker AVUs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/S3UserSecretCollectionResponse"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Authenticated iRODS user is not rodsadmin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: iRODS S3 API administration is not supported by this deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: S3 user secret administration is not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: postExtS3UserSecret
+      tags: [ext]
+      summary: Store an iRODS S3 API secret key for a user
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/S3UserSecretStoreRequest"
+      responses:
+        "201":
+          description: User secret key stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/S3UserSecretResponse"
+        "400":
+          description: Invalid user secret request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while storing user secret
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: iRODS S3 API administration is not supported by this deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: S3 user secret administration is not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    put:
+      operationId: putExtS3UserSecret
+      tags: [ext]
+      summary: Update or generate an iRODS S3 API secret key for a user
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/S3UserSecretStoreRequest"
+      responses:
+        "200":
+          description: User secret key updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/S3UserSecretResponse"
+        "400":
+          description: Invalid user secret request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while updating user secret
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: iRODS S3 API administration is not supported by this deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: S3 user secret administration is not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/ext/s3/user-secrets/refresh-mapping:
+    post:
+      operationId: postExtS3UserMappingRefresh
+      tags: [ext]
+      summary: Rebuild the iRODS S3 API user mapping file
+      description: Wipes and rewrites the configured user mapping JSON file from current iRODS:S3:Secret AVUs.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      responses:
+        "200":
+          description: User mapping file rebuilt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/S3UserSecretMappingRefreshResponse"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while refreshing user mapping
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Duplicate user secret AVUs prevent rebuilding the mapping
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: iRODS S3 API administration is not supported by this deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: S3 user secret administration is not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/ext/s3/user-secrets/{user_name}:
+    get:
+      operationId: getExtS3UserSecret
+      tags: [ext]
+      summary: Get an iRODS S3 API secret key for a user
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: user_name
+          required: true
+          schema:
+            type: string
+          description: iRODS user name used as the S3 access key id.
+      responses:
+        "200":
+          description: User secret key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/S3UserSecretResponse"
+        "400":
+          description: Invalid user secret lookup request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while reading user secret
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User secret key not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: iRODS S3 API administration is not supported by this deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: S3 user secret administration is not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteExtS3UserSecret
+      tags: [ext]
+      summary: Delete an iRODS S3 API secret key for a user
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: user_name
+          required: true
+          schema:
+            type: string
+          description: iRODS user name used as the S3 access key id.
+      responses:
+        "204":
+          description: User secret key deleted
+        "400":
+          description: Invalid user secret delete request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while deleting user secret
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User secret key not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: iRODS S3 API administration is not supported by this deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: S3 user secret administration is not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
   securitySchemes:
     BearerAuth:
@@ -4226,6 +4523,82 @@ components:
           type: boolean
           default: false
           description: Generate a GUID-like bucket name when bucket_name is omitted.
+    S3UserSecret:
+      type: object
+      required: [user_name]
+      properties:
+        user_name:
+          type: string
+          description: iRODS user name used as the S3 access key id.
+        user_home_path:
+          type: string
+          description: iRODS home collection containing the userpersist S3 admin folder.
+        irods_path:
+          type: string
+          description: iRODS data object path containing the S3 API secret key.
+        secret_key:
+          type: string
+          description: S3 API secret key for the user.
+        links:
+          $ref: "#/components/schemas/S3UserSecretLinks"
+    S3UserSecretLinks:
+      type: object
+      properties:
+        self:
+          $ref: "#/components/schemas/ActionLink"
+        update:
+          $ref: "#/components/schemas/ActionLink"
+        delete:
+          $ref: "#/components/schemas/ActionLink"
+    S3UserSecretResponse:
+      type: object
+      required: [user_secret]
+      properties:
+        user_secret:
+          $ref: "#/components/schemas/S3UserSecret"
+    S3UserSecretCollectionResponse:
+      type: object
+      required: [user_secrets, count]
+      properties:
+        user_secrets:
+          type: array
+          items:
+            $ref: "#/components/schemas/S3UserSecret"
+        count:
+          type: integer
+    S3UserSecretMappingRefresh:
+      type: object
+      required: [users, count]
+      properties:
+        mapping_file_path:
+          type: string
+          description: Absolute path of the rewritten iRODS S3 API user mapping JSON file.
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/S3UserSecret"
+        count:
+          type: integer
+    S3UserSecretMappingRefreshResponse:
+      type: object
+      required: [user_mapping]
+      properties:
+        user_mapping:
+          $ref: "#/components/schemas/S3UserSecretMappingRefresh"
+    S3UserSecretStoreRequest:
+      type: object
+      required: [user_name]
+      properties:
+        user_name:
+          type: string
+          description: iRODS user name used as the S3 access key id.
+        secret_key:
+          type: string
+          description: 40-character S3 API secret key. Required unless auto_generate is true.
+        auto_generate:
+          type: boolean
+          default: false
+          description: Generate and store a new secret key when secret_key is omitted.
     Resource:
       type: object
       required: [id, name]

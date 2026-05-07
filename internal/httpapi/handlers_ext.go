@@ -141,6 +141,10 @@ func (h *Handler) deleteExtFavorite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getExtS3Buckets(w http.ResponseWriter, r *http.Request) {
+	if !h.requireS3APISupported(w) {
+		return
+	}
+
 	options, fields := s3BucketListOptionsFromRequest(r, true)
 	if len(fields) > 0 {
 		writeValidationError(w, http.StatusBadRequest, "invalid_request", "s3 bucket request validation failed", fields)
@@ -162,6 +166,10 @@ func (h *Handler) getExtS3Buckets(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getExtS3Bucket(w http.ResponseWriter, r *http.Request) {
+	if !h.requireS3APISupported(w) {
+		return
+	}
+
 	bucketID := pathValue(r, "bucket_id")
 	if bucketID == "" {
 		writeValidationError(w, http.StatusBadRequest, "invalid_request", "s3 bucket request validation failed", map[string]string{
@@ -188,6 +196,10 @@ func (h *Handler) getExtS3Bucket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getExtS3BucketByPath(w http.ResponseWriter, r *http.Request) {
+	if !h.requireS3APISupported(w) {
+		return
+	}
+
 	irodsPath := strings.TrimSpace(r.URL.Query().Get("irods_path"))
 	if _, err := normalizeExtS3Path(irodsPath); err != nil {
 		writeValidationError(w, http.StatusBadRequest, "invalid_request", "s3 bucket request validation failed", map[string]string{
@@ -208,10 +220,18 @@ func (h *Handler) getExtS3BucketByPath(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) postExtS3Bucket(w http.ResponseWriter, r *http.Request) {
+	if !h.requireS3APISupported(w) {
+		return
+	}
+
 	h.upsertExtS3Bucket(w, r)
 }
 
 func (h *Handler) putExtS3Bucket(w http.ResponseWriter, r *http.Request) {
+	if !h.requireS3APISupported(w) {
+		return
+	}
+
 	h.upsertExtS3Bucket(w, r)
 }
 
@@ -261,6 +281,10 @@ func (h *Handler) upsertExtS3Bucket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteExtS3Bucket(w http.ResponseWriter, r *http.Request) {
+	if !h.requireS3APISupported(w) {
+		return
+	}
+
 	bucketID := pathValue(r, "bucket_id")
 	if bucketID == "" {
 		writeValidationError(w, http.StatusBadRequest, "invalid_request", "s3 bucket request validation failed", map[string]string{
@@ -278,6 +302,10 @@ func (h *Handler) deleteExtS3Bucket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) postExtS3BucketMappingRefresh(w http.ResponseWriter, r *http.Request) {
+	if !h.requireS3APISupported(w) {
+		return
+	}
+
 	result, err := h.s3Admin.RebuildBucketMapping(r.Context())
 	if err != nil {
 		writeS3AdminError(w, err)
@@ -291,6 +319,134 @@ func (h *Handler) postExtS3BucketMappingRefresh(w http.ResponseWriter, r *http.R
 	})
 }
 
+func (h *Handler) getExtS3UserSecrets(w http.ResponseWriter, r *http.Request) {
+	if !h.requireS3APISupported(w) {
+		return
+	}
+
+	userSecrets, err := h.s3Admin.ListUserSecrets(r.Context())
+	if err != nil {
+		writeS3AdminError(w, err)
+		return
+	}
+
+	mappedUserSecrets := s3UserSecretResponseList(userSecrets)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user_secrets": mappedUserSecrets,
+		"count":        len(mappedUserSecrets),
+	})
+}
+
+func (h *Handler) getExtS3UserSecret(w http.ResponseWriter, r *http.Request) {
+	if !h.requireS3APISupported(w) {
+		return
+	}
+
+	userName := pathValue(r, "user_name")
+	if userName == "" {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "s3 user secret request validation failed", map[string]string{
+			"user_name": "user_name is required",
+		})
+		return
+	}
+
+	userSecret, err := h.s3Admin.GetUserSecret(r.Context(), userName)
+	if err != nil {
+		writeS3AdminError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user_secret": s3UserSecretResponse(userSecret),
+	})
+}
+
+func (h *Handler) postExtS3UserSecret(w http.ResponseWriter, r *http.Request) {
+	if !h.requireS3APISupported(w) {
+		return
+	}
+
+	h.storeExtS3UserSecret(w, r, http.StatusCreated)
+}
+
+func (h *Handler) putExtS3UserSecret(w http.ResponseWriter, r *http.Request) {
+	if !h.requireS3APISupported(w) {
+		return
+	}
+
+	h.storeExtS3UserSecret(w, r, http.StatusOK)
+}
+
+func (h *Handler) storeExtS3UserSecret(w http.ResponseWriter, r *http.Request, status int) {
+	var request struct {
+		UserName     string `json:"user_name"`
+		SecretKey    string `json:"secret_key"`
+		AutoGenerate bool   `json:"auto_generate"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
+		return
+	}
+
+	fields := s3UserSecretValidationFields(request.UserName, request.SecretKey, request.AutoGenerate)
+	if len(fields) > 0 {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "s3 user secret request validation failed", fields)
+		return
+	}
+
+	userSecret, err := h.s3Admin.StoreUserSecret(r.Context(), request.UserName, irods.S3UserSecretStoreOptions{
+		SecretKey:    request.SecretKey,
+		AutoGenerate: request.AutoGenerate,
+	})
+	if err != nil {
+		writeS3AdminError(w, err)
+		return
+	}
+
+	writeJSON(w, status, map[string]any{
+		"user_secret": s3UserSecretResponse(userSecret),
+	})
+}
+
+func (h *Handler) deleteExtS3UserSecret(w http.ResponseWriter, r *http.Request) {
+	if !h.requireS3APISupported(w) {
+		return
+	}
+
+	userName := pathValue(r, "user_name")
+	if userName == "" {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "s3 user secret request validation failed", map[string]string{
+			"user_name": "user_name is required",
+		})
+		return
+	}
+
+	if err := h.s3Admin.DeleteUserSecret(r.Context(), userName); err != nil {
+		writeS3AdminError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) postExtS3UserMappingRefresh(w http.ResponseWriter, r *http.Request) {
+	if !h.requireS3APISupported(w) {
+		return
+	}
+
+	result, err := h.s3Admin.RebuildUserMapping(r.Context())
+	if err != nil {
+		writeS3AdminError(w, err)
+		return
+	}
+
+	result.Users = s3UserSecretResponseList(result.Users)
+	result.Count = len(result.Users)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user_mapping": result,
+	})
+}
+
 func favoriteValidationFields(name string, favoritePath string) map[string]string {
 	fields := map[string]string{}
 
@@ -301,6 +457,25 @@ func favoriteValidationFields(name string, favoritePath string) map[string]strin
 		fields["absolute_path"] = "absolute_path is required"
 	} else if _, err := normalizeExtFavoritePath(favoritePath); err != nil {
 		fields["absolute_path"] = "absolute_path must be an absolute iRODS path"
+	}
+
+	if len(fields) == 0 {
+		return nil
+	}
+	return fields
+}
+
+func s3UserSecretValidationFields(userName string, secretKey string, autoGenerate bool) map[string]string {
+	fields := map[string]string{}
+
+	if strings.TrimSpace(userName) == "" {
+		fields["user_name"] = "user_name is required"
+	}
+	if strings.Contains(strings.TrimSpace(userName), "/") {
+		fields["user_name"] = "user_name must not contain path separators"
+	}
+	if strings.TrimSpace(secretKey) == "" && !autoGenerate {
+		fields["secret_key"] = "secret_key is required unless auto_generate is true"
 	}
 
 	if len(fields) == 0 {
@@ -491,17 +666,64 @@ func s3BucketCollectionLinks(r *http.Request) *domain.S3BucketCollectionLinks {
 	return links
 }
 
+func s3UserSecretResponseList(users []domain.S3UserSecret) []domain.S3UserSecret {
+	if len(users) == 0 {
+		return []domain.S3UserSecret{}
+	}
+
+	mapped := make([]domain.S3UserSecret, 0, len(users))
+	for _, user := range users {
+		mapped = append(mapped, s3UserSecretResponse(user))
+	}
+	return mapped
+}
+
+func s3UserSecretResponse(userSecret domain.S3UserSecret) domain.S3UserSecret {
+	userName := strings.TrimSpace(userSecret.UserName)
+	userSecret.Links = &domain.S3UserSecretLinks{
+		Self: &domain.ActionLink{
+			Href:   "/api/v1/ext/s3/user-secrets/" + url.PathEscape(userName),
+			Method: http.MethodGet,
+		},
+		Update: &domain.ActionLink{
+			Href:   "/api/v1/ext/s3/user-secrets",
+			Method: http.MethodPut,
+		},
+		Delete: &domain.ActionLink{
+			Href:   "/api/v1/ext/s3/user-secrets/" + url.PathEscape(userName),
+			Method: http.MethodDelete,
+		},
+	}
+	return userSecret
+}
+
+func (h *Handler) requireS3APISupported(w http.ResponseWriter) bool {
+	if h.cfg.S3ApiSupported {
+		return true
+	}
+
+	writeError(w, http.StatusNotImplemented, "not_supported", "s3 api extension operations are not supported")
+	return false
+}
+
 func writeS3AdminError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, irods.ErrS3AdminNotSupported):
+		writeError(w, http.StatusNotImplemented, "not_supported", err.Error())
 	case errors.Is(err, irods.ErrS3AdminNotConfigured):
 		writeError(w, http.StatusServiceUnavailable, "not_configured", err.Error())
 	case errors.Is(err, irods.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 	case errors.Is(err, irods.ErrPermissionDenied):
 		writeError(w, http.StatusForbidden, "permission_denied", err.Error())
-	case errors.Is(err, irods.ErrConflict), errors.Is(err, s3adminext.ErrDuplicateBucket), errors.Is(err, s3adminext.ErrBucketAlreadySet):
+	case errors.Is(err, irods.ErrConflict), errors.Is(err, s3adminext.ErrDuplicateBucket), errors.Is(err, s3adminext.ErrBucketAlreadySet), errors.Is(err, s3adminext.ErrDuplicateUserMapping):
 		writeError(w, http.StatusConflict, "conflict", err.Error())
-	case errors.Is(err, s3adminext.ErrInvalidBucketName), errors.Is(err, s3adminext.ErrInvalidIRODSPath), errors.Is(err, s3adminext.ErrInvalidScanRoot):
+	case errors.Is(err, s3adminext.ErrInvalidBucketName),
+		errors.Is(err, s3adminext.ErrInvalidIRODSPath),
+		errors.Is(err, s3adminext.ErrInvalidScanRoot),
+		errors.Is(err, s3adminext.ErrInvalidUserSecretKey),
+		errors.Is(err, s3adminext.ErrInvalidUserID),
+		errors.Is(err, s3adminext.ErrInvalidUserSecretKeyIRODSPath):
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 	default:
 		writePathError(w, err)

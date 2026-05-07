@@ -31,6 +31,8 @@ RestLogLevel: info
 ResourceAffinity:
   - demoResc
   - test1-resc
+S3ApiSupported: false
 S3BucketMappingFile:
+S3UserMappingFile:
 ReplicaTrimMinCopies: 1
 ReplicaTrimMinAgeMinutes: 0
