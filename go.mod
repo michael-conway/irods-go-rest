@@ -7,6 +7,7 @@ require github.com/michael-conway/go-irodsclient-extensions v0.0.0-2026050814073
 require (
 	github.com/cyverse/go-irodsclient v0.19.10
 	github.com/go-viper/mapstructure/v2 v2.4.0
+	github.com/rs/xid v1.6.0
 )
 
 require (
@@ -18,7 +19,6 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
-	github.com/rs/xid v1.6.0 // indirect
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
@@ -48,4 +48,3 @@ require (
 	golang.org/x/sys v0.37.0 // indirect
 	golang.org/x/text v0.30.0 // indirect
 )
-
