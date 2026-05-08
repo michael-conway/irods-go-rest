@@ -115,3 +115,21 @@ Current gap:
 - Checksum operations still require dropping below the high-level `fs.FileSystem` API and calling lower-level iRODS functions with a metadata connection. A first-class checksum API in `go-irodsclient/fs.FileSystem` would simplify this service.
 - Ticket parsing, ticket creation helpers, and other reusable client workflows should be monitored for extraction into `go-irodsclient-extensions` when they are not HTTP-specific.
 - `go-irodsclient/fs.FileSystem` currently exposes caching but not a true public no-cache mode or explicit fresh-read APIs for path existence/lookups. This can surface as immediate cross-session visibility lag after create, rename, or delete. Track this upstream so the long-term fix can move down into `go-irodsclient` rather than staying as polling logic in service repositories.
+
+## Local multi-repo sync (`go.work`)
+
+Use a workspace `go.work` file for local cross-repo development instead of
+`replace ../...` directives in `go.mod`.
+
+Current workspace scaffold (at `workspace-gabble/go.work`) includes:
+
+- `./go-irodsclient-extensions`
+- `./irods-go-rest`
+- `./irods-go-drs`
+
+Workflow:
+
+1. develop across repos with `go.work` active
+2. keep each repo `go.mod` pinned to real module versions (no local replace)
+3. when shared changes are ready, push/tag in `go-irodsclient-extensions`
+4. bump dependent repos with `go get <module>@<tag-or-commit>` and `go mod tidy`
