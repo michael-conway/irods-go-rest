@@ -4,6 +4,7 @@ import (
 	"context"
 
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
+	metadataext "github.com/michael-conway/go-irodsclient-extensions/metadata"
 	"github.com/michael-conway/irods-go-rest/internal/domain"
 	"github.com/michael-conway/irods-go-rest/internal/irods"
 )
@@ -33,6 +34,7 @@ type PathService interface {
 	GetPathChecksum(ctx context.Context, absolutePath string) (domain.PathChecksum, error)
 	ComputePathChecksum(ctx context.Context, absolutePath string) (domain.PathChecksum, error)
 	GetObjectContentByPath(ctx context.Context, absolutePath string) (domain.ObjectContent, error)
+	GetMetadataManifest(ctx context.Context, absolutePath string) (metadataext.Manifest, error)
 	ListFavorites(ctx context.Context) ([]domain.Favorite, error)
 	AddFavorite(ctx context.Context, name string, favoritePath string) (domain.Favorite, error)
 	RenameFavorite(ctx context.Context, favoritePath string, name string) (domain.Favorite, error)
@@ -261,6 +263,15 @@ func (s *pathService) GetObjectContentByPath(ctx context.Context, absolutePath s
 	}
 
 	return s.catalog.GetObjectContentByPath(ctx, irodsRequestContext(requestContext), absolutePath)
+}
+
+func (s *pathService) GetMetadataManifest(ctx context.Context, absolutePath string) (metadataext.Manifest, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return metadataext.Manifest{}, err
+	}
+
+	return s.catalog.GetMetadataManifest(ctx, irodsRequestContext(requestContext), absolutePath)
 }
 
 func (s *pathService) ListFavorites(ctx context.Context) ([]domain.Favorite, error) {

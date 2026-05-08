@@ -140,6 +140,24 @@ func (h *Handler) deleteExtFavorite(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *Handler) getExtMetadataManifest(w http.ResponseWriter, r *http.Request) {
+	irodsPath := queryIRODSPath(r)
+	if strings.TrimSpace(irodsPath) == "" {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "metadata manifest request validation failed", map[string]string{
+			"irods_path": "irods_path is required",
+		})
+		return
+	}
+
+	manifest, err := h.paths.GetMetadataManifest(r.Context(), irodsPath)
+	if err != nil {
+		writePathError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, manifest)
+}
+
 func (h *Handler) getExtS3Buckets(w http.ResponseWriter, r *http.Request) {
 	if !h.requireS3APISupported(w) {
 		return
