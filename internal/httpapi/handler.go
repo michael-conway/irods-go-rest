@@ -118,6 +118,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("POST /api/v1/ext/favorites", h.requireBearer(http.HandlerFunc(h.postExtFavorite)))
 	mux.Handle("PUT /api/v1/ext/favorites", h.requireBearer(http.HandlerFunc(h.putExtFavorite)))
 	mux.Handle("DELETE /api/v1/ext/favorites", h.requireBearer(http.HandlerFunc(h.deleteExtFavorite)))
+	mux.Handle("GET /api/v1/ext/metadata-manifest", h.requireBearer(http.HandlerFunc(h.getExtMetadataManifest)))
 	mux.Handle("GET /api/v1/ext/s3/buckets", h.requireBearer(http.HandlerFunc(h.getExtS3Buckets)))
 	mux.Handle("POST /api/v1/ext/s3/buckets", h.requireBearer(http.HandlerFunc(h.postExtS3Bucket)))
 	mux.Handle("PUT /api/v1/ext/s3/buckets", h.requireBearer(http.HandlerFunc(h.putExtS3Bucket)))

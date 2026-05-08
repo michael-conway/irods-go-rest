@@ -21,6 +21,7 @@ import (
 	irodscommon "github.com/cyverse/go-irodsclient/irods/common"
 	irodslibfs "github.com/cyverse/go-irodsclient/irods/fs"
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
+	metadataext "github.com/michael-conway/go-irodsclient-extensions/metadata"
 	s3adminext "github.com/michael-conway/go-irodsclient-extensions/s3admin"
 	s3adminirodsfs "github.com/michael-conway/go-irodsclient-extensions/s3admin/irodsfs"
 	"github.com/michael-conway/irods-go-rest/internal/config"
@@ -152,6 +153,7 @@ type CatalogService interface {
 	GetPathChecksum(ctx context.Context, requestContext *RequestContext, absolutePath string) (domain.PathChecksum, error)
 	ComputePathChecksum(ctx context.Context, requestContext *RequestContext, absolutePath string) (domain.PathChecksum, error)
 	GetObjectContentByPath(ctx context.Context, requestContext *RequestContext, absolutePath string) (domain.ObjectContent, error)
+	GetMetadataManifest(ctx context.Context, requestContext *RequestContext, absolutePath string) (metadataext.Manifest, error)
 	ListFavorites(ctx context.Context, requestContext *RequestContext) ([]domain.Favorite, error)
 	AddFavorite(ctx context.Context, requestContext *RequestContext, name string, favoritePath string) (domain.Favorite, error)
 	RenameFavorite(ctx context.Context, requestContext *RequestContext, favoritePath string, name string) (domain.Favorite, error)
