@@ -15,24 +15,13 @@ import (
 	irodsfs "github.com/cyverse/go-irodsclient/fs"
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
 	"github.com/michael-conway/irods-go-rest/internal/config"
-	"github.com/spf13/viper"
 )
 
 const integrationConfigFileEnvVar = "GOREST_E2E_CONFIG_FILE"
 
-type integrationTestConfig struct {
-	E2E struct {
-		BasicUsername string
-		BasicPassword string
-		IRODSUser     string
-		IRODSPassword string
-	}
-}
-
 var (
 	integrationConfigOnce  sync.Once
 	integrationConfigValue *config.RestConfig
-	integrationFileConfig  *integrationTestConfig
 	integrationConfigErr   error
 )
 
@@ -140,30 +129,22 @@ func newIntegrationIRODSFilesystem(t *testing.T) *irodsfs.FileSystem {
 func integrationBasicUsername(t *testing.T) string {
 	t.Helper()
 
-	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_BASIC_USERNAME")); value != "" {
-		return value
+	if cfg := requireIntegrationRestConfig(t); strings.TrimSpace(cfg.IrodsPrimaryTestUser) != "" {
+		return strings.TrimSpace(cfg.IrodsPrimaryTestUser)
 	}
 
-	if cfg := optionalIntegrationFileConfig(nil); cfg != nil && strings.TrimSpace(cfg.E2E.BasicUsername) != "" {
-		return strings.TrimSpace(cfg.E2E.BasicUsername)
-	}
-
-	t.Fatalf("integration tests require E2E.BasicUsername in %s or GOREST_E2E_BASIC_USERNAME", integrationConfigFileEnvVar)
+	t.Fatalf("integration tests require IrodsPrimaryTestUser in %s", integrationConfigFileEnvVar)
 	return ""
 }
 
 func integrationBasicPassword(t *testing.T) string {
 	t.Helper()
 
-	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_BASIC_PASSWORD")); value != "" {
-		return value
+	if cfg := requireIntegrationRestConfig(t); strings.TrimSpace(cfg.IrodsPrimaryTestPassword) != "" {
+		return strings.TrimSpace(cfg.IrodsPrimaryTestPassword)
 	}
 
-	if cfg := optionalIntegrationFileConfig(nil); cfg != nil && strings.TrimSpace(cfg.E2E.BasicPassword) != "" {
-		return strings.TrimSpace(cfg.E2E.BasicPassword)
-	}
-
-	t.Fatalf("integration tests require E2E.BasicPassword in %s or GOREST_E2E_BASIC_PASSWORD", integrationConfigFileEnvVar)
+	t.Fatalf("integration tests require IrodsPrimaryTestPassword in %s", integrationConfigFileEnvVar)
 	return ""
 }
 
@@ -230,33 +211,23 @@ func integrationUsesProxyUser(t *testing.T) bool {
 func integrationIRODSUser(t *testing.T) string {
 	t.Helper()
 
-	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_IRODS_USER")); value != "" {
-		return value
+	if cfg := requireIntegrationRestConfig(t); strings.TrimSpace(cfg.IrodsAdminUser) != "" {
+		return strings.TrimSpace(cfg.IrodsAdminUser)
 	}
 
-	if cfg := optionalIntegrationFileConfig(nil); cfg != nil && strings.TrimSpace(cfg.E2E.IRODSUser) != "" {
-		return strings.TrimSpace(cfg.E2E.IRODSUser)
-	}
-
-	return integrationBasicUsername(t)
+	t.Fatalf("integration tests require IrodsAdminUser in %s", integrationConfigFileEnvVar)
+	return ""
 }
 
 func integrationIRODSPassword(t *testing.T) string {
 	t.Helper()
 
-	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_IRODS_PASSWORD")); value != "" {
-		return value
+	if cfg := requireIntegrationRestConfig(t); strings.TrimSpace(cfg.IrodsAdminPassword) != "" {
+		return strings.TrimSpace(cfg.IrodsAdminPassword)
 	}
 
-	if cfg := optionalIntegrationFileConfig(nil); cfg != nil && strings.TrimSpace(cfg.E2E.IRODSPassword) != "" {
-		return strings.TrimSpace(cfg.E2E.IRODSPassword)
-	}
-
-	if integrationUsesProxyUser(t) {
-		t.Fatalf("integration tests require E2E.IRODSPassword in %s or GOREST_E2E_IRODS_PASSWORD when using a proxy uploader", integrationConfigFileEnvVar)
-	}
-
-	return integrationBasicPassword(t)
+	t.Fatalf("integration tests require IrodsAdminPassword in %s", integrationConfigFileEnvVar)
+	return ""
 }
 
 func requireIntegrationRestConfig(t *testing.T) *config.RestConfig {
@@ -282,18 +253,6 @@ func optionalIntegrationRestConfig(t *testing.T) *config.RestConfig {
 	return integrationConfigValue
 }
 
-func optionalIntegrationFileConfig(t *testing.T) *integrationTestConfig {
-	integrationConfigOnce.Do(func() {
-		loadIntegrationConfigs()
-	})
-
-	if integrationConfigErr != nil && t != nil {
-		t.Fatalf("%v", integrationConfigErr)
-	}
-
-	return integrationFileConfig
-}
-
 func requireNonEmptyIntegrationValue(t *testing.T, field string, value string) {
 	t.Helper()
 
@@ -314,13 +273,6 @@ func loadIntegrationConfigs() {
 		return
 	}
 
-	fileCfg, err := readIntegrationTestConfig(resolvedPath)
-	if err != nil {
-		integrationConfigErr = fmt.Errorf("read integration config from %s=%q: %w", integrationConfigFileEnvVar, resolvedPath, err)
-		return
-	}
-	integrationFileConfig = fileCfg
-
 	originalConfigFile := os.Getenv(config.ConfigFileEnvVar)
 	_ = os.Setenv(config.ConfigFileEnvVar, resolvedPath)
 	defer func() {
@@ -334,21 +286,6 @@ func loadIntegrationConfigs() {
 	}
 
 	integrationConfigValue = cfg
-}
-
-func readIntegrationTestConfig(configFile string) (*integrationTestConfig, error) {
-	v := viper.New()
-	v.SetConfigFile(configFile)
-	if err := v.ReadInConfig(); err != nil {
-		return nil, err
-	}
-
-	cfg := &integrationTestConfig{}
-	if err := v.Unmarshal(cfg); err != nil {
-		return nil, err
-	}
-
-	return cfg, nil
 }
 
 func resolveIntegrationConfigPath(configFile string) (string, error) {

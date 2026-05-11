@@ -23,14 +23,14 @@ It includes:
 | Field | Value |
 | --- | --- |
 | Project Name | `iRODS Go REST API` |
-| Current Version | `TBD` |
+| Current Version | `0.1.0` |
 | Status | `Active Development` |
 | Primary Developer | `Mike Conway` |
 | Organization | `NIEHS` |
 | Repository | `https://github.com/michael-conway/irods-go-rest` |
 | Contact | `mike.conway@nih.gov` |
 | Issue Tracker | `https://github.com/michael-conway/irods-go-rest/issues` |
-| License | `TBD` |
+| License | `BSD-2-Clause` |
 
 ## Master Index
 
@@ -192,7 +192,7 @@ Opinionated, workflow-specific APIs should live in this service under an explici
 
 * `/api/v1/ext/*`
 
-This keeps the core API surface (`/api/v1/path`, `/api/v1/server`, and related generic resources) focused on broadly reusable iRODS operations, while still allowing higher-level features such as file carts to be exposed without introducing a second public service.
+This keeps the core API surface (`/api/v1/path`, `/api/v1/server`, and related generic resources) focused on broadly reusable iRODS operations, while still allowing higher-level features such as favorites, metadata manifests, and S3 admin workflows to be exposed without introducing a second public service.
 
 Current architectural preference:
 
@@ -201,6 +201,23 @@ Current architectural preference:
 * gate extension features by configuration when needed
 
 Only move extension functionality to a separate sidecar service when there is a clear need for independent deployment, scaling, or security isolation.
+
+### Extension Support Matrix (Alpha)
+
+All `/api/v1/ext/*` routes require authenticated API access (Basic or Bearer). Use this matrix as the alpha support contract.
+
+| Extension area | Routes | Alpha support tier | Unsupported / unavailable behavior |
+|---|---|---|---|
+| Favorites | `/api/v1/ext/favorites` | Stable alpha | Normal validation/permission errors (`400`, `403`, `404`) |
+| Metadata manifest | `/api/v1/ext/metadata-manifest` | Stable alpha | Normal validation/permission/path errors (`400`, `403`, `404`) |
+| S3 bucket admin | `/api/v1/ext/s3/buckets*` | Conditional alpha (deployment-gated) | `501 not_supported` when `S3ApiSupported=false`; `503 not_configured` when S3 mapping configuration is missing |
+| S3 user-secret admin | `/api/v1/ext/s3/user-secrets*` | Conditional alpha (deployment-gated) | `501 not_supported` when `S3ApiSupported=false`; `503 not_configured` when S3 mapping configuration is missing; `403 permission_denied` for non-admin operations |
+
+Status semantics for extension routes:
+
+* `501 not_supported`: operation intentionally unavailable in this deployment/runtime capability mode
+* `503 not_configured`: feature is supported in principle, but required deployment configuration is missing
+* `403 permission_denied`: authenticated caller lacks required privileges for the operation
 
 The content endpoint supports restart/resume through the standard HTTP `Range` header.
 

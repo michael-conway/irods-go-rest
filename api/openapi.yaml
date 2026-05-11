@@ -11,6 +11,12 @@ tags:
   - name: path
   - name: user
   - name: ext
+    description: |
+      iRODS-specific extension endpoints under `/api/v1/ext/*`.
+      These are alpha-stage workflow APIs that are outside the core GA4GH/base path model.
+      Extension operations may be deployment-gated. Unsupported capability mode returns
+      `501` (`code=not_supported`), while missing required feature configuration returns
+      `503` (`code=not_configured`).
 paths:
   /healthz:
     get:
@@ -2291,393 +2297,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
-  /api/v1/ext/filecarts:
-    get:
-      operationId: getExtFileCarts
-      tags: [ext]
-      summary: List file carts for the authenticated user
-      description: |
-        Lists file carts stored under the authenticated user's extension collection
-        (`~/.irodsext/filecarts`).
-      security:
-        - BearerAuth: []
-        - BasicAuth: []
-      responses:
-        "200":
-          description: File carts visible to the authenticated user
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FileCartCollectionResponse"
-        "403":
-          description: Access denied while listing file carts
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: Missing or invalid bearer token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-    post:
-      operationId: postExtFileCart
-      tags: [ext]
-      summary: Create a new file cart
-      description: |
-        Creates a zero-byte cart object under the authenticated user's extension
-        collection (`~/.irodsext/filecarts`) and assigns a display name.
-      security:
-        - BearerAuth: []
-        - BasicAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/FileCartCreateRequest"
-      responses:
-        "201":
-          description: File cart created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FileCartResponse"
-        "400":
-          description: Invalid create request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "403":
-          description: Access denied while creating the file cart
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: Missing or invalid bearer token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /api/v1/ext/filecarts/{cart_id}:
-    get:
-      operationId: getExtFileCart
-      tags: [ext]
-      summary: Fetch one file cart
-      security:
-        - BearerAuth: []
-        - BasicAuth: []
-      parameters:
-        - in: path
-          name: cart_id
-          required: true
-          schema:
-            type: string
-          description: File cart identifier.
-      responses:
-        "200":
-          description: File cart details
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FileCartResponse"
-        "404":
-          description: File cart not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "403":
-          description: Access denied while reading the file cart
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: Missing or invalid bearer token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-    put:
-      operationId: putExtFileCart
-      tags: [ext]
-      summary: Update file cart properties
-      description: |
-        Updates mutable cart metadata such as the assigned display name.
-      security:
-        - BearerAuth: []
-        - BasicAuth: []
-      parameters:
-        - in: path
-          name: cart_id
-          required: true
-          schema:
-            type: string
-          description: File cart identifier.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/FileCartUpdateRequest"
-      responses:
-        "200":
-          description: File cart updated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FileCartResponse"
-        "400":
-          description: Invalid update request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: File cart not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "403":
-          description: Access denied while updating the file cart
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: Missing or invalid bearer token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-    delete:
-      operationId: deleteExtFileCart
-      tags: [ext]
-      summary: Delete one file cart
-      security:
-        - BearerAuth: []
-        - BasicAuth: []
-      parameters:
-        - in: path
-          name: cart_id
-          required: true
-          schema:
-            type: string
-          description: File cart identifier.
-      responses:
-        "204":
-          description: File cart deleted
-        "404":
-          description: File cart not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "403":
-          description: Access denied while deleting the file cart
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: Missing or invalid bearer token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /api/v1/ext/filecarts/{cart_id}/copy:
-    post:
-      operationId: postExtFileCartCopy
-      tags: [ext]
-      summary: Copy a file cart to a new cart
-      security:
-        - BearerAuth: []
-        - BasicAuth: []
-      parameters:
-        - in: path
-          name: cart_id
-          required: true
-          schema:
-            type: string
-          description: Source file cart identifier.
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/FileCartCopyRequest"
-      responses:
-        "201":
-          description: File cart copied
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FileCartResponse"
-        "404":
-          description: Source file cart not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "403":
-          description: Access denied while copying the file cart
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: Missing or invalid bearer token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /api/v1/ext/filecarts/{cart_id}/entries:
-    get:
-      operationId: getExtFileCartEntries
-      tags: [ext]
-      summary: List entries in one file cart
-      security:
-        - BearerAuth: []
-        - BasicAuth: []
-      parameters:
-        - in: path
-          name: cart_id
-          required: true
-          schema:
-            type: string
-          description: File cart identifier.
-      responses:
-        "200":
-          description: File cart entries
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FileCartEntryCollectionResponse"
-        "404":
-          description: File cart not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "403":
-          description: Access denied while listing file cart entries
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: Missing or invalid bearer token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-    post:
-      operationId: postExtFileCartEntry
-      tags: [ext]
-      summary: Add one entry to a file cart
-      security:
-        - BearerAuth: []
-        - BasicAuth: []
-      parameters:
-        - in: path
-          name: cart_id
-          required: true
-          schema:
-            type: string
-          description: File cart identifier.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/FileCartEntryCreateRequest"
-      responses:
-        "201":
-          description: File cart entry added
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FileCartEntryCollectionResponse"
-        "400":
-          description: Invalid file cart entry request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: File cart not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "403":
-          description: Access denied while adding file cart entry
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: Missing or invalid bearer token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-    delete:
-      operationId: deleteExtFileCartEntry
-      tags: [ext]
-      summary: Remove one entry from a file cart
-      security:
-        - BearerAuth: []
-        - BasicAuth: []
-      parameters:
-        - in: path
-          name: cart_id
-          required: true
-          schema:
-            type: string
-          description: File cart identifier.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/FileCartEntryDeleteRequest"
-      responses:
-        "200":
-          description: File cart entry removed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FileCartEntryCollectionResponse"
-        "400":
-          description: Invalid file cart entry delete request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: File cart or entry not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "403":
-          description: Access denied while removing file cart entry
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: Missing or invalid bearer token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
   /api/v1/ext/favorites:
     get:
       operationId: getExtFavorites
@@ -2840,6 +2459,53 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/ext/metadata-manifest:
+    get:
+      operationId: getExtMetadataManifest
+      tags: [ext]
+      summary: Generate metadata manifest for an iRODS path
+      description: Returns a JSON metadata manifest generated on demand for the requested iRODS path.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: irods_path
+          required: true
+          schema:
+            type: string
+          description: Absolute iRODS path for a collection or data object.
+      responses:
+        "200":
+          description: Metadata manifest
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetadataManifest"
+        "400":
+          description: Invalid metadata manifest request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while generating metadata manifest
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Requested path not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/ext/s3/buckets:
     get:
       operationId: getExtS3Buckets
@@ -2889,6 +2555,12 @@ paths:
                 $ref: "#/components/schemas/Error"
         "403":
           description: Access denied while listing buckets
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: iRODS S3 API administration is not supported by this deployment
           content:
             application/json:
               schema:
@@ -2949,6 +2621,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "501":
+          description: iRODS S3 API administration is not supported by this deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "503":
           description: S3 bucket administration is not configured
           content:
@@ -3005,6 +2683,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "501":
+          description: iRODS S3 API administration is not supported by this deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "503":
           description: S3 bucket administration is not configured
           content:
@@ -3041,6 +2725,12 @@ paths:
                 $ref: "#/components/schemas/Error"
         "409":
           description: Duplicate bucket AVUs prevent rebuilding the mapping
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: iRODS S3 API administration is not supported by this deployment
           content:
             application/json:
               schema:
@@ -3093,6 +2783,12 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           description: Bucket not found for requested path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: iRODS S3 API administration is not supported by this deployment
           content:
             application/json:
               schema:
@@ -3162,6 +2858,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "501":
+          description: iRODS S3 API administration is not supported by this deployment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "503":
           description: S3 bucket administration is not configured
           content:
@@ -3205,6 +2907,12 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           description: Bucket not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "501":
+          description: iRODS S3 API administration is not supported by this deployment
           content:
             application/json:
               schema:
@@ -3535,6 +3243,12 @@ components:
         environment:
           type: string
           example: development
+    MetadataManifest:
+      type: object
+      description: |
+        Generated metadata manifest for an iRODS collection or data object.
+        Structure is produced by the metadata service in go-irodsclient-extensions.
+      additionalProperties: true
     ServerInfo:
       type: object
       properties:
@@ -4250,129 +3964,6 @@ components:
         href:
           type: string
           description: Relative REST link for the related resource.
-    FileCart:
-      type: object
-      required: [id, file_name, path, assigned_name]
-      properties:
-        id:
-          type: string
-          description: Stable file cart identifier.
-        file_name:
-          type: string
-          description: Backing iRODS zero-byte object name, typically `<id>.cart`.
-        path:
-          type: string
-          description: Absolute iRODS path for the cart object.
-        assigned_name:
-          type: string
-          description: User-assigned display name for the cart.
-        links:
-          $ref: "#/components/schemas/FileCartLinks"
-    FileCartLinks:
-      type: object
-      properties:
-        self:
-          $ref: "#/components/schemas/ActionLink"
-        entries:
-          $ref: "#/components/schemas/ActionLink"
-        update:
-          $ref: "#/components/schemas/ActionLink"
-        delete:
-          $ref: "#/components/schemas/ActionLink"
-        copy:
-          $ref: "#/components/schemas/ActionLink"
-    FileCartResponse:
-      type: object
-      required: [cart]
-      properties:
-        cart:
-          $ref: "#/components/schemas/FileCart"
-    FileCartCollectionResponse:
-      type: object
-      required: [carts, count]
-      properties:
-        carts:
-          type: array
-          items:
-            $ref: "#/components/schemas/FileCart"
-        count:
-          type: integer
-        links:
-          type: object
-          properties:
-            self:
-              $ref: "#/components/schemas/ActionLink"
-            create:
-              $ref: "#/components/schemas/ActionLink"
-    FileCartCreateRequest:
-      type: object
-      required: [assigned_name]
-      properties:
-        assigned_name:
-          type: string
-          description: User-assigned display name for the cart.
-    FileCartUpdateRequest:
-      type: object
-      required: [assigned_name]
-      properties:
-        assigned_name:
-          type: string
-          description: New user-assigned display name for the cart.
-    FileCartCopyRequest:
-      type: object
-      properties:
-        assigned_name:
-          type: string
-          description: Optional display name override for the copied cart.
-    FileCartEntry:
-      type: object
-      required: [path, type]
-      properties:
-        path:
-          type: string
-          description: Full iRODS logical path for the cart entry.
-        type:
-          type: string
-          enum: [file, collection]
-    FileCartEntryCollectionResponse:
-      type: object
-      required: [cart_id, entries, count]
-      properties:
-        cart_id:
-          type: string
-          description: File cart identifier.
-        entries:
-          type: array
-          items:
-            $ref: "#/components/schemas/FileCartEntry"
-        count:
-          type: integer
-        links:
-          type: object
-          properties:
-            self:
-              $ref: "#/components/schemas/ActionLink"
-            add:
-              $ref: "#/components/schemas/ActionLink"
-            remove:
-              $ref: "#/components/schemas/ActionLink"
-    FileCartEntryCreateRequest:
-      type: object
-      required: [path, type]
-      properties:
-        path:
-          type: string
-          description: Full iRODS logical path to add.
-        type:
-          type: string
-          enum: [file, collection]
-    FileCartEntryDeleteRequest:
-      type: object
-      required: [path]
-      properties:
-        path:
-          type: string
-          description: Full iRODS logical path to remove.
     Favorite:
       type: object
       required: [name, absolute_path]

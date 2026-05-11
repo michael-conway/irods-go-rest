@@ -29,7 +29,12 @@ For opinionated features, keep them in this repository but place them under:
 Use this boundary:
 
 - core generic iRODS operations stay under `/api/v1/path*` and related generic resources
-- opinionated workflow endpoints (for example filecart) stay under `/api/v1/ext/*`
+- opinionated workflow endpoints (for example favorites, metadata manifests, and S3 admin helpers) stay under `/api/v1/ext/*`
+
+Extension support signaling:
+
+- return `501` with `code=not_supported` when an extension capability is intentionally unavailable in the current deployment mode
+- return `503` with `code=not_configured` when the feature is supported but missing required deployment configuration (for example S3 mapping files)
 
 Default preference is one service/origin to avoid extra CORS/auth/gateway complexity for clients.
 Only split to a sidecar if there is a concrete need for independent lifecycle, scaling, or security isolation.
@@ -66,21 +71,13 @@ Use three layers:
 - direct iRODS integration tests under `internal/irods` with `go test -tags=integration ./internal/irods`
 - HTTP end-to-end tests under `e2e/` with `go test -tags=e2e ./e2e/...`
 
-Shared live-test variables:
+Shared live-test variable:
 
 - `GOREST_E2E_CONFIG_FILE`
-- `GOREST_E2E_BASE_URL`
-- `DRS_TEST_BEARER_TOKEN`
-- `GOREST_E2E_SKIP_TLS_VERIFY`
-- `GOREST_E2E_BASIC_USERNAME`
-- `GOREST_E2E_BASIC_PASSWORD`
-- `GOREST_E2E_IRODS_HOST`
-- `GOREST_E2E_IRODS_PORT`
-- `GOREST_E2E_IRODS_ZONE`
-- `GOREST_E2E_IRODS_USER`
-- `GOREST_E2E_IRODS_PASSWORD`
 
-Use `GOREST_E2E_CONFIG_FILE` as the main source for live-test configuration, including top-level OIDC settings.
+Both `-tags=e2e` and `-tags=integration` suites now load all test settings from
+that single config file using top-level keys (including primary/secondary test
+users, admin credentials, and `TestBearerToken`).
 
 ## Docker test stack
 

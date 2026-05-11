@@ -12,69 +12,43 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/michael-conway/irods-go-rest/internal/config"
-	"github.com/spf13/viper"
 )
 
 var (
 	e2eConfigOnce  sync.Once
 	e2eConfigValue *config.RestConfig
-	e2eFileConfig  *e2eTestConfig
 	e2eConfigErr   error
 )
 
 const e2eConfigFileEnvVar = "GOREST_E2E_CONFIG_FILE"
 
-type e2eTestConfig struct {
-	E2E struct {
-		BaseURL       string
-		BasicUsername string
-		BasicPassword string
-		IRODSUser     string
-		IRODSPassword string
-		SkipTLSVerify bool
-		BearerToken   string
-	}
-}
-
 func requireE2EBaseURL(t *testing.T) string {
 	t.Helper()
-
-	baseURL := strings.TrimSpace(os.Getenv("GOREST_E2E_BASE_URL"))
-	if baseURL != "" {
-		return baseURL
-	}
-
-	if cfg := optionalE2EFileConfig(t); cfg != nil && strings.TrimSpace(cfg.E2E.BaseURL) != "" {
-		return strings.TrimSpace(cfg.E2E.BaseURL)
-	}
 
 	cfg := optionalE2ERestConfig(t)
 	if cfg != nil && strings.TrimSpace(cfg.PublicURL) != "" {
 		return strings.TrimSpace(cfg.PublicURL)
 	}
 
-	t.Fatalf("e2e tests require E2E.BaseURL, PublicURL, or GOREST_E2E_BASE_URL with %s set", e2eConfigFileEnvVar)
+	t.Fatalf("e2e tests require PublicURL in %s", e2eConfigFileEnvVar)
 	return ""
 }
 
 func requireE2EBearerToken(t *testing.T) string {
 	t.Helper()
 
-	token := strings.TrimSpace(os.Getenv("DRS_TEST_BEARER_TOKEN"))
-	if token == "" {
-		if cfg := optionalE2EFileConfig(t); cfg != nil {
-			token = strings.TrimSpace(cfg.E2E.BearerToken)
-		}
+	token := ""
+	if cfg := optionalE2ERestConfig(t); cfg != nil {
+		token = strings.TrimSpace(cfg.TestBearerToken)
 	}
 	if token == "" {
-		t.Skip("DRS_TEST_BEARER_TOKEN is not set")
+		t.Skip("TestBearerToken is not set in GOREST_E2E_CONFIG_FILE")
 	}
 
 	return token
@@ -85,15 +59,11 @@ func e2eBasicUsername(t *testing.T) string {
 		t.Helper()
 	}
 
-	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_BASIC_USERNAME")); value != "" {
-		return value
+	if cfg := optionalE2ERestConfig(t); cfg != nil && strings.TrimSpace(cfg.IrodsPrimaryTestUser) != "" {
+		return strings.TrimSpace(cfg.IrodsPrimaryTestUser)
 	}
 
-	if cfg := optionalE2EFileConfig(nil); cfg != nil && strings.TrimSpace(cfg.E2E.BasicUsername) != "" {
-		return strings.TrimSpace(cfg.E2E.BasicUsername)
-	}
-
-	t.Fatalf("e2e tests require E2E.BasicUsername in %s or GOREST_E2E_BASIC_USERNAME", e2eConfigFileEnvVar)
+	t.Fatalf("e2e tests require IrodsPrimaryTestUser in %s", e2eConfigFileEnvVar)
 	return ""
 }
 
@@ -102,25 +72,17 @@ func e2eBasicPassword(t *testing.T) string {
 		t.Helper()
 	}
 
-	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_BASIC_PASSWORD")); value != "" {
-		return value
+	if cfg := optionalE2ERestConfig(t); cfg != nil && strings.TrimSpace(cfg.IrodsPrimaryTestPassword) != "" {
+		return strings.TrimSpace(cfg.IrodsPrimaryTestPassword)
 	}
 
-	if cfg := optionalE2EFileConfig(nil); cfg != nil && strings.TrimSpace(cfg.E2E.BasicPassword) != "" {
-		return strings.TrimSpace(cfg.E2E.BasicPassword)
-	}
-
-	t.Fatalf("e2e tests require E2E.BasicPassword in %s or GOREST_E2E_BASIC_PASSWORD", e2eConfigFileEnvVar)
+	t.Fatalf("e2e tests require IrodsPrimaryTestPassword in %s", e2eConfigFileEnvVar)
 	return ""
 }
 
 func e2eIRODSHost(t *testing.T) string {
 	if t != nil {
 		t.Helper()
-	}
-
-	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_IRODS_HOST")); value != "" {
-		return value
 	}
 
 	if cfg := optionalE2ERestConfig(t); cfg != nil && strings.TrimSpace(cfg.IrodsHost) != "" {
@@ -134,29 +96,17 @@ func e2eIRODSHost(t *testing.T) string {
 func e2eIRODSPort(t *testing.T) int {
 	t.Helper()
 
-	raw := strings.TrimSpace(os.Getenv("GOREST_E2E_IRODS_PORT"))
-	if raw == "" {
-		if cfg := optionalE2ERestConfig(t); cfg != nil && cfg.IrodsPort > 0 {
-			return cfg.IrodsPort
-		}
-		t.Fatalf("e2e tests require IrodsPort in %s", e2eConfigFileEnvVar)
+	if cfg := optionalE2ERestConfig(t); cfg != nil && cfg.IrodsPort > 0 {
+		return cfg.IrodsPort
 	}
 
-	port, err := strconv.Atoi(raw)
-	if err != nil {
-		t.Fatalf("invalid GOREST_E2E_IRODS_PORT %q: %v", raw, err)
-	}
-
-	return port
+	t.Fatalf("e2e tests require IrodsPort in %s", e2eConfigFileEnvVar)
+	return 0
 }
 
 func e2eIRODSZone(t *testing.T) string {
 	if t != nil {
 		t.Helper()
-	}
-
-	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_IRODS_ZONE")); value != "" {
-		return value
 	}
 
 	if cfg := optionalE2ERestConfig(t); cfg != nil && strings.TrimSpace(cfg.IrodsZone) != "" {
@@ -192,20 +142,28 @@ func e2eIRODSDefaultResource(t *testing.T) string {
 	return ""
 }
 
-func e2eTestResource1(t *testing.T) string {
+func e2eS3APISupported(t *testing.T) bool {
 	if t != nil {
 		t.Helper()
 	}
 
-	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_TEST_RESOURCE1")); value != "" {
-		return value
+	if cfg := optionalE2ERestConfig(t); cfg != nil {
+		return cfg.S3ApiSupported
+	}
+
+	return false
+}
+
+func e2eTestResource1(t *testing.T) string {
+	if t != nil {
+		t.Helper()
 	}
 
 	if cfg := optionalE2ERestConfig(t); cfg != nil && strings.TrimSpace(cfg.TestResource1) != "" {
 		return strings.TrimSpace(cfg.TestResource1)
 	}
 
-	t.Fatalf("e2e tests require TestResource1 in %s or GOREST_E2E_TEST_RESOURCE1", e2eConfigFileEnvVar)
+	t.Fatalf("e2e tests require TestResource1 in %s", e2eConfigFileEnvVar)
 	return ""
 }
 
@@ -214,15 +172,11 @@ func e2eTestResource2(t *testing.T) string {
 		t.Helper()
 	}
 
-	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_TEST_RESOURCE2")); value != "" {
-		return value
-	}
-
 	if cfg := optionalE2ERestConfig(t); cfg != nil && strings.TrimSpace(cfg.TestResource2) != "" {
 		return strings.TrimSpace(cfg.TestResource2)
 	}
 
-	t.Fatalf("e2e tests require TestResource2 in %s or GOREST_E2E_TEST_RESOURCE2", e2eConfigFileEnvVar)
+	t.Fatalf("e2e tests require TestResource2 in %s", e2eConfigFileEnvVar)
 	return ""
 }
 
@@ -231,15 +185,12 @@ func e2eIRODSUser(t *testing.T) string {
 		t.Helper()
 	}
 
-	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_IRODS_USER")); value != "" {
-		return value
+	if cfg := optionalE2ERestConfig(t); cfg != nil && strings.TrimSpace(cfg.IrodsAdminUser) != "" {
+		return strings.TrimSpace(cfg.IrodsAdminUser)
 	}
 
-	if cfg := optionalE2EFileConfig(nil); cfg != nil && strings.TrimSpace(cfg.E2E.IRODSUser) != "" {
-		return strings.TrimSpace(cfg.E2E.IRODSUser)
-	}
-
-	return e2eBasicUsername(t)
+	t.Fatalf("e2e tests require IrodsAdminUser in %s", e2eConfigFileEnvVar)
+	return ""
 }
 
 func e2eIRODSPassword(t *testing.T) string {
@@ -247,28 +198,19 @@ func e2eIRODSPassword(t *testing.T) string {
 		t.Helper()
 	}
 
-	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_IRODS_PASSWORD")); value != "" {
-		return value
+	if cfg := optionalE2ERestConfig(t); cfg != nil && strings.TrimSpace(cfg.IrodsAdminPassword) != "" {
+		return strings.TrimSpace(cfg.IrodsAdminPassword)
 	}
 
-	if cfg := optionalE2EFileConfig(nil); cfg != nil && strings.TrimSpace(cfg.E2E.IRODSPassword) != "" {
-		return strings.TrimSpace(cfg.E2E.IRODSPassword)
-	}
-
-	if e2eUsesProxyUser(t) {
-		t.Fatalf("e2e tests require E2E.IRODSPassword in %s or GOREST_E2E_IRODS_PASSWORD when using a proxy uploader", e2eConfigFileEnvVar)
-	}
-
-	return e2eBasicPassword(t)
+	t.Fatalf("e2e tests require IrodsAdminPassword in %s", e2eConfigFileEnvVar)
+	return ""
 }
 
 func newE2EHTTPClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	skipTLSVerify := strings.EqualFold(strings.TrimSpace(os.Getenv("GOREST_E2E_SKIP_TLS_VERIFY")), "true")
-	if !skipTLSVerify {
-		if cfg := optionalE2EFileConfig(nil); cfg != nil {
-			skipTLSVerify = cfg.E2E.SkipTLSVerify
-		}
+	skipTLSVerify := false
+	if cfg := optionalE2ERestConfig(nil); cfg != nil {
+		skipTLSVerify = cfg.OidcInsecureSkipVerify
 	}
 	if skipTLSVerify {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
@@ -317,18 +259,6 @@ func optionalE2ERestConfig(t *testing.T) *config.RestConfig {
 	return e2eConfigValue
 }
 
-func optionalE2EFileConfig(t *testing.T) *e2eTestConfig {
-	e2eConfigOnce.Do(func() {
-		loadE2EConfigs()
-	})
-
-	if e2eConfigErr != nil && t != nil {
-		t.Fatalf("%v", e2eConfigErr)
-	}
-
-	return e2eFileConfig
-}
-
 func loadE2EConfigs() {
 	configFile := strings.TrimSpace(os.Getenv(e2eConfigFileEnvVar))
 	if configFile == "" {
@@ -340,13 +270,6 @@ func loadE2EConfigs() {
 		e2eConfigErr = err
 		return
 	}
-
-	fileCfg, err := readE2ETestConfig(resolvedPath)
-	if err != nil {
-		e2eConfigErr = fmt.Errorf("read e2e config from %s=%q: %w", e2eConfigFileEnvVar, resolvedPath, err)
-		return
-	}
-	e2eFileConfig = fileCfg
 
 	originalConfigFile := os.Getenv(config.ConfigFileEnvVar)
 	_ = os.Setenv(config.ConfigFileEnvVar, resolvedPath)
@@ -361,21 +284,6 @@ func loadE2EConfigs() {
 	}
 
 	e2eConfigValue = cfg
-}
-
-func readE2ETestConfig(configFile string) (*e2eTestConfig, error) {
-	v := viper.New()
-	v.SetConfigFile(configFile)
-	if err := v.ReadInConfig(); err != nil {
-		return nil, err
-	}
-
-	cfg := &e2eTestConfig{}
-	if err := v.Unmarshal(cfg); err != nil {
-		return nil, err
-	}
-
-	return cfg, nil
 }
 
 func resolveE2EConfigPath(configFile string) (string, error) {

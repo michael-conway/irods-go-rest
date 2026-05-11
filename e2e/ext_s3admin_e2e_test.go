@@ -9,12 +9,15 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 )
 
 func TestS3AdminBucketsLifecycleBasicAuthE2E(t *testing.T) {
+	if !e2eS3APISupported(t) {
+		t.Skip("S3ApiSupported is false in GOREST_E2E_CONFIG_FILE")
+	}
+
 	baseURL := requireE2EBaseURL(t)
 	fixture := requireE2EFixture(t)
 	client := newE2EHTTPClient()
@@ -146,6 +149,10 @@ func TestS3AdminBucketsLifecycleBasicAuthE2E(t *testing.T) {
 }
 
 func TestS3AdminUserSecretsBasicAuthE2E(t *testing.T) {
+	if !e2eS3APISupported(t) {
+		t.Skip("S3ApiSupported is false in GOREST_E2E_CONFIG_FILE")
+	}
+
 	baseURL := requireE2EBaseURL(t)
 	client := newE2EHTTPClient()
 	userSecretsURL := strings.TrimRight(baseURL, "/") + "/api/v1/ext/s3/user-secrets"
@@ -281,16 +288,16 @@ func requestS3AdminE2EAs(t *testing.T, client *http.Client, method string, reque
 }
 
 func e2eS3AdminSecondUsername() string {
-	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_S3_SECOND_USERNAME")); value != "" {
-		return value
+	if cfg := optionalE2ERestConfig(nil); cfg != nil && strings.TrimSpace(cfg.IrodsSecondaryTestUser) != "" {
+		return strings.TrimSpace(cfg.IrodsSecondaryTestUser)
 	}
-	return "test2"
+	return e2eBasicUsername(nil)
 }
 
 func e2eS3AdminSecondPassword(t *testing.T) string {
 	t.Helper()
-	if value := strings.TrimSpace(os.Getenv("GOREST_E2E_S3_SECOND_PASSWORD")); value != "" {
-		return value
+	if cfg := optionalE2ERestConfig(t); cfg != nil && strings.TrimSpace(cfg.IrodsSecondaryTestPassword) != "" {
+		return strings.TrimSpace(cfg.IrodsSecondaryTestPassword)
 	}
 	return e2eBasicPassword(t)
 }

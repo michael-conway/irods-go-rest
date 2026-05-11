@@ -2,6 +2,8 @@ FROM golang:1.25-alpine AS build
 
 WORKDIR /src
 
+ENV GOWORK=off
+
 COPY go.mod ./
 RUN go mod download
 

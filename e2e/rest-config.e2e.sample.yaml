@@ -6,6 +6,10 @@ IrodsPort: 1247
 IrodsZone: tempZone
 IrodsAdminUser: rods
 IrodsAdminPassword: rods
+IrodsPrimaryTestUser: test1
+IrodsPrimaryTestPassword: test
+IrodsSecondaryTestUser: test2
+IrodsSecondaryTestPassword: test2
 IrodsAdminLoginType: native
 IrodsAuthScheme: native
 IrodsNegotiationPolicy: CS_NEG_DONT_CARE
@@ -35,12 +39,4 @@ OidcClientSecret: change-me
 OidcInsecureSkipVerify: false
 OidcRealm: drs
 OidcScope: openid profile email
-
-E2E:
-  BaseURL: http://127.0.0.1:8080
-  BasicUsername: test1
-  BasicPassword: test
-  IRODSUser: rods
-  IRODSPassword: rods
-  SkipTLSVerify: false
-  BearerToken: ""
+TestBearerToken: ""

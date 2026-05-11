@@ -15,35 +15,40 @@ import (
 
 // RestConfig Provides configuration for drs behaviors
 type RestConfig struct {
-	PublicURL                string
-	ListenAddr               string
-	RestLogLevel             string //info, debug
-	IrodsHost                string
-	IrodsPort                int
-	IrodsZone                string
-	IrodsAdminUser           string
-	IrodsAdminPassword       string
-	IrodsAdminPasswordFile   string
-	IrodsAdminLoginType      string
-	IrodsAuthScheme          string
-	IrodsNegotiationPolicy   string
-	IrodsSSLConfig           IrodsSSLConfig
-	IrodsDefaultResource     string
-	TestResource1            string
-	TestResource2            string
-	ResourceAffinity         []string
-	S3ApiSupported           bool
-	S3BucketMappingFile      string
-	S3UserMappingFile        string
-	ReplicaTrimMinCopies     int
-	ReplicaTrimMinAgeMinutes int
-	OidcUrl                  string
-	OidcClientId             string
-	OidcClientSecret         string
-	OidcClientSecretFile     string
-	OidcInsecureSkipVerify   bool
-	OidcRealm                string
-	OidcScope                string
+	PublicURL                  string
+	ListenAddr                 string
+	RestLogLevel               string //info, debug
+	IrodsHost                  string
+	IrodsPort                  int
+	IrodsZone                  string
+	IrodsAdminUser             string
+	IrodsAdminPassword         string
+	IrodsAdminPasswordFile     string
+	IrodsPrimaryTestUser       string
+	IrodsPrimaryTestPassword   string
+	IrodsSecondaryTestUser     string
+	IrodsSecondaryTestPassword string
+	IrodsAdminLoginType        string
+	IrodsAuthScheme            string
+	IrodsNegotiationPolicy     string
+	IrodsSSLConfig             IrodsSSLConfig
+	IrodsDefaultResource       string
+	TestResource1              string
+	TestResource2              string
+	ResourceAffinity           []string
+	S3ApiSupported             bool
+	S3BucketMappingFile        string
+	S3UserMappingFile          string
+	ReplicaTrimMinCopies       int
+	ReplicaTrimMinAgeMinutes   int
+	OidcUrl                    string
+	OidcClientId               string
+	OidcClientSecret           string
+	OidcClientSecretFile       string
+	OidcInsecureSkipVerify     bool
+	OidcRealm                  string
+	OidcScope                  string
+	TestBearerToken            string
 }
 
 type IrodsSSLConfig struct {
@@ -191,6 +196,10 @@ func bindEnvVars(v *viper.Viper) error {
 		"IrodsAdminUser":                         {"GOREST_IRODS_ADMIN_USER", "GOREST_IRODSADMINUSER"},
 		"IrodsAdminPassword":                     {"GOREST_IRODS_ADMIN_PASSWORD", "GOREST_IRODSADMINPASSWORD"},
 		"IrodsAdminPasswordFile":                 {"GOREST_IRODS_ADMIN_PASSWORD_FILE", "GOREST_IRODSADMINPASSWORDFILE"},
+		"IrodsPrimaryTestUser":                   {"GOREST_IRODS_PRIMARY_TEST_USER"},
+		"IrodsPrimaryTestPassword":               {"GOREST_IRODS_PRIMARY_TEST_PASSWORD"},
+		"IrodsSecondaryTestUser":                 {"GOREST_IRODS_SECONDARY_TEST_USER"},
+		"IrodsSecondaryTestPassword":             {"GOREST_IRODS_SECONDARY_TEST_PASSWORD"},
 		"IrodsAdminLoginType":                    {"GOREST_IRODS_ADMIN_LOGIN_TYPE", "GOREST_IRODS_ADMIN_AUTH_SCHEME", "GOREST_IRODSADMINLOGINTYPE"},
 		"IrodsAuthScheme":                        {"GOREST_IRODS_AUTH_SCHEME", "GOREST_IRODSAUTHSCHEME"},
 		"IrodsNegotiationPolicy":                 {"GOREST_IRODS_NEGOTIATION_POLICY", "GOREST_IRODSNEGOTIATIONPOLICY"},
@@ -219,6 +228,7 @@ func bindEnvVars(v *viper.Viper) error {
 		"OidcInsecureSkipVerify":                 {"GOREST_OIDC_INSECURE_SKIP_VERIFY", "GOREST_OIDCINSECURESKIPVERIFY"},
 		"OidcRealm":                              {"GOREST_OIDC_REALM", "GOREST_OIDCREALM"},
 		"OidcScope":                              {"GOREST_OIDC_SCOPE", "GOREST_OIDCSCOPE"},
+		"TestBearerToken":                        {"GOREST_TEST_BEARER_TOKEN"},
 	}
 
 	for key, envNames := range envBindings {

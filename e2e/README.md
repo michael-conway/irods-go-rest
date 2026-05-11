@@ -38,29 +38,15 @@ go test -tags=integration ./internal/irods
 
 The current convention for E2E tests is:
 
-* `GOREST_E2E_CONFIG_FILE` - required single-file config for HTTP E2E and direct `internal/irods` integration runs; may include both normal app config and an `E2E` section with test-only values
-* `GOREST_E2E_BASE_URL` - optional base URL override for the running iRODS REST service; if unset, E2E setup falls back to `E2E.BaseURL` or top-level `PublicURL` from `GOREST_E2E_CONFIG_FILE`
-* `DRS_TEST_BEARER_TOKEN` - bearer token for authenticated endpoint tests
-* `GOREST_E2E_SKIP_TLS_VERIFY` - optional, set to `true` when the docker test framework uses self-signed TLS
-* `GOREST_E2E_BASIC_USERNAME` - optional Basic auth username override; otherwise read from `E2E.BasicUsername`
-* `GOREST_E2E_BASIC_PASSWORD` - optional Basic auth password override; otherwise read from `E2E.BasicPassword`
-* `GOREST_E2E_S3_SECOND_USERNAME` - optional second Basic auth username for S3 user-secret E2E tests; defaults to `test2`
-* `GOREST_E2E_S3_SECOND_PASSWORD` - optional second Basic auth password for S3 user-secret E2E tests; defaults to the normal Basic auth password
-* `GOREST_E2E_IRODS_HOST` - optional direct iRODS host override for fixture upload; if unset, E2E setup falls back to top-level `IrodsHost` from `GOREST_E2E_CONFIG_FILE`
-* `GOREST_E2E_IRODS_PORT` - optional direct iRODS port override for fixture upload; if unset, E2E setup falls back to top-level `IrodsPort` from `GOREST_E2E_CONFIG_FILE`
-* `GOREST_E2E_IRODS_ZONE` - optional iRODS zone override for fixture upload; if unset, E2E setup falls back to top-level `IrodsZone` from `GOREST_E2E_CONFIG_FILE`
-* `GOREST_E2E_IRODS_USER` - optional iRODS fixture-uploader or proxy user; otherwise read from `E2E.IRODSUser`, then falls back to the Basic auth user
-* `GOREST_E2E_IRODS_PASSWORD` - optional uploader or proxy password; otherwise read from `E2E.IRODSPassword`, then falls back to the Basic auth password only when no distinct proxy uploader is configured
+* `GOREST_E2E_CONFIG_FILE` - required single-file config for HTTP E2E and direct `internal/irods` integration runs
+
 Both suites require `GOREST_E2E_CONFIG_FILE`. They do not fall back to
 `IRODS_REST_CONFIG_FILE` or `e2e/rest-config.e2e.sample.yaml` automatically.
 
 ## Shared Config File
 
 When `GOREST_E2E_CONFIG_FILE` is set, the E2E helpers read that file first.
-That file may contain:
-
-* the same top-level app config fields used by `irods-go-rest`
-* an additional `E2E` section for test-only values such as the `test1` credentials
+That file contains all E2E/integration inputs in top-level keys.
 
 For the test side, `GOREST_E2E_CONFIG_FILE` is sufficient by itself. The E2E
 and direct integration helpers treat it as the default app-config source for
@@ -70,10 +56,23 @@ loading:
 * `IrodsHost`
 * `IrodsPort`
 * `IrodsZone`
+* `IrodsAuthScheme`
+* `IrodsDefaultResource`
+* `IrodsAdminUser`
+* `IrodsAdminPassword`
+* `IrodsPrimaryTestUser`
+* `IrodsPrimaryTestPassword`
+* `IrodsSecondaryTestUser`
+* `IrodsSecondaryTestPassword`
+* `TestResource1`
+* `TestResource2`
+* `TestBearerToken`
+* `S3ApiSupported`
 * `OidcUrl`
 * `OidcClientId`
 * `OidcClientSecret`
 * `OidcRealm`
+* `OidcInsecureSkipVerify`
 
 `IRODS_REST_CONFIG_FILE` is optional only if you also want the separately
 running app process to use the same config file. The tests themselves do not
@@ -87,7 +86,7 @@ go test -tags=e2e ./e2e/...
 ```
 
 The sample config assumes the app is reachable at `http://127.0.0.1:8080`.
-It now expects the top-level OIDC fields to be filled in directly.
+It now expects all test credentials and test settings in top-level fields.
 
 Sample combined config:
 
@@ -96,19 +95,16 @@ Sample combined config:
 ## Inputs Not Covered By Current rest-config.yaml
 
 The current checked-in [rest-config.yaml](/Users/conwaymc/Documents/workspace-gabble/irods-go-rest/internal/config/rest-config.yaml)
-does not currently populate the following E2E inputs directly:
+leaves these E2E/integration values blank:
 
-* `DRS_TEST_BEARER_TOKEN`
-* `GOREST_E2E_BASIC_USERNAME`
-* `GOREST_E2E_BASIC_PASSWORD`
-* `GOREST_E2E_IRODS_USER`
-* `GOREST_E2E_IRODS_PASSWORD`
-* `GOREST_E2E_SKIP_TLS_VERIFY`
+* `PublicURL`
+* `IrodsPrimaryTestUser`
+* `IrodsPrimaryTestPassword`
+* `IrodsSecondaryTestUser`
+* `IrodsSecondaryTestPassword`
+* `TestBearerToken`
 
-Those values can now be carried in `GOREST_E2E_CONFIG_FILE` under the `E2E`
-section instead of being exported individually.
-
-It also currently leaves these app config fields blank in the checked-in file,
+It also currently leaves these app config fields blank,
 so they still need to be supplied by environment variables or by a local
 config-file override in real runs:
 
@@ -126,11 +122,10 @@ config-file override in real runs:
 
 Default fixture policy:
 
-* use the configured Basic user and that user-owned fixture paths for general E2E and direct integration coverage
-* switch to admin or proxy-oriented credentials only when the test is explicitly validating admin-backed or proxy-auth behavior
+* use `IrodsPrimaryTestUser` and `IrodsPrimaryTestPassword` for Basic auth requests
+* use `IrodsAdminUser` and `IrodsAdminPassword` for direct fixture setup/proxy flows
 * do not hard-code a shared collection path for path tests; generate a fresh fixture tree before tests and upload it into a per-run iRODS collection
 * when fixture uploader credentials differ from the Basic auth test user, the uploaded fixture should still live under the Basic auth user's home collection so the path tests exercise that user's view
-* if `E2E.IRODSUser` differs from `E2E.BasicUsername`, both suites use an iRODS proxy-account shape for direct iRODS setup while still validating the Basic user's view of the path tree
 
 ## Generated Fixture Tree
 
