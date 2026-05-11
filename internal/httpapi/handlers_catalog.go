@@ -1024,7 +1024,13 @@ func (h *Handler) servePathContents(w http.ResponseWriter, r *http.Request, head
 		}
 	}()
 
-	status, contentRange, start, end, err := resolveByteRange(r.Header.Get("Range"), content)
+	rangeHeader := ""
+	// RFC 7233 §3.1: Range is only defined for GET; ignore for HEAD.
+	if !headOnly {
+		rangeHeader = r.Header.Get("Range")
+	}
+
+	status, contentRange, start, end, err := resolveByteRange(rangeHeader, content)
 	if err != nil {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", content.Size))
 		writeError(w, http.StatusRequestedRangeNotSatisfiable, "invalid_range", err.Error())
@@ -1899,11 +1905,13 @@ func resolveByteRange(rangeHeader string, content domain.ObjectContent) (int, st
 		return http.StatusOK, "", 0, size, nil
 	}
 
-	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(rangeHeader)), "bytes=") {
-		return 0, "", 0, 0, fmt.Errorf("unsupported range unit")
+	trimmedHeader := strings.TrimSpace(rangeHeader)
+	if !strings.HasPrefix(strings.ToLower(trimmedHeader), "bytes=") {
+		// RFC 7233 §3.1: unknown range units must be ignored.
+		return http.StatusOK, "", 0, size, nil
 	}
 
-	spec := strings.TrimSpace(rangeHeader[len("bytes="):])
+	spec := strings.TrimSpace(trimmedHeader[len("bytes="):])
 	if spec == "" || strings.Contains(spec, ",") {
 		return 0, "", 0, 0, fmt.Errorf("only a single byte range is supported")
 	}
@@ -1913,18 +1921,31 @@ func resolveByteRange(rangeHeader string, content domain.ObjectContent) (int, st
 		return 0, "", 0, 0, fmt.Errorf("invalid byte range")
 	}
 
-	if strings.TrimSpace(parts[0]) == "" {
-		return 0, "", 0, 0, fmt.Errorf("suffix byte ranges are not supported")
+	startRaw := strings.TrimSpace(parts[0])
+	endRaw := strings.TrimSpace(parts[1])
+	if startRaw == "" {
+		// Suffix-byte-range-spec: bytes=-N (last N bytes)
+		suffixLength, err := strconv.ParseInt(endRaw, 10, 64)
+		if err != nil || suffixLength <= 0 || size == 0 {
+			return 0, "", 0, 0, fmt.Errorf("invalid byte range end")
+		}
+
+		start := int64(0)
+		if suffixLength < size {
+			start = size - suffixLength
+		}
+		endExclusive := size
+		return http.StatusPartialContent, fmt.Sprintf("bytes %d-%d/%d", start, endExclusive-1, size), start, endExclusive, nil
 	}
 
-	start, err := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
+	start, err := strconv.ParseInt(startRaw, 10, 64)
 	if err != nil || start < 0 || start >= size {
 		return 0, "", 0, 0, fmt.Errorf("invalid byte range start")
 	}
 
 	endExclusive := size
-	if strings.TrimSpace(parts[1]) != "" {
-		endInclusive, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+	if endRaw != "" {
+		endInclusive, err := strconv.ParseInt(endRaw, 10, 64)
 		if err != nil || endInclusive < start {
 			return 0, "", 0, 0, fmt.Errorf("invalid byte range end")
 		}

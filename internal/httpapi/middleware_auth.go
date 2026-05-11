@@ -17,6 +17,7 @@ func (h *Handler) requireBearer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authz, err := authorizationFromRequest(r)
 		if err != nil {
+			setRequestAuthMetadata(w, "none", "")
 			logAuthMiddlewareError("authorization header parse failed", err, r, "phase", "requireBearer")
 			w.Header().Set("WWW-Authenticate", `Bearer realm="irods-go-rest", Basic realm="irods-go-rest"`)
 			writeError(w, http.StatusUnauthorized, "missing_authorization", err.Error())
@@ -25,6 +26,7 @@ func (h *Handler) requireBearer(next http.Handler) http.Handler {
 
 		switch authz.Scheme {
 		case "basic":
+			setRequestAuthMetadata(w, "basic", authz.Username)
 			slog.Debug("http auth resolved basic credentials", "path", r.URL.Path, "username", authz.Username)
 			ctx := auth.WithPrincipal(r.Context(), auth.Principal{
 				Subject:  authz.Username,
@@ -36,6 +38,7 @@ func (h *Handler) requireBearer(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		case "bearer":
+			setRequestAuthMetadata(w, "bearer", "")
 			principal, err := h.verifier.VerifyToken(r.Context(), authz.Token)
 			if err != nil {
 				logAuthMiddlewareError("bearer token verification failed", err, r, "phase", "requireBearer", "auth_scheme", authz.Scheme)
@@ -54,9 +57,11 @@ func (h *Handler) requireBearer(next http.Handler) http.Handler {
 				writeError(w, status, errorCode, err.Error())
 				return
 			}
+			setRequestAuthMetadata(w, "bearer", principal.Username)
 			next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
 			return
 		default:
+			setRequestAuthMetadata(w, "invalid", "")
 			w.Header().Set("WWW-Authenticate", `Bearer realm="irods-go-rest", Basic realm="irods-go-rest"`)
 			writeError(w, http.StatusUnauthorized, "invalid_authorization", "unsupported authorization scheme")
 			return
@@ -67,6 +72,7 @@ func (h *Handler) requireBearer(next http.Handler) http.Handler {
 func (h *Handler) requireDownloadBearer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if ticketID := queryTicketID(r); ticketID != "" {
+			setRequestAuthMetadata(w, "ticket_query", "")
 			slog.Debug("http download auth resolved iRODS ticket from query parameter", "path", r.URL.Path)
 			next.ServeHTTP(w, r.WithContext(auth.WithTicket(r.Context(), ticketID)))
 			return
@@ -74,6 +80,7 @@ func (h *Handler) requireDownloadBearer(next http.Handler) http.Handler {
 
 		authz, err := authorizationFromRequest(r)
 		if err != nil {
+			setRequestAuthMetadata(w, "none", "")
 			logAuthMiddlewareError("authorization header parse failed", err, r, "phase", "requireDownloadBearer")
 			w.Header().Set("WWW-Authenticate", `Bearer realm="irods-go-rest", Basic realm="irods-go-rest"`)
 			writeError(w, http.StatusUnauthorized, "missing_authorization", err.Error())
@@ -82,6 +89,7 @@ func (h *Handler) requireDownloadBearer(next http.Handler) http.Handler {
 
 		switch authz.Scheme {
 		case "basic":
+			setRequestAuthMetadata(w, "basic", authz.Username)
 			slog.Debug("http download auth resolved basic credentials", "path", r.URL.Path, "username", authz.Username)
 			ctx := auth.WithPrincipal(r.Context(), auth.Principal{
 				Subject:  authz.Username,
@@ -93,11 +101,13 @@ func (h *Handler) requireDownloadBearer(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		case "bearer-ticket":
+			setRequestAuthMetadata(w, "ticket_bearer", "")
 			slog.Debug("http download auth resolved iRODS ticket", "path", r.URL.Path)
 			ticket := authz.Token
 			next.ServeHTTP(w, r.WithContext(auth.WithTicket(r.Context(), ticket)))
 			return
 		case "bearer":
+			setRequestAuthMetadata(w, "bearer", "")
 			principal, err := h.verifier.VerifyToken(r.Context(), authz.Token)
 			if err != nil {
 				logAuthMiddlewareError("download bearer token verification failed", err, r, "phase", "requireDownloadBearer", "auth_scheme", authz.Scheme)
@@ -117,9 +127,11 @@ func (h *Handler) requireDownloadBearer(next http.Handler) http.Handler {
 				return
 			}
 
+			setRequestAuthMetadata(w, "bearer", principal.Username)
 			next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
 			return
 		default:
+			setRequestAuthMetadata(w, "invalid", "")
 			w.Header().Set("WWW-Authenticate", `Bearer realm="irods-go-rest", Basic realm="irods-go-rest"`)
 			writeError(w, http.StatusUnauthorized, "invalid_authorization", "unsupported authorization scheme")
 			return

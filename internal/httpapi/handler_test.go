@@ -6,12 +6,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -167,6 +169,109 @@ func TestAPIRequiresBearerToken(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestMutatingEndpointsRequireAuthentication(t *testing.T) {
+	handler := testHandler(t)
+
+	tests := []struct {
+		name        string
+		method      string
+		target      string
+		body        string
+		contentType string
+	}{
+		{
+			name:        "create user",
+			method:      http.MethodPost,
+			target:      "/api/v1/user",
+			body:        `{"name":"charlie","type":"rodsuser"}`,
+			contentType: "application/json",
+		},
+		{
+			name:        "update user",
+			method:      http.MethodPut,
+			target:      "/api/v1/user/bob",
+			body:        `{"type":"rodsadmin"}`,
+			contentType: "application/json",
+		},
+		{
+			name:   "delete user",
+			method: http.MethodDelete,
+			target: "/api/v1/user/bob",
+		},
+		{
+			name:        "create usergroup",
+			method:      http.MethodPost,
+			target:      "/api/v1/usergroup",
+			body:        `{"name":"science"}`,
+			contentType: "application/json",
+		},
+		{
+			name:   "delete usergroup",
+			method: http.MethodDelete,
+			target: "/api/v1/usergroup/research-team",
+		},
+		{
+			name:        "add usergroup member",
+			method:      http.MethodPost,
+			target:      "/api/v1/usergroup/research-team/member",
+			body:        `{"user_name":"bob"}`,
+			contentType: "application/json",
+		},
+		{
+			name:   "remove usergroup member",
+			method: http.MethodDelete,
+			target: "/api/v1/usergroup/research-team/member/alice",
+		},
+		{
+			name:        "create path ticket",
+			method:      http.MethodPost,
+			target:      "/api/v1/path/ticket?irods_path=/tempZone/home/test1/file.txt",
+			body:        `{"maximum_uses":5}`,
+			contentType: "application/json",
+		},
+		{
+			name:        "create ticket",
+			method:      http.MethodPost,
+			target:      "/api/v1/ticket",
+			body:        `{"irods_path":"/tempZone/home/test1/file.txt"}`,
+			contentType: "application/json",
+		},
+		{
+			name:        "update ticket",
+			method:      http.MethodPatch,
+			target:      "/api/v1/ticket/ticket-existing",
+			body:        `{"maximum_uses":1}`,
+			contentType: "application/json",
+		},
+		{
+			name:   "delete ticket",
+			method: http.MethodDelete,
+			target: "/api/v1/ticket/ticket-existing",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var bodyReader io.Reader
+			if tc.body != "" {
+				bodyReader = strings.NewReader(tc.body)
+			}
+
+			req := httptest.NewRequest(tc.method, tc.target, bodyReader)
+			if tc.contentType != "" {
+				req.Header.Set("Content-Type", tc.contentType)
+			}
+			rec := httptest.NewRecorder()
+
+			handler.Routes().ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -1700,6 +1805,51 @@ func TestGetPathContentsSupportsRangeRequests(t *testing.T) {
 	}
 }
 
+func TestGetPathContentsSupportsSuffixRangeRequests(t *testing.T) {
+	handler, filesystem := testHandlerWithConfig(t, nil)
+	filePath := "/tempZone/home/test1/file.txt"
+	fileContent := filesystem.contentByPath[filePath]
+	filesystem.entriesByPath[filePath].Size = int64(len(fileContent))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Range", "bytes=-7")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusPartialContent {
+		t.Fatalf("expected 206, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Range"); got == "" {
+		t.Fatal("expected Content-Range header")
+	}
+	if body := rec.Body.String(); body != "payload" {
+		t.Fatalf("unexpected ranged content body %q", body)
+	}
+}
+
+func TestGetPathContentsIgnoresUnknownRangeUnit(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Range", "items=0-3")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Range"); got != "" {
+		t.Fatalf("expected no Content-Range header, got %q", got)
+	}
+	if body := rec.Body.String(); body != "hello content payload" {
+		t.Fatalf("unexpected content body %q", body)
+	}
+}
+
 func TestHeadPathContentsReturnsHeadersOnly(t *testing.T) {
 	handler := testHandler(t)
 
@@ -1728,6 +1878,27 @@ func TestHeadPathContentsReturnsHeadersOnly(t *testing.T) {
 	}
 }
 
+func TestHeadPathContentsIgnoresRangeHeader(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodHead, "/api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Range", "bytes=1-4")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("expected empty body for HEAD, got %q", rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Range"); got != "" {
+		t.Fatalf("expected no Content-Range header for HEAD, got %q", got)
+	}
+}
+
 func TestGetPathContentsRejectsInvalidRange(t *testing.T) {
 	handler := testHandler(t)
 
@@ -1746,6 +1917,55 @@ func TestGetPathContentsRejectsInvalidRange(t *testing.T) {
 	}
 	if body := rec.Body.String(); !containsAll(body, `"code":"invalid_range"`) {
 		t.Fatalf("unexpected invalid range response body: %q", body)
+	}
+}
+
+func TestGetPathContentsStreamsLargeObject(t *testing.T) {
+	handler, filesystem := testHandlerWithConfig(t, nil)
+
+	largePath := "/tempZone/home/test1/large.bin"
+	largePayload := bytes.Repeat([]byte("0123456789abcdef"), 65536) // 1 MiB
+	now := time.Unix(1_700_000_005, 0)
+	largeEntry := &irodsfs.Entry{
+		ID:         5001,
+		Type:       irodsfs.FileEntry,
+		Name:       "large.bin",
+		Owner:      "alice",
+		Path:       largePath,
+		Size:       int64(len(largePayload)),
+		DataType:   "generic",
+		CreateTime: now,
+		ModifyTime: now,
+	}
+	filesystem.entriesByPath[largePath] = largeEntry
+	filesystem.contentByPath[largePath] = largePayload
+	filesystem.childrenByPath["/tempZone/home/test1"] = append(filesystem.childrenByPath["/tempZone/home/test1"], largeEntry)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path/contents?irods_path=/tempZone/home/test1/large.bin", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Accept-Ranges"); got != "bytes" {
+		t.Fatalf("expected Accept-Ranges header, got %q", got)
+	}
+	if got := rec.Header().Get("Content-Length"); got != strconv.Itoa(len(largePayload)) {
+		t.Fatalf("expected Content-Length %d, got %q", len(largePayload), got)
+	}
+
+	body := rec.Body.Bytes()
+	if len(body) != len(largePayload) {
+		t.Fatalf("expected %d bytes, got %d", len(largePayload), len(body))
+	}
+	if !bytes.Equal(body[:64], largePayload[:64]) {
+		t.Fatalf("unexpected prefix bytes in streamed payload")
+	}
+	if !bytes.Equal(body[len(body)-64:], largePayload[len(largePayload)-64:]) {
+		t.Fatalf("unexpected suffix bytes in streamed payload")
 	}
 }
 
@@ -3779,6 +3999,23 @@ func TestDeleteUserGroupRemovesAsGroupAdmin(t *testing.T) {
 	}
 }
 
+func TestDeleteUserGroupRequiresAdminOrGroupAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/usergroup/research-team", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"code":"permission_denied"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
 func TestPostUserGroupMemberAddsUserAsGroupAdmin(t *testing.T) {
 	handler := testHandler(t)
 
@@ -3797,6 +4034,24 @@ func TestPostUserGroupMemberAddsUserAsGroupAdmin(t *testing.T) {
 	}
 }
 
+func TestPostUserGroupMemberRequiresAdminOrGroupAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/usergroup/research-team/member", strings.NewReader(`{"user_name":"bob"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"code":"permission_denied"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
 func TestDeleteUserGroupMemberRemovesUserAsGroupAdmin(t *testing.T) {
 	handler := testHandler(t)
 
@@ -3811,5 +4066,22 @@ func TestDeleteUserGroupMemberRemovesUserAsGroupAdmin(t *testing.T) {
 	}
 	if body := rec.Body.String(); strings.Contains(body, `"name":"alice"`) {
 		t.Fatalf("expected alice to be removed, got %q", body)
+	}
+}
+
+func TestDeleteUserGroupMemberRequiresAdminOrGroupAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/usergroup/research-team/member/alice", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"code":"permission_denied"`) {
+		t.Fatalf("unexpected response body: %q", body)
 	}
 }
