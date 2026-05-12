@@ -141,14 +141,56 @@ func pathValue(r *http.Request, key string) string {
 	return strings.TrimSpace(r.PathValue(key))
 }
 
-func (h *Handler) getOpenAPISpec(w http.ResponseWriter, _ *http.Request) {
+func (h *Handler) getOpenAPISpec(w http.ResponseWriter, r *http.Request) {
+	specBytes := api.OpenAPISpec
+	if serverURL := openAPIServerURL(r, h.cfg.PublicURL); serverURL != "" {
+		specBytes = []byte(strings.Replace(string(api.OpenAPISpec), "url: http://localhost:8080", "url: "+serverURL, 1))
+	}
+
 	w.Header().Set("Content-Type", "application/yaml")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(api.OpenAPISpec)
+	_, _ = w.Write(specBytes)
 }
 
 func (h *Handler) getSwaggerUI(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(swaggerUIHTML))
+}
+
+func openAPIServerURL(r *http.Request, fallbackPublicURL string) string {
+	host := requestHost(r)
+	if host == "" {
+		return strings.TrimRight(strings.TrimSpace(fallbackPublicURL), "/")
+	}
+
+	return requestScheme(r) + "://" + host
+}
+
+func requestHost(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+
+	if forwardedHost := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); forwardedHost != "" {
+		return forwardedHost
+	}
+
+	return strings.TrimSpace(r.Host)
+}
+
+func requestScheme(r *http.Request) string {
+	if r == nil {
+		return "http"
+	}
+
+	if forwardedProto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwardedProto != "" {
+		return forwardedProto
+	}
+
+	if r.TLS != nil {
+		return "https"
+	}
+
+	return "http"
 }

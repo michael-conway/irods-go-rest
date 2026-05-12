@@ -62,6 +62,46 @@ func TestOpenAPISpec(t *testing.T) {
 	}
 }
 
+func TestOpenAPISpecUsesRequestHost(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
+	req.Host = "rest.example.org:18082"
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "url: http://rest.example.org:18082") {
+		t.Fatalf("expected request host in openapi server url, got %q", body)
+	}
+}
+
+func TestOpenAPISpecUsesForwardedHostAndProto(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
+	req.Host = "internal:8080"
+	req.Header.Set("X-Forwarded-Host", "rest.example.org")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "url: https://rest.example.org") {
+		t.Fatalf("expected forwarded host and proto in openapi server url, got %q", body)
+	}
+}
+
 func TestSwaggerUI(t *testing.T) {
 	handler := testHandler(t)
 
