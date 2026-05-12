@@ -1877,10 +1877,26 @@ func TestGetMissingPathBasicAuthE2E(t *testing.T) {
 
 func TestGetPathContentsRangeBasicAuthE2E(t *testing.T) {
 	baseURL := requireE2EBaseURL(t)
-	fixture := requireE2EFixture(t)
 	client := newE2EHTTPClient()
+	filesystem := newE2EIRODSFilesystem(t)
+	defer filesystem.Release()
 
-	req := newE2ERequest(t, http.MethodGet, pathURL(baseURL, "/api/v1/path/contents", fixture.objectPath), nil)
+	objectPath := irodsJoin(
+		"/"+e2eIRODSZone(t)+"/home/"+e2eBasicUsername(t),
+		"e2e-range-"+randomToken(nil, 8)+".txt",
+	)
+	content := "0123456789abcdef range e2e payload\n"
+
+	if _, err := filesystem.UploadFileFromBuffer(bytes.NewBufferString(content), objectPath, "", false, true, nil); err != nil {
+		t.Fatalf("upload range e2e object %q: %v", objectPath, err)
+	}
+	defer func() {
+		if err := filesystem.RemoveFile(objectPath, true); err != nil && filesystem.Exists(objectPath) {
+			t.Errorf("cleanup range e2e object %q: %v", objectPath, err)
+		}
+	}()
+
+	req := newE2ERequest(t, http.MethodGet, pathURL(baseURL, "/api/v1/path/contents", objectPath), nil)
 	req.Header.Set("Range", "bytes=0-15")
 	setBasicAuth(req)
 
@@ -1915,6 +1931,9 @@ func TestGetPathContentsRangeBasicAuthE2E(t *testing.T) {
 	}
 	if len(body) != 16 {
 		t.Fatalf("expected 16 bytes, got %d", len(body))
+	}
+	if string(body) != content[:16] {
+		t.Fatalf("expected ranged body %q, got %q", content[:16], string(body))
 	}
 }
 
