@@ -1,6 +1,12 @@
 # E2E Tests
 
-This directory is reserved for end-to-end tests that run against the real iRODS REST HTTP service and the docker compose test framework.
+This directory is reserved for end-to-end tests that run against the real iRODS
+REST HTTP service and a reachable iRODS test grid.
+
+The preferred local grid is now `irods-grid-stack`. The older
+`deployments/docker-test-framework/` stack in this repository is deprecated and
+kept only as a compatibility fixture while REST and DRS development workflows
+move to the shared grid stack.
 
 These tests are intended to exercise the full stack:
 
@@ -85,8 +91,12 @@ export GOREST_E2E_CONFIG_FILE=./e2e/rest-config.e2e.sample.yaml
 go test -tags=e2e ./e2e/...
 ```
 
-The sample config assumes the app is reachable at `http://127.0.0.1:8080`.
-It now expects all test credentials and test settings in top-level fields.
+The sample config assumes the app is reachable at `http://127.0.0.1:8080` and
+uses the default host-facing `irods-grid-stack` ports and resource names. It
+expects all test credentials and test settings in top-level fields. The S3
+mapping file values are absolute-path placeholders; replace
+`/absolute/path/to/irods-grid-stack` with the local grid-stack checkout path
+before running S3 admin E2E tests.
 
 Sample combined config:
 
@@ -146,8 +156,29 @@ Fixture generation rules:
 
 ## Source of Truth
 
-The docker-compose-backed test environment is under:
+The docker-compose-backed test environment is `irods-grid-stack`:
+
+```bash
+cd ../irods-grid-stack
+cp .env.example .env
+
+# Backend-only grid for local REST/DRS development from source.
+docker compose up -d --build
+
+# Full demo stack including REST, DRS, and Starbase containers.
+docker compose --profile frontend up -d --build
+```
+
+Use the backend-only mode when you want to run `irods-go-rest` locally from this
+repository while reusing grid-stack iRODS, Keycloak, and S3 services. Use the
+`frontend` profile when E2E tests should target the containerized REST service
+on the configured host port.
+
+The legacy in-repository compose stack remains under:
 
 * `deployments/docker-test-framework/5-0`
+
+It should not receive new feature work unless a short-term compatibility fix is
+needed.
 
 Use `DEVELOPER_NOTES.md` for the higher-level testing taxonomy and environment setup guidance.

@@ -81,21 +81,34 @@ users, admin credentials, and `TestBearerToken`).
 
 ## Docker test stack
 
-The local Docker test framework is under:
+Prefer `irods-grid-stack` for current local development and live-test runs.
+It can run as a backend-only grid for source-level REST/DRS development, or as
+a full demo stack with REST, DRS, and Starbase containers.
 
-```text
-deployments/docker-test-framework/5-0
-```
-
-It is for development and testing, not production.
-
-Typical local flow:
+Backend-only grid:
 
 ```bash
-cd deployments/docker-test-framework/5-0
-docker compose build
-docker compose up
+cd ../irods-grid-stack
+cp .env.example .env
+docker compose up -d --build
 ```
+
+Full demo stack:
+
+```bash
+docker compose --profile frontend up -d --build
+```
+
+For host-run tests in this repository, use a host-facing config such as:
+
+```bash
+export GOREST_E2E_CONFIG_FILE=./e2e/rest-config.e2e.sample.yaml
+```
+
+The older in-repository Docker test framework remains under
+`deployments/docker-test-framework/5-0` as a compatibility fixture only. Do not
+add new environment features there unless a short-term compatibility fix is
+needed.
 
 ## Working rules
 
