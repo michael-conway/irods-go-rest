@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,9 +22,11 @@ import (
 	irodsfs "github.com/cyverse/go-irodsclient/fs"
 	irodscommon "github.com/cyverse/go-irodsclient/irods/common"
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
+	metadataext "github.com/michael-conway/go-irodsclient-extensions/metadata"
 	s3adminext "github.com/michael-conway/go-irodsclient-extensions/s3admin"
 	"github.com/michael-conway/irods-go-rest/internal/auth"
 	"github.com/michael-conway/irods-go-rest/internal/config"
+	"github.com/michael-conway/irods-go-rest/internal/domain"
 	"github.com/michael-conway/irods-go-rest/internal/irods"
 	"github.com/michael-conway/irods-go-rest/internal/restservice"
 )
@@ -852,6 +855,111 @@ func TestGetPathChildrenSearchRejectsRecursiveAlias(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestPostPathQueryAVUShorthandReturnsPagedUnifiedPaths(t *testing.T) {
+	handler := testHandler(t)
+
+	body := `{"irods_path":"/tempZone/home/test1","search_scope":"children","kinds":["data_object","collection"],"avu":{"attrib":"source","value":"test","unit":"*"},"limit":1,"include_matched_avus":true}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/query", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var firstPage struct {
+		Paths []domain.PathEntry `json:"paths"`
+		Page  struct {
+			HasMore       bool   `json:"has_more"`
+			NextPageToken string `json:"next_page_token"`
+		} `json:"page"`
+		MatchedAVUs map[string][]domain.AVUMetadata `json:"matched_avus"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &firstPage); err != nil {
+		t.Fatalf("decode first query page: %v", err)
+	}
+	if len(firstPage.Paths) != 1 {
+		t.Fatalf("expected one path on first page, got %+v", firstPage.Paths)
+	}
+	if firstPage.Paths[0].Path != "/tempZone/home/test1/project" || firstPage.Paths[0].Kind != "collection" {
+		t.Fatalf("unexpected first page path: %+v", firstPage.Paths[0])
+	}
+	if !firstPage.Page.HasMore || strings.TrimSpace(firstPage.Page.NextPageToken) == "" {
+		t.Fatalf("expected first page to include a next page token: %+v", firstPage.Page)
+	}
+	if len(firstPage.MatchedAVUs[firstPage.Paths[0].Path]) != 1 {
+		t.Fatalf("expected matched AVU details for first path, got %+v", firstPage.MatchedAVUs)
+	}
+
+	secondBody := `{"irods_path":"/tempZone/home/test1","search_scope":"children","kinds":["data_object","collection"],"avu":{"attrib":"source","value":"test","unit":"*"},"limit":1,"include_matched_avus":true,"page_token":"` + firstPage.Page.NextPageToken + `"}`
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/path/query", strings.NewReader(secondBody))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for second page, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var secondPage struct {
+		Paths []domain.PathEntry `json:"paths"`
+		Page  struct {
+			HasMore bool `json:"has_more"`
+		} `json:"page"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &secondPage); err != nil {
+		t.Fatalf("decode second query page: %v", err)
+	}
+	if len(secondPage.Paths) != 1 || secondPage.Paths[0].Path != "/tempZone/home/test1/file.txt" {
+		t.Fatalf("expected second page file match, got %+v", secondPage.Paths)
+	}
+	if secondPage.Page.HasMore {
+		t.Fatalf("expected second page to exhaust results: %+v", secondPage.Page)
+	}
+	if len(secondPage.Paths[0].Replicas) != 0 {
+		t.Fatalf("expected query path response to omit replicas by default, got %+v", secondPage.Paths[0].Replicas)
+	}
+}
+
+func TestPostPathQuerySupportsFileConditions(t *testing.T) {
+	handler := testHandler(t)
+
+	body := `{"irods_path":"/tempZone/home/test1/project","search_scope":"children","kinds":["data_object"],"conditions":[{"field":"name","op":"like","value":"child*"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/query", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !containsAll(body, `"paths":[`, `"/tempZone/home/test1/project/child.txt"`, `"kind":"data_object"`, `"search_scope":"children"`) {
+		t.Fatalf("unexpected path query response body: %q", body)
+	}
+}
+
+func TestPostPathQueryRejectsInvalidPageToken(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/query", strings.NewReader(`{"page_token":"not valid"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -3175,6 +3283,265 @@ func (f *testCatalogFileSystem) SearchByMeta(metaName string, metaValue string) 
 		}
 	}
 	return entries, nil
+}
+
+func (f *testCatalogFileSystem) QueryMetadataEntries(query metadataext.EntryQuery) (metadataext.EntryQueryResult, error) {
+	return queryMetadataEntriesForTest(f.entriesByPath, f.metadataByPath, query)
+}
+
+func queryMetadataEntriesForTest(entriesByPath map[string]*irodsfs.Entry, metadataByPath map[string][]*irodstypes.IRODSMeta, query metadataext.EntryQuery) (metadataext.EntryQueryResult, error) {
+	normalized, err := metadataext.NormalizeEntryQuery(query)
+	if err != nil {
+		return metadataext.EntryQueryResult{}, err
+	}
+
+	collections := matchingMetadataQueryEntriesForTest(entriesByPath, metadataByPath, normalized, metadataext.EntryKindCollection)
+	dataObjects := matchingMetadataQueryEntriesForTest(entriesByPath, metadataByPath, normalized, metadataext.EntryKindDataObject)
+
+	result := metadataext.EntryQueryResult{
+		Entries: []*metadataext.Entry{},
+		Page: metadataext.EntryQueryPage{
+			Limit: normalized.Limit,
+		},
+	}
+	if normalized.IncludeMatchedAVUs {
+		result.MatchedAVUs = map[string][]metadataext.AVUStat{}
+	}
+
+	cursor := metadataext.EntryQueryCursor{}
+	if normalized.Cursor != nil {
+		cursor = *normalized.Cursor
+	}
+	phase := cursor.Phase
+	if phase == "" {
+		if metadataext.EntryQueryHasKind(normalized, metadataext.EntryKindCollection) {
+			phase = metadataext.EntryQueryPhaseCollections
+		} else {
+			phase = metadataext.EntryQueryPhaseDataObjects
+		}
+	}
+
+	next := cursor
+	remaining := normalized.Limit
+	hasMore := false
+	if phase == metadataext.EntryQueryPhaseCollections && metadataext.EntryQueryHasKind(normalized, metadataext.EntryKindCollection) && !cursor.Collections.Exhausted {
+		added := appendMetadataQueryPageForTest(&result, collections, cursor.Collections.Offset, remaining, normalized.IncludeMatchedAVUs)
+		next.Collections.Offset += added
+		result.Page.Returned.Collections += added
+		result.Page.Scanned.Collections = len(collections)
+		remaining -= added
+		if next.Collections.Offset < len(collections) {
+			hasMore = true
+			next.Phase = metadataext.EntryQueryPhaseCollections
+		} else {
+			next.Collections.Exhausted = true
+			phase = metadataext.EntryQueryPhaseDataObjects
+			next.Phase = metadataext.EntryQueryPhaseDataObjects
+		}
+	}
+	if !hasMore && phase == metadataext.EntryQueryPhaseDataObjects && metadataext.EntryQueryHasKind(normalized, metadataext.EntryKindDataObject) && !cursor.DataObjects.Exhausted {
+		added := appendMetadataQueryPageForTest(&result, dataObjects, cursor.DataObjects.Offset, remaining, normalized.IncludeMatchedAVUs)
+		next.DataObjects.Offset += added
+		result.Page.Returned.DataObjects += added
+		result.Page.Scanned.DataObjects = len(dataObjects)
+		remaining -= added
+		if next.DataObjects.Offset < len(dataObjects) {
+			hasMore = true
+			next.Phase = metadataext.EntryQueryPhaseDataObjects
+		} else {
+			next.DataObjects.Exhausted = true
+			next.Phase = metadataext.EntryQueryPhaseDone
+		}
+	}
+	if !hasMore && remaining == 0 && phase == metadataext.EntryQueryPhaseDataObjects && metadataext.EntryQueryHasKind(normalized, metadataext.EntryKindDataObject) && !next.DataObjects.Exhausted && next.DataObjects.Offset < len(dataObjects) {
+		hasMore = true
+		next.Phase = metadataext.EntryQueryPhaseDataObjects
+	}
+
+	if normalized.IncludeTotals {
+		totals := metadataext.EntryQueryCounts{
+			Collections: len(collections),
+			DataObjects: len(dataObjects),
+		}
+		result.Page.Totals = &totals
+	}
+	result.Page.HasMore = hasMore
+	if hasMore {
+		result.Page.Next = &next
+	}
+	return result, nil
+}
+
+type metadataQueryTestMatch struct {
+	entry *metadataext.Entry
+	avus  []metadataext.AVUStat
+}
+
+func matchingMetadataQueryEntriesForTest(entriesByPath map[string]*irodsfs.Entry, metadataByPath map[string][]*irodstypes.IRODSMeta, query metadataext.EntryQuery, kind metadataext.EntryKind) []metadataQueryTestMatch {
+	if !metadataext.EntryQueryHasKind(query, kind) {
+		return nil
+	}
+
+	paths := make([]string, 0, len(entriesByPath))
+	for irodsPath := range entriesByPath {
+		paths = append(paths, irodsPath)
+	}
+	sort.Strings(paths)
+
+	matches := []metadataQueryTestMatch{}
+	for _, irodsPath := range paths {
+		entry := entriesByPath[irodsPath]
+		if entry == nil {
+			continue
+		}
+		if kind == metadataext.EntryKindCollection && !entry.IsDir() {
+			continue
+		}
+		if kind == metadataext.EntryKindDataObject && entry.IsDir() {
+			continue
+		}
+		if !metadataQueryScopeMatchesForTest(entry, query.Scope) {
+			continue
+		}
+		avus, ok := metadataQueryConditionsMatchForTest(entry, metadataByPath[entry.Path], query.Conditions)
+		if !ok {
+			continue
+		}
+		matches = append(matches, metadataQueryTestMatch{entry: entry, avus: avus})
+	}
+	return matches
+}
+
+func appendMetadataQueryPageForTest(result *metadataext.EntryQueryResult, matches []metadataQueryTestMatch, offset int, limit int, includeMatchedAVUs bool) int {
+	if limit <= 0 || offset >= len(matches) {
+		return 0
+	}
+	added := 0
+	for idx := offset; idx < len(matches) && added < limit; idx++ {
+		match := matches[idx]
+		result.Entries = append(result.Entries, match.entry)
+		added++
+		if includeMatchedAVUs {
+			for _, avu := range match.avus {
+				result.MatchedAVUs[match.entry.Path] = append(result.MatchedAVUs[match.entry.Path], avu)
+			}
+		}
+	}
+	return added
+}
+
+func metadataQueryScopeMatchesForTest(entry *irodsfs.Entry, scope *metadataext.EntryQueryScope) bool {
+	if scope == nil || scope.Mode == metadataext.EntryQueryScopeAbsolute {
+		return true
+	}
+	root := strings.TrimRight(scope.Root, "/")
+	switch scope.Mode {
+	case metadataext.EntryQueryScopeSelf:
+		return entry.IsDir() && entry.Path == root
+	case metadataext.EntryQueryScopeChildren:
+		return path.Dir(path.Clean(entry.Path)) == root
+	case metadataext.EntryQueryScopeDescendants:
+		if entry.IsDir() {
+			return strings.HasPrefix(path.Clean(entry.Path), root+"/")
+		}
+		return strings.HasPrefix(path.Dir(path.Clean(entry.Path)), root+"/")
+	default:
+		return false
+	}
+}
+
+func metadataQueryConditionsMatchForTest(entry *irodsfs.Entry, metadataList []*irodstypes.IRODSMeta, conditions []metadataext.EntryCondition) ([]metadataext.AVUStat, bool) {
+	avuConditions := []metadataext.EntryCondition{}
+	for _, condition := range conditions {
+		switch condition.Field {
+		case metadataext.FieldAVUAttrib, metadataext.FieldAVUValue, metadataext.FieldAVUUnit:
+			avuConditions = append(avuConditions, condition)
+		default:
+			if !metadataQueryEntryConditionMatchesForTest(entry, condition) {
+				return nil, false
+			}
+		}
+	}
+
+	if len(avuConditions) == 0 {
+		return nil, true
+	}
+
+	matchedAVUs := []metadataext.AVUStat{}
+	for _, avu := range metadataList {
+		if avu == nil {
+			continue
+		}
+		if metadataQueryAVUMatchesForTest(avu, avuConditions) {
+			matchedAVUs = append(matchedAVUs, metadataext.AVUStat{
+				Name:       avu.Name,
+				Value:      avu.Value,
+				Units:      avu.Units,
+				CreateTime: avu.CreateTime,
+				ModifyTime: avu.ModifyTime,
+			})
+		}
+	}
+	return matchedAVUs, len(matchedAVUs) > 0
+}
+
+func metadataQueryEntryConditionMatchesForTest(entry *irodsfs.Entry, condition metadataext.EntryCondition) bool {
+	switch condition.Field {
+	case metadataext.FieldPath:
+		return metadataQueryStringMatchesForTest(entry.Path, condition)
+	case metadataext.FieldName:
+		return metadataQueryStringMatchesForTest(entry.Name, condition)
+	case metadataext.FieldOwner:
+		return metadataQueryStringMatchesForTest(entry.Owner, condition)
+	case metadataext.FieldDataType:
+		return metadataQueryStringMatchesForTest(entry.DataType, condition)
+	case metadataext.FieldResource:
+		return metadataQueryStringMatchesForTest(firstReplicaResourceNameForTest(entry), condition)
+	case metadataext.FieldChecksum:
+		return metadataQueryStringMatchesForTest(string(entry.CheckSum), condition)
+	default:
+		return false
+	}
+}
+
+func metadataQueryAVUMatchesForTest(avu *irodstypes.IRODSMeta, conditions []metadataext.EntryCondition) bool {
+	for _, condition := range conditions {
+		var value string
+		switch condition.Field {
+		case metadataext.FieldAVUAttrib:
+			value = avu.Name
+		case metadataext.FieldAVUValue:
+			value = avu.Value
+		case metadataext.FieldAVUUnit:
+			value = avu.Units
+		default:
+			return false
+		}
+		if !metadataQueryStringMatchesForTest(value, condition) {
+			return false
+		}
+	}
+	return true
+}
+
+func metadataQueryStringMatchesForTest(value string, condition metadataext.EntryCondition) bool {
+	switch condition.Op {
+	case metadataext.OpEqual:
+		return value == condition.Value
+	case metadataext.OpLike:
+		pattern := strings.ReplaceAll(condition.Value, "%", "*")
+		ok, err := path.Match(pattern, value)
+		return err == nil && ok
+	default:
+		return false
+	}
+}
+
+func firstReplicaResourceNameForTest(entry *irodsfs.Entry) string {
+	if entry == nil || len(entry.IRODSReplicas) == 0 {
+		return ""
+	}
+	return entry.IRODSReplicas[0].ResourceName
 }
 
 func (f *testCatalogFileSystem) AddMetadata(irodsPath string, attName string, attValue string, attUnits string) error {

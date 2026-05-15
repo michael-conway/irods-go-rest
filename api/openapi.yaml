@@ -1012,6 +1012,82 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/path/query:
+    post:
+      operationId: postPathQuery
+      tags: [path]
+      summary: Query paths by metadata or entry fields
+      description: |
+        Executes a metadata entry query over iRODS collections and data objects
+        and returns the matches as canonical path entries. This route is for
+        AVU and entry-field discovery; structural collection listings remain on
+        `/api/v1/path/children`.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PathQueryRequest"
+            examples:
+              avuDescendants:
+                summary: AVU wildcard query under a collection
+                value:
+                  irods_path: /tempZone/home/alice
+                  search_scope: descendants
+                  kinds: [data_object, collection]
+                  conditions:
+                    - field: avu.attrib
+                      op: "="
+                      value: foo:bar
+                    - field: avu.value
+                      op: like
+                      value: frog*
+                  limit: 100
+              avuShorthand:
+                summary: AVU shorthand query
+                value:
+                  irods_path: /tempZone/home/alice
+                  search_scope: children
+                  kinds: [collection]
+                  avu:
+                    attrib: iRODS:S3:BUCKET
+                    value: "*"
+                    unit: "*"
+                  include_matched_avus: true
+      responses:
+        "200":
+          description: Query results as unified path entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathQueryResponse"
+        "400":
+          description: Invalid query request or page token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied for the requested query scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Query scope path not found or not a collection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/path/replicas:
     get:
       operationId: getPathReplicas
@@ -3522,6 +3598,179 @@ components:
         matched_count:
           type: integer
           minimum: 0
+    PathQueryRequest:
+      type: object
+      properties:
+        version:
+          type: string
+          description: Optional metadata query definition version. Defaults to `metadata.entry_query.v1`.
+        type:
+          type: string
+          enum: [entry_query, avu_query]
+          description: Optional metadata query definition type. Defaults to `entry_query`.
+        irods_path:
+          type: string
+          description: Absolute collection path used with `search_scope`. Use either this shortcut or `scope`, not both.
+        search_scope:
+          type: string
+          enum: [self, children, descendants, absolute]
+          default: children
+          description: Query scope for `irods_path`. `descendants` searches below the scoped collection and does not include direct child data objects at the root.
+        scope:
+          $ref: "#/components/schemas/EntryQueryScope"
+        kinds:
+          type: array
+          description: Entry branches to query. Empty means both collections and data objects.
+          items:
+            type: string
+            enum: [data_object, collection]
+        conditions:
+          type: array
+          description: ANDed query conditions expressed in the metadata entry query model.
+          items:
+            $ref: "#/components/schemas/EntryQueryCondition"
+        avu:
+          $ref: "#/components/schemas/EntryQueryAVU"
+        defaults:
+          $ref: "#/components/schemas/EntryQueryDefaults"
+        replica_policy:
+          type: string
+          enum: [single]
+          description: Data object replica handling policy. The initial route supports one logical result per data object.
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Optional caller metadata preserved by durable query definitions.
+        limit:
+          type: integer
+          minimum: 1
+          description: Per-request page size override.
+        page_token:
+          type: string
+          description: Opaque token from a previous query response page.
+        include_totals:
+          type: boolean
+          description: Requests branch-aware total counts when supported.
+        include_matched_avus:
+          type: boolean
+          description: Includes the AVUs that caused each entry to match.
+    EntryQueryScope:
+      type: object
+      properties:
+        root:
+          type: string
+          description: Absolute collection root for scoped queries.
+        mode:
+          type: string
+          enum: [self, children, descendants, absolute]
+        path_hintable:
+          type: boolean
+          description: Reserved for virtual collection path-hintable execution.
+    EntryQueryCondition:
+      type: object
+      required: [field, op, value]
+      properties:
+        field:
+          type: string
+          enum: [path, name, owner, data_type, resource, checksum, avu.attrib, avu.value, avu.unit]
+        op:
+          type: string
+          enum: ["=", like]
+        value:
+          type: string
+          description: Condition value. `like` accepts `%` or `*` wildcards.
+    EntryQueryAVU:
+      type: object
+      description: Convenience shorthand for AVU attrib/value/unit conditions. `*` and `%` omit that AVU condition.
+      properties:
+        attrib:
+          type: string
+        value:
+          type: string
+        unit:
+          type: string
+    EntryQueryDefaults:
+      type: object
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+        include_totals:
+          type: boolean
+        include_matched_avus:
+          type: boolean
+    PathQueryResponse:
+      type: object
+      required: [paths, page, query]
+      properties:
+        irods_path:
+          type: string
+          description: Query scope root when the request is path scoped.
+        path_segments:
+          type: array
+          items:
+            $ref: "#/components/schemas/PathSegmentLink"
+        paths:
+          type: array
+          items:
+            $ref: "#/components/schemas/PathEntry"
+        matched_avus:
+          type: object
+          description: Optional matched AVUs keyed by canonical iRODS path.
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/AVUMetadata"
+        page:
+          $ref: "#/components/schemas/PathQueryPage"
+        query:
+          $ref: "#/components/schemas/PathQuerySummary"
+    PathQueryPage:
+      type: object
+      required: [limit, has_more, returned, scanned]
+      properties:
+        limit:
+          type: integer
+        has_more:
+          type: boolean
+        next_page_token:
+          type: string
+        returned:
+          $ref: "#/components/schemas/PathQueryCounts"
+        scanned:
+          $ref: "#/components/schemas/PathQueryCounts"
+        totals:
+          $ref: "#/components/schemas/PathQueryCounts"
+    PathQueryCounts:
+      type: object
+      required: [collections, data_objects]
+      properties:
+        collections:
+          type: integer
+          minimum: 0
+        data_objects:
+          type: integer
+          minimum: 0
+    PathQuerySummary:
+      type: object
+      required: [kinds]
+      properties:
+        search_scope:
+          type: string
+          enum: [self, children, descendants, absolute]
+        kinds:
+          type: array
+          items:
+            type: string
+            enum: [data_object, collection]
+        conditions:
+          type: array
+          items:
+            $ref: "#/components/schemas/EntryQueryCondition"
+        include_totals:
+          type: boolean
+        include_matched_avus:
+          type: boolean
     PathReplicasResponse:
       type: object
       required: [irods_path, path_segments, replicas]

@@ -13,6 +13,7 @@ type PathService interface {
 	GetPath(ctx context.Context, absolutePath string, options irods.PathLookupOptions) (domain.PathEntry, error)
 	GetPathChildren(ctx context.Context, absolutePath string) ([]domain.PathEntry, error)
 	SearchPathChildren(ctx context.Context, absolutePath string, options irods.PathChildrenListOptions) (irods.PathChildrenSearchResult, error)
+	QueryPathEntries(ctx context.Context, options irods.PathQueryOptions) (irods.PathQueryResult, error)
 	GetPathReplicas(ctx context.Context, absolutePath string, verboseLevel int) ([]domain.PathReplica, error)
 	UploadPathContents(ctx context.Context, absolutePath string, options irods.PathContentsUploadOptions) (domain.PathContentsUploadResult, error)
 	CreatePathChild(ctx context.Context, absolutePath string, options irods.PathCreateOptions) (domain.PathEntry, error)
@@ -74,6 +75,15 @@ func (s *pathService) SearchPathChildren(ctx context.Context, absolutePath strin
 	}
 
 	return s.catalog.SearchPathChildren(ctx, irodsRequestContext(requestContext), absolutePath, options)
+}
+
+func (s *pathService) QueryPathEntries(ctx context.Context, options irods.PathQueryOptions) (irods.PathQueryResult, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return irods.PathQueryResult{}, err
+	}
+
+	return s.catalog.QueryPathEntries(ctx, irodsRequestContext(requestContext), options)
 }
 
 func (s *pathService) GetPathReplicas(ctx context.Context, absolutePath string, verboseLevel int) ([]domain.PathReplica, error) {

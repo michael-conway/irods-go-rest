@@ -22,6 +22,7 @@ import (
 	irodslibfs "github.com/cyverse/go-irodsclient/irods/fs"
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
 	metadataext "github.com/michael-conway/go-irodsclient-extensions/metadata"
+	metadatairodsfs "github.com/michael-conway/go-irodsclient-extensions/metadata/irodsfs"
 	s3adminext "github.com/michael-conway/go-irodsclient-extensions/s3admin"
 	s3adminirodsfs "github.com/michael-conway/go-irodsclient-extensions/s3admin/irodsfs"
 	"github.com/michael-conway/irods-go-rest/internal/config"
@@ -70,6 +71,17 @@ type PathChildrenSearchResult struct {
 	NamePattern   string
 	SearchScope   PathChildrenSearchScope
 	CaseSensitive bool
+}
+
+type PathQueryOptions struct {
+	Query metadataext.EntryQuery
+}
+
+type PathQueryResult struct {
+	Entries     []domain.PathEntry
+	MatchedAVUs map[string][]domain.AVUMetadata
+	Page        metadataext.EntryQueryPage
+	Query       metadataext.EntryQuery
 }
 
 type PathCreateOptions struct {
@@ -132,6 +144,7 @@ type CatalogService interface {
 	GetPath(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathLookupOptions) (domain.PathEntry, error)
 	GetPathChildren(ctx context.Context, requestContext *RequestContext, absolutePath string) ([]domain.PathEntry, error)
 	SearchPathChildren(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathChildrenListOptions) (PathChildrenSearchResult, error)
+	QueryPathEntries(ctx context.Context, requestContext *RequestContext, options PathQueryOptions) (PathQueryResult, error)
 	GetPathReplicas(ctx context.Context, requestContext *RequestContext, absolutePath string, verboseLevel int) ([]domain.PathReplica, error)
 	UploadPathContents(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathContentsUploadOptions) (domain.PathContentsUploadResult, error)
 	CreatePathChild(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathCreateOptions) (domain.PathEntry, error)
@@ -220,6 +233,10 @@ type CatalogFileHandle interface {
 	ReadAt(buffer []byte, offset int64) (int, error)
 	Write(data []byte) (int, error)
 	Close() error
+}
+
+type metadataEntryQueryFilesystem interface {
+	QueryMetadataEntries(query metadataext.EntryQuery) (metadataext.EntryQueryResult, error)
 }
 
 type CatalogFileSystemFactory func(account *irodstypes.IRODSAccount, applicationName string) (CatalogFileSystem, error)
@@ -376,6 +393,56 @@ func (s *catalogService) SearchPathChildren(_ context.Context, requestContext *R
 		NamePattern:   normalized.NamePattern,
 		SearchScope:   normalized.SearchScope,
 		CaseSensitive: normalized.CaseSensitive,
+	}, nil
+}
+
+func (s *catalogService) QueryPathEntries(_ context.Context, requestContext *RequestContext, options PathQueryOptions) (PathQueryResult, error) {
+	query, err := metadataext.NormalizeEntryQuery(options.Query)
+	if err != nil {
+		return PathQueryResult{}, err
+	}
+
+	scopePath := ""
+	if query.Scope != nil && query.Scope.Mode != metadataext.EntryQueryScopeAbsolute {
+		scopePath = strings.TrimSpace(query.Scope.Root)
+	}
+
+	slog.Debug("catalog QueryPathEntries start", "scope_path", scopePath, "kinds", query.Kinds, "condition_count", len(query.Conditions), "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-query-path-entries")
+	if err != nil {
+		logIRODSError("catalog QueryPathEntries filesystem setup failed", err, "scope_path", scopePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return PathQueryResult{}, err
+	}
+	defer filesystem.Release()
+
+	if scopePath != "" {
+		entry, err := filesystem.Stat(scopePath)
+		if err != nil {
+			logIRODSError("catalog QueryPathEntries scope stat failed", err, "scope_path", scopePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			return PathQueryResult{}, normalizePathAccessError("stat path", scopePath, err)
+		}
+		if entry == nil || !entry.IsDir() {
+			return PathQueryResult{}, fmt.Errorf("%w: path %q is not a collection", ErrNotFound, scopePath)
+		}
+	}
+
+	querier, ok := filesystem.(metadataEntryQueryFilesystem)
+	if !ok {
+		return PathQueryResult{}, fmt.Errorf("metadata entry query is not available for this filesystem")
+	}
+
+	queryResult, err := querier.QueryMetadataEntries(query)
+	if err != nil {
+		logIRODSError("catalog QueryPathEntries query failed", err, "scope_path", scopePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return PathQueryResult{}, normalizePathAccessError("query path metadata", scopePath, err)
+	}
+
+	return PathQueryResult{
+		Entries:     mapMetadataQueryEntries(s.cfg.IrodsZone, queryResult.Entries),
+		MatchedAVUs: mapMatchedAVUs(queryResult.MatchedAVUs),
+		Page:        queryResult.Page,
+		Query:       query,
 	}, nil
 }
 
@@ -2105,6 +2172,10 @@ func (a *catalogFileSystemAdapter) SearchByMeta(metaName string, metaValue strin
 	return s3adminirodsfs.SearchByMeta(a.filesystem, metaName, metaValue)
 }
 
+func (a *catalogFileSystemAdapter) QueryMetadataEntries(query metadataext.EntryQuery) (metadataext.EntryQueryResult, error) {
+	return metadatairodsfs.NewAdapter(a.filesystem).QueryEntries(query)
+}
+
 func (a *catalogFileSystemAdapter) S3AdminFilesystem() s3adminext.Filesystem {
 	if a.s3Adapter != nil {
 		return a.s3Adapter
@@ -3098,6 +3169,51 @@ func mapPathChildrenEntries(zone string, entries []*irodsfs.Entry) []domain.Path
 		results = append(results, dataObjectPathEntry(zone, child, nil, PathLookupOptions{}))
 	}
 	return results
+}
+
+func mapMetadataQueryEntries(zone string, entries []*metadataext.Entry) []domain.PathEntry {
+	results := make([]domain.PathEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		if entry.IsDir() {
+			results = append(results, collectionPathEntry(zone, entry, nil, 0, PathLookupOptions{}))
+			continue
+		}
+		results = append(results, dataObjectPathEntry(zone, entry, nil, PathLookupOptions{}))
+	}
+	return results
+}
+
+func mapMatchedAVUs(matched map[string][]metadataext.AVUStat) map[string][]domain.AVUMetadata {
+	if len(matched) == 0 {
+		return nil
+	}
+
+	result := make(map[string][]domain.AVUMetadata, len(matched))
+	for irodsPath, avus := range matched {
+		if strings.TrimSpace(irodsPath) == "" || len(avus) == 0 {
+			continue
+		}
+		for _, avu := range avus {
+			result[irodsPath] = append(result[irodsPath], avuMetadataFromStat(avu))
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func avuMetadataFromStat(avu metadataext.AVUStat) domain.AVUMetadata {
+	return domain.AVUMetadata{
+		Attrib:    strings.TrimSpace(avu.Name),
+		Value:     strings.TrimSpace(avu.Value),
+		Unit:      strings.TrimSpace(avu.Units),
+		CreatedAt: timePointer(avu.CreateTime),
+		UpdatedAt: timePointer(avu.ModifyTime),
+	}
 }
 
 func entryHasReplicaInResource(entry *irodsfs.Entry, resource string) bool {

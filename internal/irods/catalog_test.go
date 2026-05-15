@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"path"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	irodsfs "github.com/cyverse/go-irodsclient/fs"
 	irodscommon "github.com/cyverse/go-irodsclient/irods/common"
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
+	metadataext "github.com/michael-conway/go-irodsclient-extensions/metadata"
 	s3adminext "github.com/michael-conway/go-irodsclient-extensions/s3admin"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 )
@@ -254,6 +256,57 @@ func TestCatalogSearchPathChildrenSupportsAbsoluteScope(t *testing.T) {
 	}
 	if result.Children[0].Path != zoneFile.Path {
 		t.Fatalf("unexpected absolute search match path: %q", result.Children[0].Path)
+	}
+}
+
+func TestCatalogQueryPathEntriesUsesMetadataQuery(t *testing.T) {
+	service := newTestCatalogService(t, newCatalogTestFileSystem())
+
+	result, err := service.QueryPathEntries(context.Background(), bearerRequestContext(), PathQueryOptions{
+		Query: metadataext.NewEntryQuery().
+			BothKinds().
+			Scope("/tempZone/home/alice/project", metadataext.EntryQueryScopeSelf).
+			AVU("project", "demo", metadataext.AnyUnit).
+			IncludeMatchedAVUs(true).
+			Build(),
+	})
+	if err != nil {
+		t.Fatalf("QueryPathEntries returned error: %v", err)
+	}
+
+	if len(result.Entries) != 1 {
+		t.Fatalf("expected one query result, got %d", len(result.Entries))
+	}
+	if result.Entries[0].Path != "/tempZone/home/alice/project" || result.Entries[0].Kind != "collection" {
+		t.Fatalf("unexpected query entry: %+v", result.Entries[0])
+	}
+	if result.Entries[0].Metadata != nil {
+		t.Fatalf("expected query entry to omit full metadata by default, got %+v", result.Entries[0].Metadata)
+	}
+	if len(result.MatchedAVUs[result.Entries[0].Path]) != 1 {
+		t.Fatalf("expected one matched AVU for %q, got %+v", result.Entries[0].Path, result.MatchedAVUs)
+	}
+}
+
+func TestCatalogQueryPathEntriesSupportsFileConditions(t *testing.T) {
+	service := newTestCatalogService(t, newCatalogTestFileSystem())
+
+	result, err := service.QueryPathEntries(context.Background(), bearerRequestContext(), PathQueryOptions{
+		Query: metadataext.NewEntryQuery().
+			DataObjects().
+			Scope("/tempZone/home/alice/project", metadataext.EntryQueryScopeChildren).
+			Like(metadataext.FieldName, "child*").
+			Build(),
+	})
+	if err != nil {
+		t.Fatalf("QueryPathEntries returned error: %v", err)
+	}
+
+	if len(result.Entries) != 1 || result.Entries[0].Path != "/tempZone/home/alice/project/child.txt" {
+		t.Fatalf("expected child data object match, got %+v", result.Entries)
+	}
+	if len(result.Entries[0].Replicas) != 0 {
+		t.Fatalf("expected query entry to omit replica expansion by default, got %+v", result.Entries[0].Replicas)
 	}
 }
 
@@ -1578,6 +1631,265 @@ func (f *catalogTestFileSystem) SearchByMeta(metaName string, metaValue string) 
 		}
 	}
 	return entries, nil
+}
+
+func (f *catalogTestFileSystem) QueryMetadataEntries(query metadataext.EntryQuery) (metadataext.EntryQueryResult, error) {
+	return queryMetadataEntriesForCatalogTest(f.entriesByPath, f.metadataByPath, query)
+}
+
+func queryMetadataEntriesForCatalogTest(entriesByPath map[string]*irodsfs.Entry, metadataByPath map[string][]*irodstypes.IRODSMeta, query metadataext.EntryQuery) (metadataext.EntryQueryResult, error) {
+	normalized, err := metadataext.NormalizeEntryQuery(query)
+	if err != nil {
+		return metadataext.EntryQueryResult{}, err
+	}
+
+	collections := matchingMetadataQueryEntriesForCatalogTest(entriesByPath, metadataByPath, normalized, metadataext.EntryKindCollection)
+	dataObjects := matchingMetadataQueryEntriesForCatalogTest(entriesByPath, metadataByPath, normalized, metadataext.EntryKindDataObject)
+
+	result := metadataext.EntryQueryResult{
+		Entries: []*metadataext.Entry{},
+		Page: metadataext.EntryQueryPage{
+			Limit: normalized.Limit,
+		},
+	}
+	if normalized.IncludeMatchedAVUs {
+		result.MatchedAVUs = map[string][]metadataext.AVUStat{}
+	}
+
+	cursor := metadataext.EntryQueryCursor{}
+	if normalized.Cursor != nil {
+		cursor = *normalized.Cursor
+	}
+	phase := cursor.Phase
+	if phase == "" {
+		if metadataext.EntryQueryHasKind(normalized, metadataext.EntryKindCollection) {
+			phase = metadataext.EntryQueryPhaseCollections
+		} else {
+			phase = metadataext.EntryQueryPhaseDataObjects
+		}
+	}
+
+	next := cursor
+	remaining := normalized.Limit
+	hasMore := false
+	if phase == metadataext.EntryQueryPhaseCollections && metadataext.EntryQueryHasKind(normalized, metadataext.EntryKindCollection) && !cursor.Collections.Exhausted {
+		added := appendMetadataQueryPageForCatalogTest(&result, collections, cursor.Collections.Offset, remaining, normalized.IncludeMatchedAVUs)
+		next.Collections.Offset += added
+		result.Page.Returned.Collections += added
+		result.Page.Scanned.Collections = len(collections)
+		remaining -= added
+		if next.Collections.Offset < len(collections) {
+			hasMore = true
+			next.Phase = metadataext.EntryQueryPhaseCollections
+		} else {
+			next.Collections.Exhausted = true
+			phase = metadataext.EntryQueryPhaseDataObjects
+			next.Phase = metadataext.EntryQueryPhaseDataObjects
+		}
+	}
+	if !hasMore && phase == metadataext.EntryQueryPhaseDataObjects && metadataext.EntryQueryHasKind(normalized, metadataext.EntryKindDataObject) && !cursor.DataObjects.Exhausted {
+		added := appendMetadataQueryPageForCatalogTest(&result, dataObjects, cursor.DataObjects.Offset, remaining, normalized.IncludeMatchedAVUs)
+		next.DataObjects.Offset += added
+		result.Page.Returned.DataObjects += added
+		result.Page.Scanned.DataObjects = len(dataObjects)
+		remaining -= added
+		if next.DataObjects.Offset < len(dataObjects) {
+			hasMore = true
+			next.Phase = metadataext.EntryQueryPhaseDataObjects
+		} else {
+			next.DataObjects.Exhausted = true
+			next.Phase = metadataext.EntryQueryPhaseDone
+		}
+	}
+	if !hasMore && remaining == 0 && phase == metadataext.EntryQueryPhaseDataObjects && metadataext.EntryQueryHasKind(normalized, metadataext.EntryKindDataObject) && !next.DataObjects.Exhausted && next.DataObjects.Offset < len(dataObjects) {
+		hasMore = true
+		next.Phase = metadataext.EntryQueryPhaseDataObjects
+	}
+
+	if normalized.IncludeTotals {
+		totals := metadataext.EntryQueryCounts{
+			Collections: len(collections),
+			DataObjects: len(dataObjects),
+		}
+		result.Page.Totals = &totals
+	}
+	result.Page.HasMore = hasMore
+	if hasMore {
+		result.Page.Next = &next
+	}
+	return result, nil
+}
+
+type metadataQueryCatalogTestMatch struct {
+	entry *metadataext.Entry
+	avus  []metadataext.AVUStat
+}
+
+func matchingMetadataQueryEntriesForCatalogTest(entriesByPath map[string]*irodsfs.Entry, metadataByPath map[string][]*irodstypes.IRODSMeta, query metadataext.EntryQuery, kind metadataext.EntryKind) []metadataQueryCatalogTestMatch {
+	if !metadataext.EntryQueryHasKind(query, kind) {
+		return nil
+	}
+
+	paths := make([]string, 0, len(entriesByPath))
+	for irodsPath := range entriesByPath {
+		paths = append(paths, irodsPath)
+	}
+	sort.Strings(paths)
+
+	matches := []metadataQueryCatalogTestMatch{}
+	for _, irodsPath := range paths {
+		entry := entriesByPath[irodsPath]
+		if entry == nil {
+			continue
+		}
+		if kind == metadataext.EntryKindCollection && !entry.IsDir() {
+			continue
+		}
+		if kind == metadataext.EntryKindDataObject && entry.IsDir() {
+			continue
+		}
+		if !metadataQueryScopeMatchesForCatalogTest(entry, query.Scope) {
+			continue
+		}
+		avus, ok := metadataQueryConditionsMatchForCatalogTest(entry, metadataByPath[entry.Path], query.Conditions)
+		if !ok {
+			continue
+		}
+		matches = append(matches, metadataQueryCatalogTestMatch{entry: entry, avus: avus})
+	}
+	return matches
+}
+
+func appendMetadataQueryPageForCatalogTest(result *metadataext.EntryQueryResult, matches []metadataQueryCatalogTestMatch, offset int, limit int, includeMatchedAVUs bool) int {
+	if limit <= 0 || offset >= len(matches) {
+		return 0
+	}
+	added := 0
+	for idx := offset; idx < len(matches) && added < limit; idx++ {
+		match := matches[idx]
+		result.Entries = append(result.Entries, match.entry)
+		added++
+		if includeMatchedAVUs {
+			for _, avu := range match.avus {
+				result.MatchedAVUs[match.entry.Path] = append(result.MatchedAVUs[match.entry.Path], avu)
+			}
+		}
+	}
+	return added
+}
+
+func metadataQueryScopeMatchesForCatalogTest(entry *irodsfs.Entry, scope *metadataext.EntryQueryScope) bool {
+	if scope == nil || scope.Mode == metadataext.EntryQueryScopeAbsolute {
+		return true
+	}
+	root := strings.TrimRight(scope.Root, "/")
+	switch scope.Mode {
+	case metadataext.EntryQueryScopeSelf:
+		return entry.IsDir() && entry.Path == root
+	case metadataext.EntryQueryScopeChildren:
+		return path.Dir(path.Clean(entry.Path)) == root
+	case metadataext.EntryQueryScopeDescendants:
+		if entry.IsDir() {
+			return strings.HasPrefix(path.Clean(entry.Path), root+"/")
+		}
+		return strings.HasPrefix(path.Dir(path.Clean(entry.Path)), root+"/")
+	default:
+		return false
+	}
+}
+
+func metadataQueryConditionsMatchForCatalogTest(entry *irodsfs.Entry, metadataList []*irodstypes.IRODSMeta, conditions []metadataext.EntryCondition) ([]metadataext.AVUStat, bool) {
+	avuConditions := []metadataext.EntryCondition{}
+	for _, condition := range conditions {
+		switch condition.Field {
+		case metadataext.FieldAVUAttrib, metadataext.FieldAVUValue, metadataext.FieldAVUUnit:
+			avuConditions = append(avuConditions, condition)
+		default:
+			if !metadataQueryEntryConditionMatchesForCatalogTest(entry, condition) {
+				return nil, false
+			}
+		}
+	}
+
+	if len(avuConditions) == 0 {
+		return nil, true
+	}
+
+	matchedAVUs := []metadataext.AVUStat{}
+	for _, avu := range metadataList {
+		if avu == nil {
+			continue
+		}
+		if metadataQueryAVUMatchesForCatalogTest(avu, avuConditions) {
+			matchedAVUs = append(matchedAVUs, metadataext.AVUStat{
+				Name:       avu.Name,
+				Value:      avu.Value,
+				Units:      avu.Units,
+				CreateTime: avu.CreateTime,
+				ModifyTime: avu.ModifyTime,
+			})
+		}
+	}
+	return matchedAVUs, len(matchedAVUs) > 0
+}
+
+func metadataQueryEntryConditionMatchesForCatalogTest(entry *irodsfs.Entry, condition metadataext.EntryCondition) bool {
+	switch condition.Field {
+	case metadataext.FieldPath:
+		return metadataQueryStringMatchesForCatalogTest(entry.Path, condition)
+	case metadataext.FieldName:
+		return metadataQueryStringMatchesForCatalogTest(entry.Name, condition)
+	case metadataext.FieldOwner:
+		return metadataQueryStringMatchesForCatalogTest(entry.Owner, condition)
+	case metadataext.FieldDataType:
+		return metadataQueryStringMatchesForCatalogTest(entry.DataType, condition)
+	case metadataext.FieldResource:
+		return metadataQueryStringMatchesForCatalogTest(firstReplicaResourceNameForCatalogTest(entry), condition)
+	case metadataext.FieldChecksum:
+		return metadataQueryStringMatchesForCatalogTest(string(entry.CheckSum), condition)
+	default:
+		return false
+	}
+}
+
+func metadataQueryAVUMatchesForCatalogTest(avu *irodstypes.IRODSMeta, conditions []metadataext.EntryCondition) bool {
+	for _, condition := range conditions {
+		var value string
+		switch condition.Field {
+		case metadataext.FieldAVUAttrib:
+			value = avu.Name
+		case metadataext.FieldAVUValue:
+			value = avu.Value
+		case metadataext.FieldAVUUnit:
+			value = avu.Units
+		default:
+			return false
+		}
+		if !metadataQueryStringMatchesForCatalogTest(value, condition) {
+			return false
+		}
+	}
+	return true
+}
+
+func metadataQueryStringMatchesForCatalogTest(value string, condition metadataext.EntryCondition) bool {
+	switch condition.Op {
+	case metadataext.OpEqual:
+		return value == condition.Value
+	case metadataext.OpLike:
+		pattern := strings.ReplaceAll(condition.Value, "%", "*")
+		ok, err := path.Match(pattern, value)
+		return err == nil && ok
+	default:
+		return false
+	}
+}
+
+func firstReplicaResourceNameForCatalogTest(entry *irodsfs.Entry) string {
+	if entry == nil || len(entry.IRODSReplicas) == 0 {
+		return ""
+	}
+	return entry.IRODSReplicas[0].ResourceName
 }
 
 func (f *catalogTestFileSystem) AddMetadata(irodsPath string, attName string, attValue string, attUnits string) error {
