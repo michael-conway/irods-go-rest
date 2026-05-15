@@ -2238,6 +2238,169 @@ func TestExtFavoritesValidationAndNotFound(t *testing.T) {
 	}
 }
 
+func TestExtMetadataQueriesLifecycle(t *testing.T) {
+	handler := testHandler(t)
+
+	createBody := `{
+		"name": "Frog AVU query",
+		"description": "find frog-tagged entries",
+		"query": {
+			"type": "avu_query",
+			"kinds": ["data_object", "collection"],
+			"scope": {
+				"root": "/tempZone/home/test1/project",
+				"mode": "descendants"
+			},
+			"avu": {
+				"attrib": "source",
+				"value": "test",
+				"unit": "*"
+			},
+			"defaults": {
+				"limit": 25,
+				"include_matched_avus": true
+			}
+		}
+	}`
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/metadata-queries", strings.NewReader(createBody))
+	createReq.Header.Set("Authorization", "Bearer token123")
+	createReq.Header.Set("Content-Type", "application/json")
+	createRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(createRec, createReq)
+
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", createRec.Code, createRec.Body.String())
+	}
+
+	var createResponse struct {
+		MetadataQuery struct {
+			metadataext.SavedEntryQuery
+			Links map[string]domain.ActionLink `json:"links"`
+		} `json:"metadata_query"`
+	}
+	if err := json.Unmarshal(createRec.Body.Bytes(), &createResponse); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	queryID := createResponse.MetadataQuery.ID
+	if queryID == "" {
+		t.Fatalf("expected created metadata query id: %q", createRec.Body.String())
+	}
+	if createResponse.MetadataQuery.Name != "Frog AVU query" {
+		t.Fatalf("unexpected created metadata query: %+v", createResponse.MetadataQuery)
+	}
+	if createResponse.MetadataQuery.Query.Type != metadataext.EntryQueryDefinitionType {
+		t.Fatalf("expected canonical entry query type, got %q", createResponse.MetadataQuery.Query.Type)
+	}
+	if len(createResponse.MetadataQuery.Query.Conditions) == 0 {
+		t.Fatalf("expected canonical query conditions: %+v", createResponse.MetadataQuery.Query)
+	}
+	if _, ok := createResponse.MetadataQuery.Links["delete"]; !ok {
+		t.Fatalf("expected delete link in create response: %q", createRec.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/metadata-queries", nil)
+	listReq.Header.Set("Authorization", "Bearer token123")
+	listRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", listRec.Code, listRec.Body.String())
+	}
+	if body := listRec.Body.String(); !containsAll(
+		body,
+		`"metadata_queries":[`,
+		`"name":"Frog AVU query"`,
+		`"file_name":"`+queryID+`.entry-query.json"`,
+		`"count":1`,
+		`"create":{"href":"/api/v1/ext/metadata-queries","method":"POST"}`,
+	) {
+		t.Fatalf("unexpected list metadata queries body: %q", body)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/metadata-queries/"+queryID, nil)
+	getReq.Header.Set("Authorization", "Bearer token123")
+	getRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+	if body := getRec.Body.String(); !containsAll(body, `"id":"`+queryID+`"`, `"name":"Frog AVU query"`) {
+		t.Fatalf("unexpected get metadata query body: %q", body)
+	}
+
+	updateBody := `{
+		"name": "Updated Frog AVU query",
+		"description": "updated",
+		"query": {
+			"kinds": ["data_object"],
+			"conditions": [
+				{"field": "avu.attrib", "op": "=", "value": "source"},
+				{"field": "avu.value", "op": "like", "value": "te%"}
+			],
+			"defaults": {
+				"limit": 10
+			}
+		}
+	}`
+	updateReq := httptest.NewRequest(http.MethodPut, "/api/v1/ext/metadata-queries/"+queryID, strings.NewReader(updateBody))
+	updateReq.Header.Set("Authorization", "Bearer token123")
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(updateRec, updateReq)
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", updateRec.Code, updateRec.Body.String())
+	}
+	if body := updateRec.Body.String(); !containsAll(body, `"name":"Updated Frog AVU query"`, `"description":"updated"`, `"limit":10`) {
+		t.Fatalf("unexpected update metadata query body: %q", body)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/ext/metadata-queries/"+queryID, nil)
+	deleteReq.Header.Set("Authorization", "Bearer token123")
+	deleteRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", deleteRec.Code, deleteRec.Body.String())
+	}
+
+	getDeletedReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/metadata-queries/"+queryID, nil)
+	getDeletedReq.Header.Set("Authorization", "Bearer token123")
+	getDeletedRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(getDeletedRec, getDeletedReq)
+	if getDeletedRec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", getDeletedRec.Code, getDeletedRec.Body.String())
+	}
+}
+
+func TestExtMetadataQueriesValidation(t *testing.T) {
+	handler := testHandler(t)
+
+	missingFieldsReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/metadata-queries", strings.NewReader(`{"name":""}`))
+	missingFieldsReq.Header.Set("Authorization", "Bearer token123")
+	missingFieldsReq.Header.Set("Content-Type", "application/json")
+	missingFieldsRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(missingFieldsRec, missingFieldsReq)
+	if missingFieldsRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", missingFieldsRec.Code, missingFieldsRec.Body.String())
+	}
+	if body := missingFieldsRec.Body.String(); !containsAll(body, `"name":"name is required"`, `"query":"query is required"`) {
+		t.Fatalf("unexpected missing fields body: %q", body)
+	}
+
+	invalidQueryReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/metadata-queries", strings.NewReader(`{
+		"name": "bad query",
+		"query": {
+			"type": "entry_query",
+			"replica_policy": "all"
+		}
+	}`))
+	invalidQueryReq.Header.Set("Authorization", "Bearer token123")
+	invalidQueryReq.Header.Set("Content-Type", "application/json")
+	invalidQueryRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(invalidQueryRec, invalidQueryReq)
+	if invalidQueryRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", invalidQueryRec.Code, invalidQueryRec.Body.String())
+	}
+}
+
 func TestExtS3BucketsLifecycle(t *testing.T) {
 	mappingPath := path.Join(t.TempDir(), "bucket-mapping.json")
 	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
@@ -3036,9 +3199,26 @@ func (f *testCatalogFileSystem) MakeDir(irodsPath string, recurse bool) error {
 }
 
 func (f *testCatalogFileSystem) CreateFile(irodsPath string, _ string, _ string) (irods.CatalogFileHandle, error) {
+	cleanPath := path.Clean(irodsPath)
 	parentPath := path.Dir(path.Clean(irodsPath))
 	if _, ok := f.entriesByPath[parentPath]; !ok {
 		return nil, errors.New("not found")
+	}
+
+	if existing, ok := f.entriesByPath[cleanPath]; ok {
+		if existing.IsDir() {
+			return nil, errors.New("already exists")
+		}
+		f.contentByPath[cleanPath] = nil
+		return &testCatalogFileHandle{
+			reader: bytes.NewReader(nil),
+			writer: bytes.NewBuffer(nil),
+			onClose: func(data []byte) {
+				f.contentByPath[cleanPath] = append([]byte(nil), data...)
+				existing.Size = int64(len(data))
+				existing.ModifyTime = time.Unix(1_700_000_002, 0)
+			},
+		}, nil
 	}
 
 	now := time.Unix(1_700_000_002, 0)
@@ -3046,7 +3226,7 @@ func (f *testCatalogFileSystem) CreateFile(irodsPath string, _ string, _ string)
 		ID:         int64(len(f.entriesByPath) + 200),
 		Type:       irodsfs.FileEntry,
 		Name:       path.Base(irodsPath),
-		Path:       path.Clean(irodsPath),
+		Path:       cleanPath,
 		Owner:      "alice",
 		Size:       0,
 		DataType:   "generic",

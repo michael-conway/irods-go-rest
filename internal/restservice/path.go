@@ -36,6 +36,11 @@ type PathService interface {
 	ComputePathChecksum(ctx context.Context, absolutePath string) (domain.PathChecksum, error)
 	GetObjectContentByPath(ctx context.Context, absolutePath string) (domain.ObjectContent, error)
 	GetMetadataManifest(ctx context.Context, absolutePath string) (metadataext.Manifest, error)
+	ListSavedMetadataQueries(ctx context.Context) ([]metadataext.SavedEntryQuerySummary, error)
+	CreateSavedMetadataQuery(ctx context.Context, update metadataext.SavedEntryQueryUpdate) (metadataext.SavedEntryQuery, error)
+	GetSavedMetadataQuery(ctx context.Context, queryID string) (metadataext.SavedEntryQuery, error)
+	UpdateSavedMetadataQuery(ctx context.Context, queryID string, update metadataext.SavedEntryQueryUpdate) (metadataext.SavedEntryQuery, error)
+	DeleteSavedMetadataQuery(ctx context.Context, queryID string) error
 	ListFavorites(ctx context.Context) ([]domain.Favorite, error)
 	AddFavorite(ctx context.Context, name string, favoritePath string) (domain.Favorite, error)
 	RenameFavorite(ctx context.Context, favoritePath string, name string) (domain.Favorite, error)
@@ -282,6 +287,51 @@ func (s *pathService) GetMetadataManifest(ctx context.Context, absolutePath stri
 	}
 
 	return s.catalog.GetMetadataManifest(ctx, irodsRequestContext(requestContext), absolutePath)
+}
+
+func (s *pathService) ListSavedMetadataQueries(ctx context.Context) ([]metadataext.SavedEntryQuerySummary, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.catalog.ListSavedMetadataQueries(ctx, irodsRequestContext(requestContext))
+}
+
+func (s *pathService) CreateSavedMetadataQuery(ctx context.Context, update metadataext.SavedEntryQueryUpdate) (metadataext.SavedEntryQuery, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return metadataext.SavedEntryQuery{}, err
+	}
+
+	return s.catalog.CreateSavedMetadataQuery(ctx, irodsRequestContext(requestContext), update)
+}
+
+func (s *pathService) GetSavedMetadataQuery(ctx context.Context, queryID string) (metadataext.SavedEntryQuery, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return metadataext.SavedEntryQuery{}, err
+	}
+
+	return s.catalog.GetSavedMetadataQuery(ctx, irodsRequestContext(requestContext), queryID)
+}
+
+func (s *pathService) UpdateSavedMetadataQuery(ctx context.Context, queryID string, update metadataext.SavedEntryQueryUpdate) (metadataext.SavedEntryQuery, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return metadataext.SavedEntryQuery{}, err
+	}
+
+	return s.catalog.UpdateSavedMetadataQuery(ctx, irodsRequestContext(requestContext), queryID, update)
+}
+
+func (s *pathService) DeleteSavedMetadataQuery(ctx context.Context, queryID string) error {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.catalog.DeleteSavedMetadataQuery(ctx, irodsRequestContext(requestContext), queryID)
 }
 
 func (s *pathService) ListFavorites(ctx context.Context) ([]domain.Favorite, error) {

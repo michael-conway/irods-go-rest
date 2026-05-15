@@ -2582,6 +2582,217 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/ext/metadata-queries:
+    get:
+      operationId: getExtMetadataQueries
+      tags: [ext]
+      summary: List saved metadata queries
+      description: Lists the authenticated user's saved metadata entry queries from the user extension storage area.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      responses:
+        "200":
+          description: Saved metadata query summaries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedMetadataQueryCollectionResponse"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while listing saved metadata queries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: postExtMetadataQuery
+      tags: [ext]
+      summary: Create a saved metadata query
+      description: Stores a serializable metadata entry query definition for the authenticated user.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SavedMetadataQueryUpsertRequest"
+            examples:
+              avuQuery:
+                summary: Saved AVU query under a collection
+                value:
+                  name: Frog AVU query
+                  description: Entries tagged with source test values under the project tree.
+                  query:
+                    type: avu_query
+                    kinds: [data_object, collection]
+                    scope:
+                      root: /tempZone/home/alice/project
+                      mode: descendants
+                    avu:
+                      attrib: source
+                      value: test*
+                      unit: "*"
+                    defaults:
+                      limit: 100
+                      include_matched_avus: true
+      responses:
+        "201":
+          description: Saved metadata query created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedMetadataQueryResponse"
+        "400":
+          description: Invalid saved metadata query request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while creating saved metadata query
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/ext/metadata-queries/{query_id}:
+    parameters:
+      - in: path
+        name: query_id
+        required: true
+        schema:
+          type: string
+        description: Saved metadata query identifier.
+    get:
+      operationId: getExtMetadataQuery
+      tags: [ext]
+      summary: Read a saved metadata query
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      responses:
+        "200":
+          description: Saved metadata query
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedMetadataQueryResponse"
+        "400":
+          description: Invalid saved metadata query identifier
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while reading saved metadata query
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Saved metadata query not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    put:
+      operationId: putExtMetadataQuery
+      tags: [ext]
+      summary: Update a saved metadata query
+      description: Fully replaces the user-facing fields and query definition while preserving the saved query identifier.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SavedMetadataQueryUpsertRequest"
+      responses:
+        "200":
+          description: Saved metadata query updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedMetadataQueryResponse"
+        "400":
+          description: Invalid saved metadata query request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while updating saved metadata query
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Saved metadata query not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteExtMetadataQuery
+      tags: [ext]
+      summary: Delete a saved metadata query
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      responses:
+        "204":
+          description: Saved metadata query deleted
+        "400":
+          description: Invalid saved metadata query identifier
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while deleting saved metadata query
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Saved metadata query not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/ext/s3/buckets:
     get:
       operationId: getExtS3Buckets
@@ -3699,6 +3910,135 @@ components:
           type: boolean
         include_matched_avus:
           type: boolean
+    EntryQueryDefinition:
+      type: object
+      description: Durable metadata entry query definition suitable for saving and re-executing.
+      properties:
+        version:
+          type: string
+          description: Optional metadata query definition version. Defaults to `metadata.entry_query.v1`.
+        type:
+          type: string
+          enum: [entry_query, avu_query]
+          description: Optional metadata query definition type. Defaults to `entry_query`.
+        scope:
+          $ref: "#/components/schemas/EntryQueryScope"
+        kinds:
+          type: array
+          description: Entry branches to query. Empty means both collections and data objects.
+          items:
+            type: string
+            enum: [data_object, collection]
+        conditions:
+          type: array
+          description: ANDed query conditions expressed in the metadata entry query model.
+          items:
+            $ref: "#/components/schemas/EntryQueryCondition"
+        avu:
+          $ref: "#/components/schemas/EntryQueryAVU"
+        defaults:
+          $ref: "#/components/schemas/EntryQueryDefaults"
+        replica_policy:
+          type: string
+          enum: [single]
+          description: Data object replica handling policy. The initial implementation supports one logical result per data object.
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Optional caller metadata preserved with the saved definition.
+    SavedMetadataQueryUpsertRequest:
+      type: object
+      required: [name, query]
+      properties:
+        name:
+          type: string
+          description: User-facing saved query name.
+        description:
+          type: string
+          description: Optional saved query description.
+        query:
+          $ref: "#/components/schemas/EntryQueryDefinition"
+    SavedMetadataQuery:
+      type: object
+      required: [version, id, name, query, created_at, updated_at]
+      properties:
+        version:
+          type: string
+          description: Saved metadata query storage version.
+        id:
+          type: string
+          description: Saved metadata query identifier.
+        name:
+          type: string
+          description: User-facing saved query name.
+        description:
+          type: string
+          description: Optional saved query description.
+        query:
+          $ref: "#/components/schemas/EntryQueryDefinition"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        links:
+          $ref: "#/components/schemas/SavedMetadataQueryLinks"
+    SavedMetadataQuerySummary:
+      type: object
+      required: [id, name, file_name, irods_path, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        file_name:
+          type: string
+        irods_path:
+          type: string
+          description: Absolute iRODS path of the stored saved-query JSON object.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        links:
+          $ref: "#/components/schemas/SavedMetadataQueryLinks"
+    SavedMetadataQueryLinks:
+      type: object
+      properties:
+        self:
+          $ref: "#/components/schemas/ActionLink"
+        update:
+          $ref: "#/components/schemas/ActionLink"
+        delete:
+          $ref: "#/components/schemas/ActionLink"
+    SavedMetadataQueryResponse:
+      type: object
+      required: [metadata_query]
+      properties:
+        metadata_query:
+          $ref: "#/components/schemas/SavedMetadataQuery"
+    SavedMetadataQueryCollectionResponse:
+      type: object
+      required: [metadata_queries, count]
+      properties:
+        metadata_queries:
+          type: array
+          items:
+            $ref: "#/components/schemas/SavedMetadataQuerySummary"
+        count:
+          type: integer
+        links:
+          type: object
+          properties:
+            self:
+              $ref: "#/components/schemas/ActionLink"
+            create:
+              $ref: "#/components/schemas/ActionLink"
     PathQueryResponse:
       type: object
       required: [paths, page, query]
