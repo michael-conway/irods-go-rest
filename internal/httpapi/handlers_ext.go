@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	metadataext "github.com/michael-conway/go-irodsclient-extensions/metadata"
 	s3adminext "github.com/michael-conway/go-irodsclient-extensions/s3admin"
 	"github.com/michael-conway/irods-go-rest/internal/domain"
 	"github.com/michael-conway/irods-go-rest/internal/irods"
@@ -156,6 +157,100 @@ func (h *Handler) getExtMetadataManifest(w http.ResponseWriter, r *http.Request)
 	}
 
 	writeJSON(w, http.StatusOK, manifest)
+}
+
+func (h *Handler) getExtMetadataQueries(w http.ResponseWriter, r *http.Request) {
+	summaries, err := h.paths.ListSavedMetadataQueries(r.Context())
+	if err != nil {
+		writeMetadataQueryError(w, err)
+		return
+	}
+
+	responses := savedMetadataQuerySummaryResponseList(summaries)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"metadata_queries": responses,
+		"count":            len(responses),
+		"links":            savedMetadataQueryCollectionLinks(r),
+	})
+}
+
+func (h *Handler) postExtMetadataQuery(w http.ResponseWriter, r *http.Request) {
+	update, ok := savedMetadataQueryUpdateFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	saved, err := h.paths.CreateSavedMetadataQuery(r.Context(), update)
+	if err != nil {
+		writeMetadataQueryError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"metadata_query": savedMetadataQueryResponse(saved),
+	})
+}
+
+func (h *Handler) getExtMetadataQuery(w http.ResponseWriter, r *http.Request) {
+	queryID := strings.TrimSpace(r.PathValue("query_id"))
+	if queryID == "" {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "metadata query request validation failed", map[string]string{
+			"query_id": "query_id is required",
+		})
+		return
+	}
+
+	saved, err := h.paths.GetSavedMetadataQuery(r.Context(), queryID)
+	if err != nil {
+		writeMetadataQueryError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"metadata_query": savedMetadataQueryResponse(saved),
+	})
+}
+
+func (h *Handler) putExtMetadataQuery(w http.ResponseWriter, r *http.Request) {
+	queryID := strings.TrimSpace(r.PathValue("query_id"))
+	if queryID == "" {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "metadata query request validation failed", map[string]string{
+			"query_id": "query_id is required",
+		})
+		return
+	}
+
+	update, ok := savedMetadataQueryUpdateFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	saved, err := h.paths.UpdateSavedMetadataQuery(r.Context(), queryID, update)
+	if err != nil {
+		writeMetadataQueryError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"metadata_query": savedMetadataQueryResponse(saved),
+	})
+}
+
+func (h *Handler) deleteExtMetadataQuery(w http.ResponseWriter, r *http.Request) {
+	queryID := strings.TrimSpace(r.PathValue("query_id"))
+	if queryID == "" {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "metadata query request validation failed", map[string]string{
+			"query_id": "query_id is required",
+		})
+		return
+	}
+
+	if err := h.paths.DeleteSavedMetadataQuery(r.Context(), queryID); err != nil {
+		writeMetadataQueryError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) getExtS3Buckets(w http.ResponseWriter, r *http.Request) {
@@ -563,6 +658,124 @@ func s3BucketListOptionsFromRequest(r *http.Request, defaultRecursive bool) (iro
 	}, nil
 }
 
+type savedMetadataQueryRequest struct {
+	Name        string                            `json:"name"`
+	Description string                            `json:"description,omitempty"`
+	Query       *metadataext.EntryQueryDefinition `json:"query"`
+}
+
+type savedMetadataQueryLinks struct {
+	Self   *domain.ActionLink `json:"self,omitempty"`
+	Update *domain.ActionLink `json:"update,omitempty"`
+	Delete *domain.ActionLink `json:"delete,omitempty"`
+}
+
+type savedMetadataQueryCollectionLinksResponse struct {
+	Self   *domain.ActionLink `json:"self,omitempty"`
+	Create *domain.ActionLink `json:"create,omitempty"`
+}
+
+type savedMetadataQueryResponsePayload struct {
+	metadataext.SavedEntryQuery
+	Links *savedMetadataQueryLinks `json:"links,omitempty"`
+}
+
+type savedMetadataQuerySummaryResponsePayload struct {
+	metadataext.SavedEntryQuerySummary
+	Links *savedMetadataQueryLinks `json:"links,omitempty"`
+}
+
+func savedMetadataQueryUpdateFromRequest(w http.ResponseWriter, r *http.Request) (metadataext.SavedEntryQueryUpdate, bool) {
+	var request savedMetadataQueryRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
+		return metadataext.SavedEntryQueryUpdate{}, false
+	}
+
+	if fields := savedMetadataQueryValidationFields(request); len(fields) > 0 {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "metadata query request validation failed", fields)
+		return metadataext.SavedEntryQueryUpdate{}, false
+	}
+
+	return metadataext.SavedEntryQueryUpdate{
+		Name:        strings.TrimSpace(request.Name),
+		Description: strings.TrimSpace(request.Description),
+		Query:       *request.Query,
+	}, true
+}
+
+func savedMetadataQueryValidationFields(request savedMetadataQueryRequest) map[string]string {
+	fields := map[string]string{}
+	if strings.TrimSpace(request.Name) == "" {
+		fields["name"] = "name is required"
+	}
+	if request.Query == nil {
+		fields["query"] = "query is required"
+	}
+	return fields
+}
+
+func savedMetadataQuerySummaryResponseList(summaries []metadataext.SavedEntryQuerySummary) []savedMetadataQuerySummaryResponsePayload {
+	if len(summaries) == 0 {
+		return []savedMetadataQuerySummaryResponsePayload{}
+	}
+
+	responses := make([]savedMetadataQuerySummaryResponsePayload, 0, len(summaries))
+	for _, summary := range summaries {
+		responses = append(responses, savedMetadataQuerySummaryResponse(summary))
+	}
+	return responses
+}
+
+func savedMetadataQuerySummaryResponse(summary metadataext.SavedEntryQuerySummary) savedMetadataQuerySummaryResponsePayload {
+	return savedMetadataQuerySummaryResponsePayload{
+		SavedEntryQuerySummary: summary,
+		Links:                  savedMetadataQueryLinksForID(summary.ID),
+	}
+}
+
+func savedMetadataQueryResponse(saved metadataext.SavedEntryQuery) savedMetadataQueryResponsePayload {
+	return savedMetadataQueryResponsePayload{
+		SavedEntryQuery: saved,
+		Links:           savedMetadataQueryLinksForID(saved.ID),
+	}
+}
+
+func savedMetadataQueryLinksForID(queryID string) *savedMetadataQueryLinks {
+	href := "/api/v1/ext/metadata-queries/" + url.PathEscape(strings.TrimSpace(queryID))
+	return &savedMetadataQueryLinks{
+		Self: &domain.ActionLink{
+			Href:   href,
+			Method: http.MethodGet,
+		},
+		Update: &domain.ActionLink{
+			Href:   href,
+			Method: http.MethodPut,
+		},
+		Delete: &domain.ActionLink{
+			Href:   href,
+			Method: http.MethodDelete,
+		},
+	}
+}
+
+func savedMetadataQueryCollectionLinks(r *http.Request) *savedMetadataQueryCollectionLinksResponse {
+	links := &savedMetadataQueryCollectionLinksResponse{
+		Self: actionLinkFromRequest(r),
+		Create: &domain.ActionLink{
+			Href:   "/api/v1/ext/metadata-queries",
+			Method: http.MethodPost,
+		},
+	}
+	if links.Self == nil {
+		links.Self = &domain.ActionLink{
+			Href:   "/api/v1/ext/metadata-queries",
+			Method: http.MethodGet,
+		}
+	}
+	return links
+}
+
 func favoriteResponseList(favorites []domain.Favorite) []domain.Favorite {
 	if len(favorites) == 0 {
 		return []domain.Favorite{}
@@ -742,6 +955,25 @@ func writeS3AdminError(w http.ResponseWriter, err error) {
 		errors.Is(err, s3adminext.ErrInvalidUserSecretKey),
 		errors.Is(err, s3adminext.ErrInvalidUserID),
 		errors.Is(err, s3adminext.ErrInvalidUserSecretKeyIRODSPath):
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	default:
+		writePathError(w, err)
+	}
+}
+
+func writeMetadataQueryError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, irods.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", err.Error())
+	case errors.Is(err, irods.ErrPermissionDenied):
+		writeError(w, http.StatusForbidden, "permission_denied", err.Error())
+	case errors.Is(err, irods.ErrConflict):
+		writeError(w, http.StatusConflict, "conflict", err.Error())
+	case errors.Is(err, metadataext.ErrInvalidUserHome),
+		errors.Is(err, metadataext.ErrInvalidSavedEntryQueryID),
+		errors.Is(err, metadataext.ErrInvalidSavedEntryQueryName),
+		errors.Is(err, metadataext.ErrInvalidSavedEntryQuery),
+		errors.Is(err, metadataext.ErrInvalidEntryQuery):
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 	default:
 		writePathError(w, err)

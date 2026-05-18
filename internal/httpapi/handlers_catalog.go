@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
 	"github.com/michael-conway/go-irodsclient-extensions/cmdcues"
+	metadataext "github.com/michael-conway/go-irodsclient-extensions/metadata"
 	"github.com/michael-conway/irods-go-rest/internal/domain"
 	"github.com/michael-conway/irods-go-rest/internal/irods"
 )
@@ -214,6 +216,249 @@ func (h *Handler) getPathChildren(w http.ResponseWriter, r *http.Request) {
 			"matched_count":  searchResult.MatchedCount,
 		},
 	})
+}
+
+type pathQueryRequest struct {
+	Version            string                          `json:"version,omitempty"`
+	Type               string                          `json:"type,omitempty"`
+	IRODSPath          string                          `json:"irods_path,omitempty"`
+	SearchScope        metadataext.EntryQueryScopeMode `json:"search_scope,omitempty"`
+	Scope              *metadataext.EntryQueryScope    `json:"scope,omitempty"`
+	Kinds              []metadataext.EntryKind         `json:"kinds,omitempty"`
+	Conditions         []metadataext.EntryCondition    `json:"conditions,omitempty"`
+	AVU                *metadataext.AVUQuerySpec       `json:"avu,omitempty"`
+	Defaults           metadataext.EntryQueryDefaults  `json:"defaults,omitempty"`
+	ReplicaPolicy      metadataext.ReplicaPolicy       `json:"replica_policy,omitempty"`
+	Metadata           map[string]interface{}          `json:"metadata,omitempty"`
+	Limit              int                             `json:"limit,omitempty"`
+	PageToken          string                          `json:"page_token,omitempty"`
+	IncludeTotals      *bool                           `json:"include_totals,omitempty"`
+	IncludeMatchedAVUs *bool                           `json:"include_matched_avus,omitempty"`
+}
+
+type pathQueryPageResponse struct {
+	Limit         int                      `json:"limit"`
+	HasMore       bool                     `json:"has_more"`
+	NextPageToken string                   `json:"next_page_token,omitempty"`
+	Returned      pathQueryCountsResponse  `json:"returned"`
+	Scanned       pathQueryCountsResponse  `json:"scanned"`
+	Totals        *pathQueryCountsResponse `json:"totals,omitempty"`
+}
+
+type pathQueryCountsResponse struct {
+	Collections int `json:"collections"`
+	DataObjects int `json:"data_objects"`
+}
+
+type pathQueryResponse struct {
+	IRODSPath    string                          `json:"irods_path,omitempty"`
+	PathSegments []domain.PathSegmentLink        `json:"path_segments,omitempty"`
+	Paths        []domain.PathEntry              `json:"paths"`
+	MatchedAVUs  map[string][]domain.AVUMetadata `json:"matched_avus,omitempty"`
+	Page         pathQueryPageResponse           `json:"page"`
+	Query        pathQuerySummaryResponse        `json:"query"`
+}
+
+type pathQuerySummaryResponse struct {
+	SearchScope        metadataext.EntryQueryScopeMode `json:"search_scope,omitempty"`
+	Kinds              []metadataext.EntryKind         `json:"kinds"`
+	Conditions         []metadataext.EntryCondition    `json:"conditions,omitempty"`
+	IncludeTotals      bool                            `json:"include_totals,omitempty"`
+	IncludeMatchedAVUs bool                            `json:"include_matched_avus,omitempty"`
+}
+
+func (h *Handler) postPathQuery(w http.ResponseWriter, r *http.Request) {
+	request, err := decodePathQueryRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	cursor, err := decodeEntryQueryPageToken(request.PageToken)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	definition, err := pathQueryDefinition(request)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	query, err := definition.ToEntryQuery(metadataext.EntryQueryExecutionOptions{
+		Limit:              request.Limit,
+		Cursor:             cursor,
+		IncludeTotals:      request.IncludeTotals,
+		IncludeMatchedAVUs: request.IncludeMatchedAVUs,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	result, err := h.paths.QueryPathEntries(r.Context(), irods.PathQueryOptions{Query: query})
+	if err != nil {
+		if errors.Is(err, metadataext.ErrInvalidEntryQuery) {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		writePathError(w, err)
+		return
+	}
+
+	paths := make([]domain.PathEntry, 0, len(result.Entries))
+	for _, entry := range result.Entries {
+		paths = append(paths, pathEntryResponse(r, entry))
+	}
+
+	response := pathQueryResponse{
+		IRODSPath:    queryScopeRoot(result.Query),
+		PathSegments: buildPathSegments(queryScopeRoot(result.Query)),
+		Paths:        paths,
+		MatchedAVUs:  result.MatchedAVUs,
+		Page:         pathQueryPage(result.Page),
+		Query:        pathQuerySummary(result.Query),
+	}
+	if response.IRODSPath == "" {
+		response.PathSegments = nil
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+func decodePathQueryRequest(r *http.Request) (pathQueryRequest, error) {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+
+	var request pathQueryRequest
+	if err := decoder.Decode(&request); err != nil {
+		return pathQueryRequest{}, fmt.Errorf("request body must be valid path query JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return pathQueryRequest{}, fmt.Errorf("request body must contain one JSON object")
+	}
+	return request, nil
+}
+
+func pathQueryDefinition(request pathQueryRequest) (metadataext.EntryQueryDefinition, error) {
+	scope, err := pathQueryScope(request)
+	if err != nil {
+		return metadataext.EntryQueryDefinition{}, err
+	}
+
+	return metadataext.EntryQueryDefinition{
+		Version:       request.Version,
+		Type:          request.Type,
+		Kinds:         request.Kinds,
+		Scope:         scope,
+		Conditions:    request.Conditions,
+		AVU:           request.AVU,
+		Defaults:      request.Defaults,
+		ReplicaPolicy: request.ReplicaPolicy,
+		Metadata:      request.Metadata,
+	}, nil
+}
+
+func pathQueryScope(request pathQueryRequest) (*metadataext.EntryQueryScope, error) {
+	hasShortcutScope := strings.TrimSpace(request.IRODSPath) != "" || strings.TrimSpace(string(request.SearchScope)) != ""
+	if request.Scope != nil && hasShortcutScope {
+		return nil, fmt.Errorf("use either scope or irods_path/search_scope, not both")
+	}
+	if request.Scope != nil {
+		scope := *request.Scope
+		return &scope, nil
+	}
+	if !hasShortcutScope {
+		return nil, nil
+	}
+
+	mode := request.SearchScope
+	if mode == "" {
+		mode = metadataext.EntryQueryScopeChildren
+	}
+	switch mode {
+	case metadataext.EntryQueryScopeSelf, metadataext.EntryQueryScopeChildren, metadataext.EntryQueryScopeDescendants, metadataext.EntryQueryScopeAbsolute:
+	default:
+		return nil, fmt.Errorf("search_scope must be one of self, children, descendants, or absolute")
+	}
+
+	return &metadataext.EntryQueryScope{
+		Root: strings.TrimSpace(request.IRODSPath),
+		Mode: mode,
+	}, nil
+}
+
+func decodeEntryQueryPageToken(token string) (*metadataext.EntryQueryCursor, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, nil
+	}
+
+	data, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return nil, fmt.Errorf("page_token is invalid")
+	}
+
+	var cursor metadataext.EntryQueryCursor
+	if err := json.Unmarshal(data, &cursor); err != nil {
+		return nil, fmt.Errorf("page_token is invalid")
+	}
+	return &cursor, nil
+}
+
+func encodeEntryQueryPageToken(cursor *metadataext.EntryQueryCursor) string {
+	if cursor == nil {
+		return ""
+	}
+
+	data, err := json.Marshal(cursor)
+	if err != nil {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(data)
+}
+
+func pathQueryPage(page metadataext.EntryQueryPage) pathQueryPageResponse {
+	response := pathQueryPageResponse{
+		Limit:         page.Limit,
+		HasMore:       page.HasMore,
+		NextPageToken: encodeEntryQueryPageToken(page.Next),
+		Returned:      pathQueryCounts(page.Returned),
+		Scanned:       pathQueryCounts(page.Scanned),
+	}
+	if page.Totals != nil {
+		totals := pathQueryCounts(*page.Totals)
+		response.Totals = &totals
+	}
+	return response
+}
+
+func pathQueryCounts(counts metadataext.EntryQueryCounts) pathQueryCountsResponse {
+	return pathQueryCountsResponse{
+		Collections: counts.Collections,
+		DataObjects: counts.DataObjects,
+	}
+}
+
+func pathQuerySummary(query metadataext.EntryQuery) pathQuerySummaryResponse {
+	summary := pathQuerySummaryResponse{
+		Kinds:              append([]metadataext.EntryKind(nil), query.Kinds...),
+		Conditions:         append([]metadataext.EntryCondition(nil), query.Conditions...),
+		IncludeTotals:      query.IncludeTotals,
+		IncludeMatchedAVUs: query.IncludeMatchedAVUs,
+	}
+	if query.Scope != nil {
+		summary.SearchScope = query.Scope.Mode
+	}
+	return summary
+}
+
+func queryScopeRoot(query metadataext.EntryQuery) string {
+	if query.Scope == nil || query.Scope.Mode == metadataext.EntryQueryScopeAbsolute {
+		return ""
+	}
+	return strings.TrimSpace(query.Scope.Root)
 }
 
 func (h *Handler) getPathReplicas(w http.ResponseWriter, r *http.Request) {
