@@ -17,6 +17,7 @@ import (
 type RestConfig struct {
 	PublicURL                  string
 	ListenAddr                 string
+	CORSAllowedOrigins         []string
 	RestLogLevel               string //info, debug
 	IrodsHost                  string
 	IrodsPort                  int
@@ -189,6 +190,7 @@ func bindEnvVars(v *viper.Viper) error {
 	envBindings := map[string][]string{
 		"PublicURL":                              {"GOREST_PUBLIC_URL", "GOREST_PUBLICURL"},
 		"ListenAddr":                             {"IRODS_REST_ADDR", "GOREST_LISTEN_ADDR", "GOREST_LISTENADDR"},
+		"CORSAllowedOrigins":                     {"GOREST_CORS_ALLOWED_ORIGINS", "GOREST_CORSALLOWEDORIGINS"},
 		"RestLogLevel":                           {"GOREST_REST_LOG_LEVEL", "GOREST_RESTLOGLEVEL"},
 		"IrodsHost":                              {"GOREST_IRODS_HOST", "GOREST_IRODSHOST"},
 		"IrodsPort":                              {"GOREST_IRODS_PORT", "GOREST_IRODSPORT"},

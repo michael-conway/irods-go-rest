@@ -117,6 +117,7 @@ The service reads `rest-config.yaml` plus `GOREST_*` environment variables. Envi
 Common settings include:
 
 * `GOREST_PUBLIC_URL`
+* `GOREST_CORS_ALLOWED_ORIGINS`
 * `GOREST_REST_LOG_LEVEL`
 * `GOREST_IRODS_ZONE`
 * `GOREST_IRODS_HOST`

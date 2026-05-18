@@ -23,6 +23,7 @@ These are the settings you will usually care about:
 ```bash
 GOREST_PUBLIC_URL=http://localhost:8080
 IRODS_REST_ADDR=:8080
+GOREST_CORS_ALLOWED_ORIGINS=http://localhost:8081,http://127.0.0.1:8081
 GOREST_REST_LOG_LEVEL=info
 
 GOREST_IRODS_HOST=irods-provider
@@ -49,6 +50,11 @@ GOREST_OIDC_INSECURE_SKIP_VERIFY=false
 links. `IRODS_REST_ADDR` is the socket address the HTTP server binds to. In
 containers, use `IRODS_REST_ADDR=:8080` so Docker port publishing can reach the
 service.
+
+`GOREST_CORS_ALLOWED_ORIGINS` is optional and accepts a comma-separated list of
+browser origins allowed to call the API from a separate frontend origin. This is
+needed when Starbase is served from a different host or port than
+`irods-go-rest`, for example `http://localhost:8081`.
 
 If your local Keycloak uses a self-signed certificate, you can temporarily use:
 

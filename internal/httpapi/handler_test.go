@@ -44,6 +44,53 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+func TestCORSPreflightAllowsConfiguredOrigin(t *testing.T) {
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.CORSAllowedOrigins = []string{"http://localhost:8081"}
+	})
+
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/path?irods_path=/tempZone/home/test1", nil)
+	req.Header.Set("Origin", "http://localhost:8081")
+	req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+	req.Header.Set("Access-Control-Request-Headers", "authorization, content-type")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:8081" {
+		t.Fatalf("expected allowed origin header, got %q", got)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Headers"); got != "authorization, content-type" {
+		t.Fatalf("expected requested headers to be allowed, got %q", got)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, http.MethodGet) || !strings.Contains(got, http.MethodOptions) {
+		t.Fatalf("expected CORS methods to include GET and OPTIONS, got %q", got)
+	}
+}
+
+func TestCORSPreflightRejectsUnconfiguredOrigin(t *testing.T) {
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.CORSAllowedOrigins = []string{"http://localhost:8081"}
+	})
+
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/path?irods_path=/tempZone/home/test1", nil)
+	req.Header.Set("Origin", "http://example.invalid")
+	req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("expected no allowed origin header, got %q", got)
+	}
+}
+
 func TestOpenAPISpec(t *testing.T) {
 	handler := testHandler(t)
 

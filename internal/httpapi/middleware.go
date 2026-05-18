@@ -13,6 +13,73 @@ import (
 	"github.com/michael-conway/irods-go-rest/internal/auth"
 )
 
+const defaultCORSAllowedMethods = "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS"
+const defaultCORSAllowedHeaders = "Authorization, Content-Type, Accept"
+
+func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
+	allowed := normalizedAllowedOrigins(allowedOrigins)
+	if len(allowed) == 0 {
+		return next
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		allowOrigin := allowedCORSOrigin(origin, allowed)
+		if allowOrigin != "" {
+			header := w.Header()
+			header.Set("Access-Control-Allow-Origin", allowOrigin)
+			header.Add("Vary", "Origin")
+			header.Set("Access-Control-Allow-Methods", defaultCORSAllowedMethods)
+
+			requestedHeaders := strings.TrimSpace(r.Header.Get("Access-Control-Request-Headers"))
+			if requestedHeaders == "" {
+				requestedHeaders = defaultCORSAllowedHeaders
+			}
+			header.Set("Access-Control-Allow-Headers", requestedHeaders)
+			header.Set("Access-Control-Max-Age", "600")
+		}
+
+		if r.Method == http.MethodOptions && strings.TrimSpace(r.Header.Get("Access-Control-Request-Method")) != "" {
+			if origin != "" && allowOrigin == "" {
+				http.Error(w, "CORS origin is not allowed", http.StatusForbidden)
+				return
+			}
+
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func normalizedAllowedOrigins(origins []string) map[string]struct{} {
+	allowed := map[string]struct{}{}
+	for _, origin := range origins {
+		origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+		if origin == "" {
+			continue
+		}
+		allowed[origin] = struct{}{}
+	}
+	return allowed
+}
+
+func allowedCORSOrigin(origin string, allowed map[string]struct{}) string {
+	origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+	if origin == "" {
+		return ""
+	}
+
+	if _, ok := allowed["*"]; ok {
+		return "*"
+	}
+	if _, ok := allowed[origin]; ok {
+		return origin
+	}
+	return ""
+}
+
 func requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()

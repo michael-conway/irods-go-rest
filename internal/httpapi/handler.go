@@ -140,7 +140,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("GET /api/v1/ext/s3/user-secrets/{user_name}", h.requireBearer(http.HandlerFunc(h.getExtS3UserSecret)))
 	mux.Handle("DELETE /api/v1/ext/s3/user-secrets/{user_name}", h.requireBearer(http.HandlerFunc(h.deleteExtS3UserSecret)))
 
-	return requestLogger(mux)
+	return requestLogger(corsMiddleware(h.cfg.CORSAllowedOrigins, mux))
 }
 
 func pathValue(r *http.Request, key string) string {
