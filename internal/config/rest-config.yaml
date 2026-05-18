@@ -27,6 +27,7 @@ OidcRealm:
 OidcScope: openid profile email
 PublicUrl: http://localhost:8080
 ListenAddr:
+CORSAllowedOrigins:
 RestLogLevel: info
 ResourceAffinity:
   - demoResc

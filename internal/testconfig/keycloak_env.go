@@ -10,7 +10,7 @@ import (
 	"github.com/michael-conway/irods-go-rest/internal/config"
 )
 
-const DefaultKeycloakEnvPath = "deployments/docker-test-framework/5-0/keycloak.env"
+const DefaultKeycloakEnvPath = "../irods-grid-stack/.env"
 const keycloakRealmFileName = "realm-drs.json"
 
 func ResolveTestSupportPath(repoRoot string, path string) string {
@@ -43,8 +43,9 @@ func ApplyKeycloakEnvDefaults(repoRoot string, cfg *config.RestConfig, keycloakE
 	}
 
 	if cfg.OidcUrl == "" {
-		if hostname := strings.TrimSpace(values["KC_HOSTNAME"]); hostname != "" {
-			cfg.OidcUrl = "https://" + hostname + ":8443"
+		if hostname := firstNonEmpty(values["KEYCLOAK_HOSTNAME"], values["KC_HOSTNAME"]); hostname != "" {
+			port := firstNonEmpty(values["KEYCLOAK_HTTPS_HOST_PORT"], "8443")
+			cfg.OidcUrl = "https://" + hostname + ":" + port
 		}
 	}
 
@@ -57,15 +58,29 @@ func ApplyKeycloakEnvDefaults(repoRoot string, cfg *config.RestConfig, keycloakE
 	}
 
 	if cfg.OidcRealm == "" {
-		realmFilePath := filepath.Join(filepath.Dir(resolvedEnvPath), keycloakRealmFileName)
-		realm, err := readRealmName(realmFilePath)
-		if err != nil {
-			return err
+		if realm := strings.TrimSpace(values["OIDC_REALM"]); realm != "" {
+			cfg.OidcRealm = realm
+		} else {
+			realmFilePath := filepath.Join(filepath.Dir(resolvedEnvPath), keycloakRealmFileName)
+			realm, err := readRealmName(realmFilePath)
+			if err != nil {
+				return err
+			}
+			cfg.OidcRealm = realm
 		}
-		cfg.OidcRealm = realm
 	}
 
 	return nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+
+	return ""
 }
 
 func readKeycloakEnv(path string) (map[string]string, error) {

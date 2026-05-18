@@ -52,8 +52,8 @@ The repository follows a conventional Go layout centered around an OpenAPI-descr
 | `internal/irods/` | iRODS integration boundary and service scaffolding |
 | `internal/domain/` | API-facing domain models |
 | `api/` | OpenAPI contract and embedding support |
-| `e2e/` | Docker-compose-backed end-to-end HTTP tests |
-| `deployments/` | Docker and local development deployment assets |
+| `e2e/` | End-to-end HTTP tests that run against a reachable REST service and iRODS test grid |
+| `deployments/` | Legacy docker-test-framework assets retained during migration to `irods-grid-stack` |
 
 ## Stack and Testing Strategy
 
@@ -66,7 +66,26 @@ Testing is currently centered on package-local unit tests, especially in the HTT
 * auth flow and token verification behavior is tested independently from browser login flow support
 * the iRODS adapter remains scaffolded so the contract can evolve before binding fully to go-irodsclient
 
-For docker-compose-backed HTTP system testing, `irods-go-rest` now also reserves `e2e/` for explicit end-to-end tests using the `e2e` build tag.
+For HTTP system testing, `irods-go-rest` reserves `e2e/` for explicit end-to-end tests using the `e2e` build tag.
+The preferred local test environment is now
+[`irods-grid-stack`](https://github.com/michael-conway/irods-grid-stack). The
+legacy compose files under `deployments/docker-test-framework/` are deprecated
+and should be treated as compatibility fixtures while REST and DRS development
+workflows move to the shared grid stack.
+
+Use `irods-grid-stack` in one of two modes:
+
+* backend-only: run `docker compose up -d --build` from `irods-grid-stack` to
+  start iRODS provider/resource, Keycloak, and S3 API services, then run
+  `irods-go-rest` or `irods-go-drs` locally from source
+* full stack: run `docker compose --profile frontend up -d --build` from
+  `irods-grid-stack` to also start REST, DRS, and Starbase containers
+
+For host-run `irods-go-rest` integration or E2E tests, point
+`GOREST_E2E_CONFIG_FILE` at a host-facing config such as
+`./e2e/rest-config.e2e.sample.yaml` after reviewing local ports and
+credentials. That sample is aligned with the default `irods-grid-stack` ports
+and resource names.
 
 ## Quick Start
 
@@ -98,6 +117,7 @@ The service reads `rest-config.yaml` plus `GOREST_*` environment variables. Envi
 Common settings include:
 
 * `GOREST_PUBLIC_URL`
+* `GOREST_CORS_ALLOWED_ORIGINS`
 * `GOREST_REST_LOG_LEVEL`
 * `GOREST_IRODS_ZONE`
 * `GOREST_IRODS_HOST`
@@ -251,7 +271,10 @@ docker run --rm -p 8080:8080 \
   irods-go-rest:local
 ```
 
-This service can also be added to the `irods-go-drs` docker-compose-based development stack. See [Developer Notes](./DEVELOPER_NOTES.md) for the current compose assumptions and runtime environment expectations.
+For local compose-backed development, prefer running this service with
+`irods-grid-stack`. The backend-only grid is useful when running
+`irods-go-rest` locally from source; the `frontend` profile can run the REST
+container as part of the complete demo stack. See [Developer Notes](./DEVELOPER_NOTES.md) for the current compose assumptions and runtime environment expectations.
 
 ## OpenAPI Workflow
 

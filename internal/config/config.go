@@ -17,6 +17,7 @@ import (
 type RestConfig struct {
 	PublicURL                  string
 	ListenAddr                 string
+	CORSAllowedOrigins         []string
 	RestLogLevel               string //info, debug
 	IrodsHost                  string
 	IrodsPort                  int
@@ -196,10 +197,6 @@ func bindEnvVars(v *viper.Viper) error {
 		"IrodsAdminUser":                         {"GOREST_IRODS_ADMIN_USER", "GOREST_IRODSADMINUSER"},
 		"IrodsAdminPassword":                     {"GOREST_IRODS_ADMIN_PASSWORD", "GOREST_IRODSADMINPASSWORD"},
 		"IrodsAdminPasswordFile":                 {"GOREST_IRODS_ADMIN_PASSWORD_FILE", "GOREST_IRODSADMINPASSWORDFILE"},
-		"IrodsPrimaryTestUser":                   {"GOREST_IRODS_PRIMARY_TEST_USER"},
-		"IrodsPrimaryTestPassword":               {"GOREST_IRODS_PRIMARY_TEST_PASSWORD"},
-		"IrodsSecondaryTestUser":                 {"GOREST_IRODS_SECONDARY_TEST_USER"},
-		"IrodsSecondaryTestPassword":             {"GOREST_IRODS_SECONDARY_TEST_PASSWORD"},
 		"IrodsAdminLoginType":                    {"GOREST_IRODS_ADMIN_LOGIN_TYPE", "GOREST_IRODS_ADMIN_AUTH_SCHEME", "GOREST_IRODSADMINLOGINTYPE"},
 		"IrodsAuthScheme":                        {"GOREST_IRODS_AUTH_SCHEME", "GOREST_IRODSAUTHSCHEME"},
 		"IrodsNegotiationPolicy":                 {"GOREST_IRODS_NEGOTIATION_POLICY", "GOREST_IRODSNEGOTIATIONPOLICY"},
@@ -215,6 +212,7 @@ func bindEnvVars(v *viper.Viper) error {
 		"IrodsDefaultResource":                   {"GOREST_IRODS_DEFAULT_RESOURCE", "GOREST_IRODSDEFAULTRESOURCE"},
 		"TestResource1":                          {"GOREST_TEST_RESOURCE1"},
 		"TestResource2":                          {"GOREST_TEST_RESOURCE2"},
+		"CORSAllowedOrigins":                     {"GOREST_CORS_ALLOWED_ORIGINS", "GOREST_CORSALLOWEDORIGINS"},
 		"ResourceAffinity":                       {"GOREST_RESOURCE_AFFINITY", "GOREST_RESOURCEAFFINITY"},
 		"S3ApiSupported":                         {"GOREST_S3_API_SUPPORTED", "GOREST_S3APISUPPORTED"},
 		"S3BucketMappingFile":                    {"GOREST_S3_BUCKET_MAPPING_FILE", "GOREST_S3BUCKETMAPPINGFILE"},

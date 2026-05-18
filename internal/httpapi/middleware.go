@@ -6,12 +6,100 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/michael-conway/irods-go-rest/internal/auth"
 )
+
+const defaultCORSAllowedMethods = "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS"
+const defaultCORSAllowedHeaders = "Authorization, Content-Type, Accept"
+
+func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
+	allowed := normalizedAllowedOrigins(allowedOrigins)
+	if len(allowed) == 0 {
+		return next
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		allowOrigin := allowedCORSOrigin(origin, allowed)
+		if allowOrigin != "" {
+			header := w.Header()
+			header.Set("Access-Control-Allow-Origin", allowOrigin)
+			header.Add("Vary", "Origin")
+			header.Set("Access-Control-Allow-Methods", defaultCORSAllowedMethods)
+
+			header.Set("Access-Control-Allow-Headers", defaultCORSAllowedHeaders)
+			header.Set("Access-Control-Max-Age", "600")
+		}
+
+		if r.Method == http.MethodOptions && strings.TrimSpace(r.Header.Get("Access-Control-Request-Method")) != "" {
+			if origin != "" && allowOrigin == "" {
+				http.Error(w, "CORS origin is not allowed", http.StatusForbidden)
+				return
+			}
+
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func normalizedAllowedOrigins(origins []string) map[string]string {
+	allowed := map[string]string{}
+	for _, origin := range origins {
+		canonicalOrigin := canonicalCORSOrigin(origin)
+		if canonicalOrigin == "" {
+			continue
+		}
+		allowed[canonicalOrigin] = canonicalOrigin
+	}
+	return allowed
+}
+
+func allowedCORSOrigin(origin string, allowed map[string]string) string {
+	canonicalOrigin := canonicalCORSOrigin(origin)
+	if canonicalOrigin == "" {
+		return ""
+	}
+
+	if allowed["*"] == "*" {
+		return "*"
+	}
+	if allowedOrigin := allowed[canonicalOrigin]; allowedOrigin != "" {
+		return allowedOrigin
+	}
+	return ""
+}
+
+func canonicalCORSOrigin(origin string) string {
+	origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+	if origin == "" {
+		return ""
+	}
+	if origin == "*" {
+		return "*"
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return ""
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return ""
+	}
+	if parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return ""
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return ""
+	}
+	return parsed.Scheme + "://" + parsed.Host
+}
 
 func requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

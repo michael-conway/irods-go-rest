@@ -32,6 +32,7 @@ func TestReadRestConfigEnvOverride(t *testing.T) {
 	t.Setenv("GOREST_S3_USER_MAPPING_FILE", "/tmp/s3-users.json")
 	t.Setenv("GOREST_REPLICA_TRIM_MIN_COPIES", "4")
 	t.Setenv("GOREST_REPLICA_TRIM_MIN_AGE_MINUTES", "12")
+	t.Setenv("GOREST_CORS_ALLOWED_ORIGINS", "http://localhost:8081, http://127.0.0.1:8081")
 	t.Setenv("IRODS_REST_ADDR", ":18080")
 	t.Setenv("GOREST_IRODS_ADMIN_LOGIN_TYPE", "native")
 
@@ -53,6 +54,9 @@ func TestReadRestConfigEnvOverride(t *testing.T) {
 	}
 	if len(cfg.ResourceAffinity) != 3 || cfg.ResourceAffinity[0] != "demoResc" || cfg.ResourceAffinity[1] != "edgeResc" || cfg.ResourceAffinity[2] != "archiveResc" {
 		t.Fatalf("expected trimmed ResourceAffinity from env override, got %+v", cfg.ResourceAffinity)
+	}
+	if len(cfg.CORSAllowedOrigins) != 2 || cfg.CORSAllowedOrigins[0] != "http://localhost:8081" || cfg.CORSAllowedOrigins[1] != "http://127.0.0.1:8081" {
+		t.Fatalf("expected trimmed CORSAllowedOrigins from env override, got %+v", cfg.CORSAllowedOrigins)
 	}
 	if cfg.S3BucketMappingFile != "/tmp/s3-buckets.json" {
 		t.Fatalf("expected S3BucketMappingFile from env override, got %q", cfg.S3BucketMappingFile)

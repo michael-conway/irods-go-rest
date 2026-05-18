@@ -120,7 +120,7 @@ func newIntegrationIRODSFilesystem(t *testing.T) *irodsfs.FileSystem {
 
 	filesystem, err := irodsfs.NewFileSystemWithDefault(account, "irods-go-rest-integration-test")
 	if err != nil {
-		t.Fatalf("connect to iRODS. This test requires the docker compose stack to be running: %v", err)
+		t.Fatalf("connect to iRODS. This test requires a reachable iRODS test grid; prefer the backend services from irods-grid-stack: %v", err)
 	}
 
 	return filesystem

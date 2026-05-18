@@ -75,6 +75,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("PATCH /api/v1/path", h.requireBearer(http.HandlerFunc(h.patchPath)))
 	mux.Handle("DELETE /api/v1/path", h.requireBearer(http.HandlerFunc(h.deletePath)))
 	mux.Handle("GET /api/v1/path/children", h.requireBearer(http.HandlerFunc(h.getPathChildren)))
+	mux.Handle("POST /api/v1/path/query", h.requireBearer(http.HandlerFunc(h.postPathQuery)))
 	mux.Handle("GET /api/v1/path/replicas", h.requireBearer(http.HandlerFunc(h.getPathReplicas)))
 	mux.Handle("POST /api/v1/path/replicas", h.requireBearer(http.HandlerFunc(h.postPathReplicas)))
 	mux.Handle("PATCH /api/v1/path/replicas", h.requireBearer(http.HandlerFunc(h.patchPathReplicas)))
@@ -119,6 +120,11 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("PUT /api/v1/ext/favorites", h.requireBearer(http.HandlerFunc(h.putExtFavorite)))
 	mux.Handle("DELETE /api/v1/ext/favorites", h.requireBearer(http.HandlerFunc(h.deleteExtFavorite)))
 	mux.Handle("GET /api/v1/ext/metadata-manifest", h.requireBearer(http.HandlerFunc(h.getExtMetadataManifest)))
+	mux.Handle("GET /api/v1/ext/metadata-queries", h.requireBearer(http.HandlerFunc(h.getExtMetadataQueries)))
+	mux.Handle("POST /api/v1/ext/metadata-queries", h.requireBearer(http.HandlerFunc(h.postExtMetadataQuery)))
+	mux.Handle("GET /api/v1/ext/metadata-queries/{query_id}", h.requireBearer(http.HandlerFunc(h.getExtMetadataQuery)))
+	mux.Handle("PUT /api/v1/ext/metadata-queries/{query_id}", h.requireBearer(http.HandlerFunc(h.putExtMetadataQuery)))
+	mux.Handle("DELETE /api/v1/ext/metadata-queries/{query_id}", h.requireBearer(http.HandlerFunc(h.deleteExtMetadataQuery)))
 	mux.Handle("GET /api/v1/ext/s3/buckets", h.requireBearer(http.HandlerFunc(h.getExtS3Buckets)))
 	mux.Handle("POST /api/v1/ext/s3/buckets", h.requireBearer(http.HandlerFunc(h.postExtS3Bucket)))
 	mux.Handle("PUT /api/v1/ext/s3/buckets", h.requireBearer(http.HandlerFunc(h.putExtS3Bucket)))
@@ -134,21 +140,63 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("GET /api/v1/ext/s3/user-secrets/{user_name}", h.requireBearer(http.HandlerFunc(h.getExtS3UserSecret)))
 	mux.Handle("DELETE /api/v1/ext/s3/user-secrets/{user_name}", h.requireBearer(http.HandlerFunc(h.deleteExtS3UserSecret)))
 
-	return requestLogger(mux)
+	return requestLogger(corsMiddleware(h.cfg.CORSAllowedOrigins, mux))
 }
 
 func pathValue(r *http.Request, key string) string {
 	return strings.TrimSpace(r.PathValue(key))
 }
 
-func (h *Handler) getOpenAPISpec(w http.ResponseWriter, _ *http.Request) {
+func (h *Handler) getOpenAPISpec(w http.ResponseWriter, r *http.Request) {
+	specBytes := api.OpenAPISpec
+	if serverURL := openAPIServerURL(r, h.cfg.PublicURL); serverURL != "" {
+		specBytes = []byte(strings.Replace(string(api.OpenAPISpec), "url: http://localhost:8080", "url: "+serverURL, 1))
+	}
+
 	w.Header().Set("Content-Type", "application/yaml")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(api.OpenAPISpec)
+	_, _ = w.Write(specBytes)
 }
 
 func (h *Handler) getSwaggerUI(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(swaggerUIHTML))
+}
+
+func openAPIServerURL(r *http.Request, fallbackPublicURL string) string {
+	host := requestHost(r)
+	if host == "" {
+		return strings.TrimRight(strings.TrimSpace(fallbackPublicURL), "/")
+	}
+
+	return requestScheme(r) + "://" + host
+}
+
+func requestHost(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+
+	if forwardedHost := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); forwardedHost != "" {
+		return forwardedHost
+	}
+
+	return strings.TrimSpace(r.Host)
+}
+
+func requestScheme(r *http.Request) string {
+	if r == nil {
+		return "http"
+	}
+
+	if forwardedProto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwardedProto != "" {
+		return forwardedProto
+	}
+
+	if r.TLS != nil {
+		return "https"
+	}
+
+	return "http"
 }

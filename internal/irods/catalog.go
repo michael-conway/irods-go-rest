@@ -22,6 +22,7 @@ import (
 	irodslibfs "github.com/cyverse/go-irodsclient/irods/fs"
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
 	metadataext "github.com/michael-conway/go-irodsclient-extensions/metadata"
+	metadatairodsfs "github.com/michael-conway/go-irodsclient-extensions/metadata/irodsfs"
 	s3adminext "github.com/michael-conway/go-irodsclient-extensions/s3admin"
 	s3adminirodsfs "github.com/michael-conway/go-irodsclient-extensions/s3admin/irodsfs"
 	"github.com/michael-conway/irods-go-rest/internal/config"
@@ -70,6 +71,17 @@ type PathChildrenSearchResult struct {
 	NamePattern   string
 	SearchScope   PathChildrenSearchScope
 	CaseSensitive bool
+}
+
+type PathQueryOptions struct {
+	Query metadataext.EntryQuery
+}
+
+type PathQueryResult struct {
+	Entries     []domain.PathEntry
+	MatchedAVUs map[string][]domain.AVUMetadata
+	Page        metadataext.EntryQueryPage
+	Query       metadataext.EntryQuery
 }
 
 type PathCreateOptions struct {
@@ -132,6 +144,12 @@ type CatalogService interface {
 	GetPath(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathLookupOptions) (domain.PathEntry, error)
 	GetPathChildren(ctx context.Context, requestContext *RequestContext, absolutePath string) ([]domain.PathEntry, error)
 	SearchPathChildren(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathChildrenListOptions) (PathChildrenSearchResult, error)
+	QueryPathEntries(ctx context.Context, requestContext *RequestContext, options PathQueryOptions) (PathQueryResult, error)
+	ListSavedMetadataQueries(ctx context.Context, requestContext *RequestContext) ([]metadataext.SavedEntryQuerySummary, error)
+	CreateSavedMetadataQuery(ctx context.Context, requestContext *RequestContext, update metadataext.SavedEntryQueryUpdate) (metadataext.SavedEntryQuery, error)
+	GetSavedMetadataQuery(ctx context.Context, requestContext *RequestContext, queryID string) (metadataext.SavedEntryQuery, error)
+	UpdateSavedMetadataQuery(ctx context.Context, requestContext *RequestContext, queryID string, update metadataext.SavedEntryQueryUpdate) (metadataext.SavedEntryQuery, error)
+	DeleteSavedMetadataQuery(ctx context.Context, requestContext *RequestContext, queryID string) error
 	GetPathReplicas(ctx context.Context, requestContext *RequestContext, absolutePath string, verboseLevel int) ([]domain.PathReplica, error)
 	UploadPathContents(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathContentsUploadOptions) (domain.PathContentsUploadResult, error)
 	CreatePathChild(ctx context.Context, requestContext *RequestContext, absolutePath string, options PathCreateOptions) (domain.PathEntry, error)
@@ -220,6 +238,10 @@ type CatalogFileHandle interface {
 	ReadAt(buffer []byte, offset int64) (int, error)
 	Write(data []byte) (int, error)
 	Close() error
+}
+
+type metadataEntryQueryFilesystem interface {
+	QueryMetadataEntries(query metadataext.EntryQuery) (metadataext.EntryQueryResult, error)
 }
 
 type CatalogFileSystemFactory func(account *irodstypes.IRODSAccount, applicationName string) (CatalogFileSystem, error)
@@ -377,6 +399,125 @@ func (s *catalogService) SearchPathChildren(_ context.Context, requestContext *R
 		SearchScope:   normalized.SearchScope,
 		CaseSensitive: normalized.CaseSensitive,
 	}, nil
+}
+
+func (s *catalogService) QueryPathEntries(_ context.Context, requestContext *RequestContext, options PathQueryOptions) (PathQueryResult, error) {
+	query, err := metadataext.NormalizeEntryQuery(options.Query)
+	if err != nil {
+		return PathQueryResult{}, err
+	}
+
+	scopePath := ""
+	if query.Scope != nil && query.Scope.Mode != metadataext.EntryQueryScopeAbsolute {
+		scopePath = strings.TrimSpace(query.Scope.Root)
+	}
+
+	slog.Debug("catalog QueryPathEntries start", "scope_path", scopePath, "kinds", query.Kinds, "condition_count", len(query.Conditions), "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+
+	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-query-path-entries")
+	if err != nil {
+		logIRODSError("catalog QueryPathEntries filesystem setup failed", err, "scope_path", scopePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return PathQueryResult{}, err
+	}
+	defer filesystem.Release()
+
+	if scopePath != "" {
+		entry, err := filesystem.Stat(scopePath)
+		if err != nil {
+			logIRODSError("catalog QueryPathEntries scope stat failed", err, "scope_path", scopePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			return PathQueryResult{}, normalizePathAccessError("stat path", scopePath, err)
+		}
+		if entry == nil || !entry.IsDir() {
+			return PathQueryResult{}, fmt.Errorf("%w: path %q is not a collection", ErrNotFound, scopePath)
+		}
+	}
+
+	querier, ok := filesystem.(metadataEntryQueryFilesystem)
+	if !ok {
+		return PathQueryResult{}, fmt.Errorf("metadata entry query is not available for this filesystem")
+	}
+
+	queryResult, err := querier.QueryMetadataEntries(query)
+	if err != nil {
+		logIRODSError("catalog QueryPathEntries query failed", err, "scope_path", scopePath, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		return PathQueryResult{}, normalizePathAccessError("query path metadata", scopePath, err)
+	}
+
+	return PathQueryResult{
+		Entries:     mapMetadataQueryEntries(s.cfg.IrodsZone, queryResult.Entries),
+		MatchedAVUs: mapMatchedAVUs(queryResult.MatchedAVUs),
+		Page:        queryResult.Page,
+		Query:       query,
+	}, nil
+}
+
+func (s *catalogService) ListSavedMetadataQueries(_ context.Context, requestContext *RequestContext) ([]metadataext.SavedEntryQuerySummary, error) {
+	filesystem, service, err := s.prepareSavedMetadataQueryService(requestContext, "irods-go-rest-list-saved-metadata-queries")
+	if err != nil {
+		return nil, err
+	}
+	defer filesystem.Release()
+
+	summaries, err := service.ListSavedQueries()
+	if err != nil {
+		return nil, normalizeSavedMetadataQueryError("list saved metadata queries", service.CollectionPath(), err)
+	}
+	return summaries, nil
+}
+
+func (s *catalogService) CreateSavedMetadataQuery(_ context.Context, requestContext *RequestContext, update metadataext.SavedEntryQueryUpdate) (metadataext.SavedEntryQuery, error) {
+	filesystem, service, err := s.prepareSavedMetadataQueryService(requestContext, "irods-go-rest-create-saved-metadata-query")
+	if err != nil {
+		return metadataext.SavedEntryQuery{}, err
+	}
+	defer filesystem.Release()
+
+	saved, err := service.CreateSavedQueryWithDescription(update.Name, update.Description, update.Query)
+	if err != nil {
+		return metadataext.SavedEntryQuery{}, normalizeSavedMetadataQueryError("create saved metadata query", service.CollectionPath(), err)
+	}
+	return saved, nil
+}
+
+func (s *catalogService) GetSavedMetadataQuery(_ context.Context, requestContext *RequestContext, queryID string) (metadataext.SavedEntryQuery, error) {
+	filesystem, service, err := s.prepareSavedMetadataQueryService(requestContext, "irods-go-rest-get-saved-metadata-query")
+	if err != nil {
+		return metadataext.SavedEntryQuery{}, err
+	}
+	defer filesystem.Release()
+
+	saved, err := service.GetSavedQuery(queryID)
+	if err != nil {
+		return metadataext.SavedEntryQuery{}, normalizeSavedMetadataQueryError("get saved metadata query", queryID, err)
+	}
+	return saved, nil
+}
+
+func (s *catalogService) UpdateSavedMetadataQuery(_ context.Context, requestContext *RequestContext, queryID string, update metadataext.SavedEntryQueryUpdate) (metadataext.SavedEntryQuery, error) {
+	filesystem, service, err := s.prepareSavedMetadataQueryService(requestContext, "irods-go-rest-update-saved-metadata-query")
+	if err != nil {
+		return metadataext.SavedEntryQuery{}, err
+	}
+	defer filesystem.Release()
+
+	saved, err := service.PutSavedQuery(queryID, update)
+	if err != nil {
+		return metadataext.SavedEntryQuery{}, normalizeSavedMetadataQueryError("update saved metadata query", queryID, err)
+	}
+	return saved, nil
+}
+
+func (s *catalogService) DeleteSavedMetadataQuery(_ context.Context, requestContext *RequestContext, queryID string) error {
+	filesystem, service, err := s.prepareSavedMetadataQueryService(requestContext, "irods-go-rest-delete-saved-metadata-query")
+	if err != nil {
+		return err
+	}
+	defer filesystem.Release()
+
+	if err := service.DeleteSavedQuery(queryID, true); err != nil {
+		return normalizeSavedMetadataQueryError("delete saved metadata query", queryID, err)
+	}
+	return nil
 }
 
 func (s *catalogService) GetPathReplicas(_ context.Context, requestContext *RequestContext, absolutePath string, verboseLevel int) ([]domain.PathReplica, error) {
@@ -1873,6 +2014,26 @@ func (s *catalogService) requestUserHomePath(requestContext *RequestContext) (st
 	return path.Join("/", zone, "home", username), nil
 }
 
+func (s *catalogService) prepareSavedMetadataQueryService(requestContext *RequestContext, applicationName string) (CatalogFileSystem, *metadataext.SavedEntryQueryService, error) {
+	filesystem, err := s.filesystemForRequest(requestContext, applicationName)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	userHomePath, err := s.requestUserHomePath(requestContext)
+	if err != nil {
+		filesystem.Release()
+		return nil, nil, err
+	}
+
+	service, err := metadataext.NewSavedEntryQueryService(&savedMetadataQueryFilesystemAdapter{filesystem: filesystem}, userHomePath)
+	if err != nil {
+		filesystem.Release()
+		return nil, nil, normalizeSavedMetadataQueryError("create saved metadata query service", userHomePath, err)
+	}
+	return filesystem, service, nil
+}
+
 func (s *catalogService) prepareFavoritesFilesystem(requestContext *RequestContext, applicationName string) (CatalogFileSystem, string, error) {
 	filesystem, err := s.filesystemForRequest(requestContext, applicationName)
 	if err != nil {
@@ -2053,6 +2214,125 @@ type catalogObjectReader struct {
 	filesystem CatalogFileSystem
 }
 
+type savedMetadataQueryFilesystemAdapter struct {
+	filesystem CatalogFileSystem
+}
+
+func (a *savedMetadataQueryFilesystemAdapter) CollectionExists(irodsPath string) (bool, error) {
+	if a == nil || a.filesystem == nil {
+		return false, metadataext.ErrMissingFilesystem
+	}
+
+	entry, err := a.filesystem.Stat(irodsPath)
+	if err != nil {
+		normalizedErr := normalizePathAccessError("stat collection", irodsPath, err)
+		if errors.Is(normalizedErr, ErrNotFound) {
+			return false, nil
+		}
+		return false, normalizedErr
+	}
+
+	return entry != nil && entry.IsDir(), nil
+}
+
+func (a *savedMetadataQueryFilesystemAdapter) CreateCollection(irodsPath string, recurse bool) error {
+	if a == nil || a.filesystem == nil {
+		return metadataext.ErrMissingFilesystem
+	}
+	if err := a.filesystem.MakeDir(irodsPath, recurse); err != nil {
+		return normalizePathAccessError("create collection", irodsPath, err)
+	}
+	return nil
+}
+
+func (a *savedMetadataQueryFilesystemAdapter) ReadDataObject(dataObjectPath string) ([]byte, error) {
+	if a == nil || a.filesystem == nil {
+		return nil, metadataext.ErrMissingFilesystem
+	}
+
+	entry, err := a.filesystem.Stat(dataObjectPath)
+	if err != nil {
+		return nil, normalizePathAccessError("stat data object", dataObjectPath, err)
+	}
+	if entry == nil || entry.IsDir() {
+		return nil, fmt.Errorf("%w: path %q is not a data object", ErrNotFound, dataObjectPath)
+	}
+	if entry.Size == 0 {
+		return []byte{}, nil
+	}
+	if entry.Size < 0 || entry.Size > int64(math.MaxInt) {
+		return nil, fmt.Errorf("data object %q is too large to read", dataObjectPath)
+	}
+
+	handle, err := a.filesystem.OpenFile(dataObjectPath, "", "r")
+	if err != nil {
+		return nil, normalizePathAccessError("open data object", dataObjectPath, err)
+	}
+	defer handle.Close()
+
+	contents := make([]byte, int(entry.Size))
+	n, err := handle.ReadAt(contents, 0)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, normalizePathAccessError("read data object", dataObjectPath, err)
+	}
+	return contents[:n], nil
+}
+
+func (a *savedMetadataQueryFilesystemAdapter) WriteDataObject(dataObjectPath string, contents []byte) error {
+	if a == nil || a.filesystem == nil {
+		return metadataext.ErrMissingFilesystem
+	}
+
+	handle, err := a.filesystem.CreateFile(dataObjectPath, "", "w")
+	if err != nil {
+		return normalizePathAccessError("create data object", dataObjectPath, err)
+	}
+
+	n, writeErr := handle.Write(contents)
+	closeErr := handle.Close()
+	if writeErr != nil {
+		return normalizePathAccessError("write data object", dataObjectPath, writeErr)
+	}
+	if n != len(contents) {
+		return normalizePathAccessError("write data object", dataObjectPath, io.ErrShortWrite)
+	}
+	if closeErr != nil {
+		return normalizePathAccessError("close data object", dataObjectPath, closeErr)
+	}
+	return nil
+}
+
+func (a *savedMetadataQueryFilesystemAdapter) DeleteDataObject(dataObjectPath string, force bool) error {
+	if a == nil || a.filesystem == nil {
+		return metadataext.ErrMissingFilesystem
+	}
+	if err := a.filesystem.RemoveFile(dataObjectPath, force); err != nil {
+		return normalizePathAccessError("delete data object", dataObjectPath, err)
+	}
+	return nil
+}
+
+func (a *savedMetadataQueryFilesystemAdapter) ListDataObjects(collectionPath string) ([]string, error) {
+	if a == nil || a.filesystem == nil {
+		return nil, metadataext.ErrMissingFilesystem
+	}
+
+	entries, err := a.filesystem.List(collectionPath)
+	if err != nil {
+		return nil, normalizePathAccessError("list collection", collectionPath, err)
+	}
+
+	paths := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry == nil || entry.IsDir() {
+			continue
+		}
+		paths = append(paths, entry.Path)
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
 type catalogFileSystemAdapter struct {
 	filesystem *irodsfs.FileSystem
 	s3Adapter  *s3adminirodsfs.Adapter
@@ -2103,6 +2383,10 @@ func (a *catalogFileSystemAdapter) SearchByMeta(metaName string, metaValue strin
 		return a.s3Adapter.SearchByMeta(metaName, metaValue)
 	}
 	return s3adminirodsfs.SearchByMeta(a.filesystem, metaName, metaValue)
+}
+
+func (a *catalogFileSystemAdapter) QueryMetadataEntries(query metadataext.EntryQuery) (metadataext.EntryQueryResult, error) {
+	return metadatairodsfs.NewAdapter(a.filesystem).QueryEntries(query)
 }
 
 func (a *catalogFileSystemAdapter) S3AdminFilesystem() s3adminext.Filesystem {
@@ -2329,6 +2613,22 @@ func normalizePathAccessError(operation string, absolutePath string, err error) 
 	}
 
 	return fmt.Errorf("%s %q: %w", operation, absolutePath, err)
+}
+
+func normalizeSavedMetadataQueryError(operation string, target string, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	if errors.Is(err, metadataext.ErrInvalidUserHome) ||
+		errors.Is(err, metadataext.ErrInvalidSavedEntryQueryID) ||
+		errors.Is(err, metadataext.ErrInvalidSavedEntryQueryName) ||
+		errors.Is(err, metadataext.ErrInvalidSavedEntryQuery) ||
+		errors.Is(err, metadataext.ErrInvalidEntryQuery) {
+		return err
+	}
+
+	return normalizePathAccessError(operation, target, err)
 }
 
 func resolveChildPath(parentPath string, childName string) (string, error) {
@@ -3098,6 +3398,51 @@ func mapPathChildrenEntries(zone string, entries []*irodsfs.Entry) []domain.Path
 		results = append(results, dataObjectPathEntry(zone, child, nil, PathLookupOptions{}))
 	}
 	return results
+}
+
+func mapMetadataQueryEntries(zone string, entries []*metadataext.Entry) []domain.PathEntry {
+	results := make([]domain.PathEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		if entry.IsDir() {
+			results = append(results, collectionPathEntry(zone, entry, nil, 0, PathLookupOptions{}))
+			continue
+		}
+		results = append(results, dataObjectPathEntry(zone, entry, nil, PathLookupOptions{}))
+	}
+	return results
+}
+
+func mapMatchedAVUs(matched map[string][]metadataext.AVUStat) map[string][]domain.AVUMetadata {
+	if len(matched) == 0 {
+		return nil
+	}
+
+	result := make(map[string][]domain.AVUMetadata, len(matched))
+	for irodsPath, avus := range matched {
+		if strings.TrimSpace(irodsPath) == "" || len(avus) == 0 {
+			continue
+		}
+		for _, avu := range avus {
+			result[irodsPath] = append(result[irodsPath], avuMetadataFromStat(avu))
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func avuMetadataFromStat(avu metadataext.AVUStat) domain.AVUMetadata {
+	return domain.AVUMetadata{
+		Attrib:    strings.TrimSpace(avu.Name),
+		Value:     strings.TrimSpace(avu.Value),
+		Unit:      strings.TrimSpace(avu.Units),
+		CreatedAt: timePointer(avu.CreateTime),
+		UpdatedAt: timePointer(avu.ModifyTime),
+	}
 }
 
 func entryHasReplicaInResource(entry *irodsfs.Entry, resource string) bool {

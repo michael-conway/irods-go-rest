@@ -13,6 +13,7 @@ type PathService interface {
 	GetPath(ctx context.Context, absolutePath string, options irods.PathLookupOptions) (domain.PathEntry, error)
 	GetPathChildren(ctx context.Context, absolutePath string) ([]domain.PathEntry, error)
 	SearchPathChildren(ctx context.Context, absolutePath string, options irods.PathChildrenListOptions) (irods.PathChildrenSearchResult, error)
+	QueryPathEntries(ctx context.Context, options irods.PathQueryOptions) (irods.PathQueryResult, error)
 	GetPathReplicas(ctx context.Context, absolutePath string, verboseLevel int) ([]domain.PathReplica, error)
 	UploadPathContents(ctx context.Context, absolutePath string, options irods.PathContentsUploadOptions) (domain.PathContentsUploadResult, error)
 	CreatePathChild(ctx context.Context, absolutePath string, options irods.PathCreateOptions) (domain.PathEntry, error)
@@ -35,6 +36,11 @@ type PathService interface {
 	ComputePathChecksum(ctx context.Context, absolutePath string) (domain.PathChecksum, error)
 	GetObjectContentByPath(ctx context.Context, absolutePath string) (domain.ObjectContent, error)
 	GetMetadataManifest(ctx context.Context, absolutePath string) (metadataext.Manifest, error)
+	ListSavedMetadataQueries(ctx context.Context) ([]metadataext.SavedEntryQuerySummary, error)
+	CreateSavedMetadataQuery(ctx context.Context, update metadataext.SavedEntryQueryUpdate) (metadataext.SavedEntryQuery, error)
+	GetSavedMetadataQuery(ctx context.Context, queryID string) (metadataext.SavedEntryQuery, error)
+	UpdateSavedMetadataQuery(ctx context.Context, queryID string, update metadataext.SavedEntryQueryUpdate) (metadataext.SavedEntryQuery, error)
+	DeleteSavedMetadataQuery(ctx context.Context, queryID string) error
 	ListFavorites(ctx context.Context) ([]domain.Favorite, error)
 	AddFavorite(ctx context.Context, name string, favoritePath string) (domain.Favorite, error)
 	RenameFavorite(ctx context.Context, favoritePath string, name string) (domain.Favorite, error)
@@ -74,6 +80,15 @@ func (s *pathService) SearchPathChildren(ctx context.Context, absolutePath strin
 	}
 
 	return s.catalog.SearchPathChildren(ctx, irodsRequestContext(requestContext), absolutePath, options)
+}
+
+func (s *pathService) QueryPathEntries(ctx context.Context, options irods.PathQueryOptions) (irods.PathQueryResult, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return irods.PathQueryResult{}, err
+	}
+
+	return s.catalog.QueryPathEntries(ctx, irodsRequestContext(requestContext), options)
 }
 
 func (s *pathService) GetPathReplicas(ctx context.Context, absolutePath string, verboseLevel int) ([]domain.PathReplica, error) {
@@ -272,6 +287,51 @@ func (s *pathService) GetMetadataManifest(ctx context.Context, absolutePath stri
 	}
 
 	return s.catalog.GetMetadataManifest(ctx, irodsRequestContext(requestContext), absolutePath)
+}
+
+func (s *pathService) ListSavedMetadataQueries(ctx context.Context) ([]metadataext.SavedEntryQuerySummary, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.catalog.ListSavedMetadataQueries(ctx, irodsRequestContext(requestContext))
+}
+
+func (s *pathService) CreateSavedMetadataQuery(ctx context.Context, update metadataext.SavedEntryQueryUpdate) (metadataext.SavedEntryQuery, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return metadataext.SavedEntryQuery{}, err
+	}
+
+	return s.catalog.CreateSavedMetadataQuery(ctx, irodsRequestContext(requestContext), update)
+}
+
+func (s *pathService) GetSavedMetadataQuery(ctx context.Context, queryID string) (metadataext.SavedEntryQuery, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return metadataext.SavedEntryQuery{}, err
+	}
+
+	return s.catalog.GetSavedMetadataQuery(ctx, irodsRequestContext(requestContext), queryID)
+}
+
+func (s *pathService) UpdateSavedMetadataQuery(ctx context.Context, queryID string, update metadataext.SavedEntryQueryUpdate) (metadataext.SavedEntryQuery, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return metadataext.SavedEntryQuery{}, err
+	}
+
+	return s.catalog.UpdateSavedMetadataQuery(ctx, irodsRequestContext(requestContext), queryID, update)
+}
+
+func (s *pathService) DeleteSavedMetadataQuery(ctx context.Context, queryID string) error {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.catalog.DeleteSavedMetadataQuery(ctx, irodsRequestContext(requestContext), queryID)
 }
 
 func (s *pathService) ListFavorites(ctx context.Context) ([]domain.Favorite, error) {

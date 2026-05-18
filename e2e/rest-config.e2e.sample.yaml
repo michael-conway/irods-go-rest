@@ -1,7 +1,7 @@
 PublicURL: http://127.0.0.1:8080
 RestLogLevel: info
 
-IrodsHost: localhost
+IrodsHost: 127.0.0.1
 IrodsPort: 1247
 IrodsZone: tempZone
 IrodsAdminUser: rods
@@ -9,8 +9,8 @@ IrodsAdminPassword: rods
 IrodsPrimaryTestUser: test1
 IrodsPrimaryTestPassword: test
 IrodsSecondaryTestUser: test2
-IrodsSecondaryTestPassword: test2
-IrodsAdminLoginType: native
+IrodsSecondaryTestPassword: test
+IrodsAdminLoginType: nativesecurit
 IrodsAuthScheme: native
 IrodsNegotiationPolicy: CS_NEG_DONT_CARE
 IrodsSSLConfig:
@@ -23,20 +23,22 @@ IrodsSSLConfig:
   VerifyServer: hostname
   DHParamsFile:
   ServerName:
-IrodsDefaultResource: demoResc
+IrodsDefaultResource: providerResc
 S3ApiSupported: true
-S3BucketMappingFile: /tmp/irods-s3-bucket-mapping.json
-S3UserMappingFile: /tmp/irods-s3-user-mapping.json
+# S3 admin endpoints require absolute host paths. Replace /absolute/path/to
+# with your local irods-grid-stack checkout path.
+S3BucketMappingFile: /absolute/path/to/irods-grid-stack/state/shared-s3/irods-s3-bucket-mapping.json
+S3UserMappingFile: /absolute/path/to/irods-grid-stack/state/shared-s3/irods-s3-user-mapping.json
 ReplicaTrimMinCopies: 1
 ReplicaTrimMinAgeMinutes: 0
 
-TestResource1: test1-resc
-TestResource2: test1-resc2
+TestResource1: providerResc
+TestResource2: resourceResc
 
 OidcUrl: https://localhost:8443
 OidcClientId: irods-go-rest
 OidcClientSecret: change-me
-OidcInsecureSkipVerify: false
+OidcInsecureSkipVerify: true
 OidcRealm: drs
 OidcScope: openid profile email
 TestBearerToken: ""

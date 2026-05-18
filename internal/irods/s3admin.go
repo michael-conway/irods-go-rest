@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
+	metadataext "github.com/michael-conway/go-irodsclient-extensions/metadata"
 	s3adminext "github.com/michael-conway/go-irodsclient-extensions/s3admin"
 	"github.com/michael-conway/irods-go-rest/internal/domain"
 	"github.com/rs/xid"
@@ -593,6 +594,68 @@ func (adapter *s3AdminFilesystemAdapter) SearchByMeta(metaName string, metaValue
 	return adapter.filesystem.SearchByMeta(metaName, metaValue)
 }
 
+func (adapter *s3AdminFilesystemAdapter) QueryCollectionMetadata(metaName string, metaValue string, options s3adminext.CollectionMetadataQueryOptions) ([]s3adminext.CollectionMetadataMatch, error) {
+	scopeMode, err := s3CollectionMetadataScopeMode(options.Scope)
+	if err != nil {
+		return nil, err
+	}
+
+	querier, ok := adapter.filesystem.(metadataEntryQueryFilesystem)
+	if !ok {
+		return nil, fmt.Errorf("collection metadata query is not available for this filesystem")
+	}
+
+	builder := metadataext.NewEntryQuery().
+		Collections().
+		Scope(options.IRODSPath, scopeMode).
+		AVU(metaName, metaValue, metadataext.AnyUnit).
+		IncludeMatchedAVUs(true).
+		Limit(500)
+
+	matchesByPath := map[string][]s3adminext.Metadata{}
+	paths := []string{}
+	var cursor *metadataext.EntryQueryCursor
+	for {
+		result, err := querier.QueryMetadataEntries(builder.Cursor(cursor).Build())
+		if err != nil {
+			return nil, err
+		}
+
+		for _, entry := range result.Entries {
+			if entry == nil || !entry.IsDir() {
+				continue
+			}
+			avus := s3MetadataFromMatchedAVUs(result.MatchedAVUs[entry.Path])
+			if len(avus) == 0 {
+				continue
+			}
+			if _, ok := matchesByPath[entry.Path]; !ok {
+				paths = append(paths, entry.Path)
+			}
+			for _, avu := range avus {
+				matchesByPath[entry.Path] = appendUniqueS3Metadata(matchesByPath[entry.Path], avu)
+			}
+		}
+
+		if !result.Page.HasMore {
+			break
+		}
+		if result.Page.Next == nil {
+			return nil, fmt.Errorf("metadata collection query returned has_more without a cursor")
+		}
+		cursor = result.Page.Next
+	}
+
+	matches := make([]s3adminext.CollectionMetadataMatch, 0, len(paths))
+	for _, irodsPath := range paths {
+		matches = append(matches, s3adminext.CollectionMetadataMatch{
+			IRODSPath: irodsPath,
+			Metadata:  matchesByPath[irodsPath],
+		})
+	}
+	return matches, nil
+}
+
 func (adapter *s3AdminFilesystemAdapter) ListCollectionMetadata(collectionPath string) ([]s3adminext.Metadata, error) {
 	metadata, err := adapter.filesystem.ListMetadata(collectionPath)
 	if err != nil {
@@ -693,6 +756,62 @@ func (adapter *s3AdminFilesystemAdapter) ListDataObjectMetadata(dataObjectPath s
 	return adapter.metadata(dataObjectPath)
 }
 
+func (adapter *s3AdminFilesystemAdapter) QueryDataObjectMetadata(metaName string, metaValue string) ([]s3adminext.DataObjectMetadataMatch, error) {
+	querier, ok := adapter.filesystem.(metadataEntryQueryFilesystem)
+	if !ok {
+		return nil, fmt.Errorf("data object metadata query is not available for this filesystem")
+	}
+
+	builder := metadataext.NewEntryQuery().
+		DataObjects().
+		AVU(metaName, metaValue, metadataext.AnyUnit).
+		IncludeMatchedAVUs(true).
+		Limit(500)
+
+	matchesByPath := map[string][]s3adminext.Metadata{}
+	paths := []string{}
+	var cursor *metadataext.EntryQueryCursor
+	for {
+		result, err := querier.QueryMetadataEntries(builder.Cursor(cursor).Build())
+		if err != nil {
+			return nil, err
+		}
+
+		for _, entry := range result.Entries {
+			if entry == nil || entry.IsDir() {
+				continue
+			}
+			avus := s3MetadataFromMatchedAVUs(result.MatchedAVUs[entry.Path])
+			if len(avus) == 0 {
+				continue
+			}
+			if _, ok := matchesByPath[entry.Path]; !ok {
+				paths = append(paths, entry.Path)
+			}
+			for _, avu := range avus {
+				matchesByPath[entry.Path] = appendUniqueS3Metadata(matchesByPath[entry.Path], avu)
+			}
+		}
+
+		if !result.Page.HasMore {
+			break
+		}
+		if result.Page.Next == nil {
+			return nil, fmt.Errorf("metadata data object query returned has_more without a cursor")
+		}
+		cursor = result.Page.Next
+	}
+
+	matches := make([]s3adminext.DataObjectMetadataMatch, 0, len(paths))
+	for _, irodsPath := range paths {
+		matches = append(matches, s3adminext.DataObjectMetadataMatch{
+			IRODSPath: irodsPath,
+			Metadata:  matchesByPath[irodsPath],
+		})
+	}
+	return matches, nil
+}
+
 func (adapter *s3AdminFilesystemAdapter) AddDataObjectMetadata(dataObjectPath string, metadata s3adminext.Metadata) error {
 	return adapter.filesystem.AddMetadata(dataObjectPath, metadata.Name, metadata.Value, metadata.Units)
 }
@@ -736,4 +855,38 @@ func (adapter *s3AdminFilesystemAdapter) deleteMetadata(irodsPath string, metada
 		}
 	}
 	return irodstypes.NewFileNotFoundError(irodsPath)
+}
+
+func s3CollectionMetadataScopeMode(scope s3adminext.CollectionMetadataQueryScope) (metadataext.EntryQueryScopeMode, error) {
+	switch scope {
+	case s3adminext.CollectionMetadataQueryScopeSelf:
+		return metadataext.EntryQueryScopeSelf, nil
+	case s3adminext.CollectionMetadataQueryScopeChildren:
+		return metadataext.EntryQueryScopeChildren, nil
+	case s3adminext.CollectionMetadataQueryScopeDescendants:
+		return metadataext.EntryQueryScopeDescendants, nil
+	default:
+		return "", fmt.Errorf("unsupported collection metadata query scope %q", scope)
+	}
+}
+
+func s3MetadataFromMatchedAVUs(avus []metadataext.AVUStat) []s3adminext.Metadata {
+	result := make([]s3adminext.Metadata, 0, len(avus))
+	for _, avu := range avus {
+		result = append(result, s3adminext.Metadata{
+			Name:  avu.Name,
+			Value: avu.Value,
+			Units: avu.Units,
+		})
+	}
+	return result
+}
+
+func appendUniqueS3Metadata(existing []s3adminext.Metadata, avu s3adminext.Metadata) []s3adminext.Metadata {
+	for _, candidate := range existing {
+		if candidate.Name == avu.Name && candidate.Value == avu.Value && candidate.Units == avu.Units {
+			return existing
+		}
+	}
+	return append(existing, avu)
 }
