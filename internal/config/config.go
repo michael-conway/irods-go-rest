@@ -190,7 +190,6 @@ func bindEnvVars(v *viper.Viper) error {
 	envBindings := map[string][]string{
 		"PublicURL":                              {"GOREST_PUBLIC_URL", "GOREST_PUBLICURL"},
 		"ListenAddr":                             {"IRODS_REST_ADDR", "GOREST_LISTEN_ADDR", "GOREST_LISTENADDR"},
-		"CORSAllowedOrigins":                     {"GOREST_CORS_ALLOWED_ORIGINS", "GOREST_CORSALLOWEDORIGINS"},
 		"RestLogLevel":                           {"GOREST_REST_LOG_LEVEL", "GOREST_RESTLOGLEVEL"},
 		"IrodsHost":                              {"GOREST_IRODS_HOST", "GOREST_IRODSHOST"},
 		"IrodsPort":                              {"GOREST_IRODS_PORT", "GOREST_IRODSPORT"},
@@ -198,10 +197,6 @@ func bindEnvVars(v *viper.Viper) error {
 		"IrodsAdminUser":                         {"GOREST_IRODS_ADMIN_USER", "GOREST_IRODSADMINUSER"},
 		"IrodsAdminPassword":                     {"GOREST_IRODS_ADMIN_PASSWORD", "GOREST_IRODSADMINPASSWORD"},
 		"IrodsAdminPasswordFile":                 {"GOREST_IRODS_ADMIN_PASSWORD_FILE", "GOREST_IRODSADMINPASSWORDFILE"},
-		"IrodsPrimaryTestUser":                   {"GOREST_IRODS_PRIMARY_TEST_USER"},
-		"IrodsPrimaryTestPassword":               {"GOREST_IRODS_PRIMARY_TEST_PASSWORD"},
-		"IrodsSecondaryTestUser":                 {"GOREST_IRODS_SECONDARY_TEST_USER"},
-		"IrodsSecondaryTestPassword":             {"GOREST_IRODS_SECONDARY_TEST_PASSWORD"},
 		"IrodsAdminLoginType":                    {"GOREST_IRODS_ADMIN_LOGIN_TYPE", "GOREST_IRODS_ADMIN_AUTH_SCHEME", "GOREST_IRODSADMINLOGINTYPE"},
 		"IrodsAuthScheme":                        {"GOREST_IRODS_AUTH_SCHEME", "GOREST_IRODSAUTHSCHEME"},
 		"IrodsNegotiationPolicy":                 {"GOREST_IRODS_NEGOTIATION_POLICY", "GOREST_IRODSNEGOTIATIONPOLICY"},
