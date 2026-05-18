@@ -285,7 +285,13 @@ func addPathQueryE2EAVU(t *testing.T, filesystem *irodsfs.FileSystem, irodsPath 
 func postPathQueryE2E(t *testing.T, client *http.Client, baseURL string, request pathQueryE2ERequest) pathQueryE2EResponse {
 	t.Helper()
 
-	body, err := json.Marshal(request)
+	return postPathQueryPayloadE2E(t, client, baseURL, request)
+}
+
+func postPathQueryPayloadE2E(t *testing.T, client *http.Client, baseURL string, payload any) pathQueryE2EResponse {
+	t.Helper()
+
+	body, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal path query request: %v", err)
 	}
