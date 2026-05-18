@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -31,11 +32,7 @@ func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
 			header.Add("Vary", "Origin")
 			header.Set("Access-Control-Allow-Methods", defaultCORSAllowedMethods)
 
-			requestedHeaders := strings.TrimSpace(r.Header.Get("Access-Control-Request-Headers"))
-			if requestedHeaders == "" {
-				requestedHeaders = defaultCORSAllowedHeaders
-			}
-			header.Set("Access-Control-Allow-Headers", requestedHeaders)
+			header.Set("Access-Control-Allow-Headers", defaultCORSAllowedHeaders)
 			header.Set("Access-Control-Max-Age", "600")
 		}
 
@@ -53,31 +50,55 @@ func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
 	})
 }
 
-func normalizedAllowedOrigins(origins []string) map[string]struct{} {
-	allowed := map[string]struct{}{}
+func normalizedAllowedOrigins(origins []string) map[string]string {
+	allowed := map[string]string{}
 	for _, origin := range origins {
-		origin = strings.TrimRight(strings.TrimSpace(origin), "/")
-		if origin == "" {
+		canonicalOrigin := canonicalCORSOrigin(origin)
+		if canonicalOrigin == "" {
 			continue
 		}
-		allowed[origin] = struct{}{}
+		allowed[canonicalOrigin] = canonicalOrigin
 	}
 	return allowed
 }
 
-func allowedCORSOrigin(origin string, allowed map[string]struct{}) string {
+func allowedCORSOrigin(origin string, allowed map[string]string) string {
+	canonicalOrigin := canonicalCORSOrigin(origin)
+	if canonicalOrigin == "" {
+		return ""
+	}
+
+	if allowed["*"] == "*" {
+		return "*"
+	}
+	if allowedOrigin := allowed[canonicalOrigin]; allowedOrigin != "" {
+		return allowedOrigin
+	}
+	return ""
+}
+
+func canonicalCORSOrigin(origin string) string {
 	origin = strings.TrimRight(strings.TrimSpace(origin), "/")
 	if origin == "" {
 		return ""
 	}
-
-	if _, ok := allowed["*"]; ok {
+	if origin == "*" {
 		return "*"
 	}
-	if _, ok := allowed[origin]; ok {
-		return origin
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return ""
 	}
-	return ""
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return ""
+	}
+	if parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return ""
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return ""
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }
 
 func requestLogger(next http.Handler) http.Handler {

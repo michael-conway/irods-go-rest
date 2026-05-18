@@ -212,6 +212,7 @@ func bindEnvVars(v *viper.Viper) error {
 		"IrodsDefaultResource":                   {"GOREST_IRODS_DEFAULT_RESOURCE", "GOREST_IRODSDEFAULTRESOURCE"},
 		"TestResource1":                          {"GOREST_TEST_RESOURCE1"},
 		"TestResource2":                          {"GOREST_TEST_RESOURCE2"},
+		"CORSAllowedOrigins":                     {"GOREST_CORS_ALLOWED_ORIGINS", "GOREST_CORSALLOWEDORIGINS"},
 		"ResourceAffinity":                       {"GOREST_RESOURCE_AFFINITY", "GOREST_RESOURCEAFFINITY"},
 		"S3ApiSupported":                         {"GOREST_S3_API_SUPPORTED", "GOREST_S3APISUPPORTED"},
 		"S3BucketMappingFile":                    {"GOREST_S3_BUCKET_MAPPING_FILE", "GOREST_S3BUCKETMAPPINGFILE"},
