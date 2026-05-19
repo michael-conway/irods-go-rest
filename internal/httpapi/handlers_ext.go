@@ -16,6 +16,8 @@ import (
 	"github.com/michael-conway/irods-go-rest/internal/irods"
 )
 
+const defaultSavedMetadataQueryName = "New Query"
+
 func (h *Handler) getExtFavorites(w http.ResponseWriter, r *http.Request) {
 	favorites, err := h.paths.ListFavorites(r.Context())
 	if err != nil {
@@ -697,8 +699,13 @@ func savedMetadataQueryUpdateFromRequest(w http.ResponseWriter, r *http.Request)
 		return metadataext.SavedEntryQueryUpdate{}, false
 	}
 
+	name := strings.TrimSpace(request.Name)
+	if name == "" {
+		name = defaultSavedMetadataQueryName
+	}
+
 	return metadataext.SavedEntryQueryUpdate{
-		Name:        strings.TrimSpace(request.Name),
+		Name:        name,
 		Description: strings.TrimSpace(request.Description),
 		Query:       *request.Query,
 	}, true
@@ -706,9 +713,6 @@ func savedMetadataQueryUpdateFromRequest(w http.ResponseWriter, r *http.Request)
 
 func savedMetadataQueryValidationFields(request savedMetadataQueryRequest) map[string]string {
 	fields := map[string]string{}
-	if strings.TrimSpace(request.Name) == "" {
-		fields["name"] = "name is required"
-	}
 	if request.Query == nil {
 		fields["query"] = "query is required"
 	}

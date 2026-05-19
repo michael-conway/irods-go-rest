@@ -23,7 +23,7 @@ These are the settings you will usually care about:
 ```bash
 GOREST_PUBLIC_URL=http://localhost:8080
 IRODS_REST_ADDR=:8080
-GOREST_CORS_ALLOWED_ORIGINS=http://localhost:8081,http://127.0.0.1:8081
+GOREST_CORS_ALLOWED_ORIGINS=http://localhost:8081,http://127.0.0.1:8081,http://localhost:5173,http://127.0.0.1:5173
 GOREST_REST_LOG_LEVEL=info
 
 GOREST_IRODS_HOST=irods-provider
@@ -54,7 +54,8 @@ service.
 `GOREST_CORS_ALLOWED_ORIGINS` is optional and accepts a comma-separated list of
 browser origins allowed to call the API from a separate frontend origin. This is
 needed when Starbase is served from a different host or port than
-`irods-go-rest`, for example `http://localhost:8081`.
+`irods-go-rest`, for example `http://localhost:8081` for the containerized
+Starbase frontend or `http://localhost:5173` for the Vite dev server.
 
 If your local Keycloak uses a self-signed certificate, you can temporarily use:
 

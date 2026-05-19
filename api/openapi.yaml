@@ -1046,16 +1046,16 @@ paths:
                       op: like
                       value: frog*
                   limit: 100
-              avuShorthand:
-                summary: AVU shorthand query
+              avuAttribute:
+                summary: AVU attribute query
                 value:
                   irods_path: /tempZone/home/alice
                   search_scope: children
                   kinds: [collection]
-                  avu:
-                    attrib: iRODS:S3:BUCKET
-                    value: "*"
-                    unit: "*"
+                  conditions:
+                    - field: avu.attrib
+                      op: "="
+                      value: iRODS:S3:BUCKET
                   include_matched_avus: true
       responses:
         "200":
@@ -2631,15 +2631,18 @@ paths:
                   name: Frog AVU query
                   description: Entries tagged with source test values under the project tree.
                   query:
-                    type: avu_query
+                    type: entry_query
                     kinds: [data_object, collection]
                     scope:
                       root: /tempZone/home/alice/project
                       mode: descendants
-                    avu:
-                      attrib: source
-                      value: test*
-                      unit: "*"
+                    conditions:
+                      - field: avu.attrib
+                        op: "="
+                        value: source
+                      - field: avu.value
+                        op: like
+                        value: test*
                     defaults:
                       limit: 100
                       include_matched_avus: true
@@ -3817,7 +3820,7 @@ components:
           description: Optional metadata query definition version. Defaults to `metadata.entry_query.v1`.
         type:
           type: string
-          enum: [entry_query, avu_query]
+          enum: [entry_query]
           description: Optional metadata query definition type. Defaults to `entry_query`.
         irods_path:
           type: string
@@ -3840,8 +3843,6 @@ components:
           description: ANDed query conditions expressed in the metadata entry query model.
           items:
             $ref: "#/components/schemas/EntryQueryCondition"
-        avu:
-          $ref: "#/components/schemas/EntryQueryAVU"
         defaults:
           $ref: "#/components/schemas/EntryQueryDefaults"
         replica_policy:
@@ -3890,16 +3891,6 @@ components:
         value:
           type: string
           description: Condition value. `like` accepts `%` or `*` wildcards.
-    EntryQueryAVU:
-      type: object
-      description: Convenience shorthand for AVU attrib/value/unit conditions. `*` and `%` omit that AVU condition.
-      properties:
-        attrib:
-          type: string
-        value:
-          type: string
-        unit:
-          type: string
     EntryQueryDefaults:
       type: object
       properties:
@@ -3919,7 +3910,7 @@ components:
           description: Optional metadata query definition version. Defaults to `metadata.entry_query.v1`.
         type:
           type: string
-          enum: [entry_query, avu_query]
+          enum: [entry_query]
           description: Optional metadata query definition type. Defaults to `entry_query`.
         scope:
           $ref: "#/components/schemas/EntryQueryScope"
@@ -3934,8 +3925,6 @@ components:
           description: ANDed query conditions expressed in the metadata entry query model.
           items:
             $ref: "#/components/schemas/EntryQueryCondition"
-        avu:
-          $ref: "#/components/schemas/EntryQueryAVU"
         defaults:
           $ref: "#/components/schemas/EntryQueryDefaults"
         replica_policy:
@@ -3948,11 +3937,12 @@ components:
           description: Optional caller metadata preserved with the saved definition.
     SavedMetadataQueryUpsertRequest:
       type: object
-      required: [name, query]
+      required: [query]
       properties:
         name:
           type: string
-          description: User-facing saved query name.
+          default: New Query
+          description: Optional user-facing display name. Blank or omitted values default to "New Query"; names are not required to be unique.
         description:
           type: string
           description: Optional saved query description.
@@ -3967,10 +3957,10 @@ components:
           description: Saved metadata query storage version.
         id:
           type: string
-          description: Saved metadata query identifier.
+          description: Opaque saved metadata query identifier. This is the stable route identity and does not change when the display name changes.
         name:
           type: string
-          description: User-facing saved query name.
+          description: User-facing display name. This is not required to be unique.
         description:
           type: string
           description: Optional saved query description.
@@ -3990,8 +3980,10 @@ components:
       properties:
         id:
           type: string
+          description: Opaque saved metadata query identifier.
         name:
           type: string
+          description: User-facing display name. This is not required to be unique.
         description:
           type: string
         file_name:
@@ -4098,6 +4090,8 @@ components:
         search_scope:
           type: string
           enum: [self, children, descendants, absolute]
+        scope:
+          $ref: "#/components/schemas/EntryQueryScope"
         kinds:
           type: array
           items:

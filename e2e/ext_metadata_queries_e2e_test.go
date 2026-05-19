@@ -12,6 +12,8 @@ import (
 	"testing"
 )
 
+const savedMetadataQueryDefaultNameE2E = "New Query"
+
 func TestExtMetadataQueriesScopesAndKindsE2E(t *testing.T) {
 	baseURL := requireE2EBaseURL(t)
 	client := newE2EHTTPClient()
@@ -110,6 +112,149 @@ func TestExtMetadataQueriesScopesAndKindsE2E(t *testing.T) {
 	}
 }
 
+func TestExtMetadataQueriesDisplayDefaultsAndDuplicateNamesE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	client := newE2EHTTPClient()
+
+	filesystem := newE2EIRODSFilesystem(t)
+	t.Cleanup(filesystem.Release)
+	fixture := createPathQueryE2EFixture(t, filesystem)
+
+	query := savedMetadataQueryE2EDefinition(
+		[]string{"data_object"},
+		fixture.root,
+		"children",
+		fixture.attrName,
+		"frog-*",
+		"*",
+	)
+	status, body := requestSavedMetadataQueryE2E(t, client, http.MethodPost, strings.TrimRight(baseURL, "/")+"/api/v1/ext/metadata-queries", map[string]any{
+		"query": query,
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("expected 201 creating saved metadata query without display fields, got %d: %s", status, strings.TrimSpace(body))
+	}
+	defaulted := decodeSavedMetadataQueryE2E(t, body)
+	t.Cleanup(func() {
+		deleteSavedMetadataQueryE2E(t, client, baseURL, defaulted.ID)
+	})
+	if defaulted.Name != savedMetadataQueryDefaultNameE2E {
+		t.Fatalf("expected default saved metadata query name %q, got %q", savedMetadataQueryDefaultNameE2E, defaulted.Name)
+	}
+	if defaulted.Description != "" {
+		t.Fatalf("expected blank default saved metadata query description, got %q", defaulted.Description)
+	}
+
+	updateQuery := savedMetadataQueryE2EDefinition(
+		[]string{"collection"},
+		fixture.root,
+		"children",
+		fixture.attrName,
+		"frog-coll-*",
+		"*",
+	)
+	status, body = requestSavedMetadataQueryE2E(t, client, http.MethodPut, strings.TrimRight(baseURL, "/")+"/api/v1/ext/metadata-queries/"+defaulted.ID, map[string]any{
+		"name":        "   ",
+		"description": "   ",
+		"query":       updateQuery,
+	})
+	if status != http.StatusOK {
+		t.Fatalf("expected 200 updating saved metadata query with blank display fields, got %d: %s", status, strings.TrimSpace(body))
+	}
+	updated := decodeSavedMetadataQueryE2E(t, body)
+	if updated.ID != defaulted.ID {
+		t.Fatalf("expected update to preserve saved metadata query id %q, got %q", defaulted.ID, updated.ID)
+	}
+	if updated.Name != savedMetadataQueryDefaultNameE2E {
+		t.Fatalf("expected blank update name to default to %q, got %q", savedMetadataQueryDefaultNameE2E, updated.Name)
+	}
+	if updated.Description != "" {
+		t.Fatalf("expected blank update description, got %q", updated.Description)
+	}
+
+	duplicate := createSavedMetadataQueryE2E(t, client, baseURL, savedMetadataQueryDefaultNameE2E, "duplicate display name", query)
+	t.Cleanup(func() {
+		deleteSavedMetadataQueryE2E(t, client, baseURL, duplicate.ID)
+	})
+	if duplicate.ID == defaulted.ID {
+		t.Fatalf("expected duplicate display-name query to have distinct id %q", duplicate.ID)
+	}
+	if duplicate.Name != savedMetadataQueryDefaultNameE2E {
+		t.Fatalf("expected duplicate display name %q, got %q", savedMetadataQueryDefaultNameE2E, duplicate.Name)
+	}
+
+	listed := listSavedMetadataQueriesE2E(t, client, baseURL)
+	assertSavedMetadataQueryListedE2E(t, listed, defaulted.ID, savedMetadataQueryDefaultNameE2E)
+	assertSavedMetadataQueryListedE2E(t, listed, duplicate.ID, savedMetadataQueryDefaultNameE2E)
+}
+
+func TestExtMetadataQueriesRejectsAVUQueryTypeWithConditionsE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	client := newE2EHTTPClient()
+
+	problematicInvocation := map[string]any{
+		"name":        "New Query",
+		"description": "",
+		"query": map[string]any{
+			"type":  "avu_query",
+			"kinds": []string{"data_object", "collection"},
+			"scope": map[string]any{
+				"root": "/tempZone/home/test1",
+				"mode": "descendants",
+			},
+			"conditions": []map[string]any{
+				{"field": "avu.attrib", "op": "=", "value": "iRODS:DRS:ID"},
+				{"field": "avu.value", "op": "like", "value": "%"},
+			},
+		},
+	}
+
+	status, body := requestSavedMetadataQueryE2E(
+		t,
+		client,
+		http.MethodPost,
+		strings.TrimRight(baseURL, "/")+"/api/v1/ext/metadata-queries",
+		problematicInvocation,
+	)
+	if status != http.StatusBadRequest {
+		t.Fatalf("expected 400 for avu_query type with canonical conditions, got %d: %s", status, strings.TrimSpace(body))
+	}
+	if !strings.Contains(body, "invalid_request") || !strings.Contains(body, "avu_query") {
+		t.Fatalf("expected invalid_request body to identify avu_query contract error, got %s", strings.TrimSpace(body))
+	}
+
+	canonicalInvocation := map[string]any{
+		"name":        "New Query",
+		"description": "",
+		"query": map[string]any{
+			"type":  "entry_query",
+			"kinds": []string{"data_object", "collection"},
+			"scope": map[string]any{
+				"root": "/tempZone/home/test1",
+				"mode": "descendants",
+			},
+			"conditions": []map[string]any{
+				{"field": "avu.attrib", "op": "=", "value": "iRODS:DRS:ID"},
+				{"field": "avu.value", "op": "like", "value": "%"},
+			},
+		},
+	}
+	status, body = requestSavedMetadataQueryE2E(
+		t,
+		client,
+		http.MethodPost,
+		strings.TrimRight(baseURL, "/")+"/api/v1/ext/metadata-queries",
+		canonicalInvocation,
+	)
+	if status != http.StatusCreated {
+		t.Fatalf("expected 201 for canonical entry_query conditions payload, got %d: %s", status, strings.TrimSpace(body))
+	}
+	saved := decodeSavedMetadataQueryE2E(t, body)
+	t.Cleanup(func() {
+		deleteSavedMetadataQueryE2E(t, client, baseURL, saved.ID)
+	})
+}
+
 type savedMetadataQueryE2E struct {
 	ID          string          `json:"id"`
 	Name        string          `json:"name"`
@@ -125,17 +270,32 @@ type savedMetadataQueryListE2E struct {
 }
 
 func savedMetadataQueryE2EDefinition(kinds []string, scopeRoot string, scopeMode string, attr string, value string, unit string) map[string]any {
+	conditions := []map[string]any{}
+	if strings.TrimSpace(attr) != "" && strings.TrimSpace(attr) != "*" && strings.TrimSpace(attr) != "%" {
+		conditions = append(conditions, map[string]any{"field": "avu.attrib", "op": "=", "value": attr})
+	}
+	if strings.TrimSpace(value) != "" && strings.TrimSpace(value) != "*" && strings.TrimSpace(value) != "%" {
+		op := "="
+		if strings.ContainsAny(value, "*%") {
+			op = "like"
+		}
+		conditions = append(conditions, map[string]any{"field": "avu.value", "op": op, "value": value})
+	}
+	if strings.TrimSpace(unit) != "" && strings.TrimSpace(unit) != "*" && strings.TrimSpace(unit) != "%" {
+		op := "="
+		if strings.ContainsAny(unit, "*%") {
+			op = "like"
+		}
+		conditions = append(conditions, map[string]any{"field": "avu.unit", "op": op, "value": unit})
+	}
+
 	return map[string]any{
-		"type":  "avu_query",
-		"kinds": kinds,
+		"type":       "entry_query",
+		"kinds":      kinds,
+		"conditions": conditions,
 		"scope": map[string]any{
 			"root": scopeRoot,
 			"mode": scopeMode,
-		},
-		"avu": map[string]any{
-			"attrib": attr,
-			"value":  value,
-			"unit":   unit,
 		},
 		"defaults": map[string]any{
 			"limit": 50,

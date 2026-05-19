@@ -29,7 +29,7 @@ func TestPathQueryAVUE2E(t *testing.T) {
 		IRODSPath:          fixture.root,
 		SearchScope:        "descendants",
 		Kinds:              []string{"data_object", "collection"},
-		AVU:                &pathQueryE2EAVUSpec{Attrib: fixture.attrName, Value: "frog-*", Unit: "habitat:p%"},
+		Conditions:         pathQueryE2EAVUConditions(fixture.attrName, "frog-*", "habitat:p%"),
 		IncludeMatchedAVUs: &includeMatchedAVUs,
 		Limit:              50,
 	}
@@ -47,6 +47,8 @@ func TestPathQueryAVUE2E(t *testing.T) {
 	assertPathQueryE2EMatchedAVUPresent(t, descendantResult.MatchedAVUs, fixture.alphaFile, fixture.attrName, "frog-file-alpha", "habitat:pond")
 	assertPathQueryE2EMatchedAVUPresent(t, descendantResult.MatchedAVUs, fixture.deepFile, fixture.attrName, "frog-file-deep", "habitat:pond")
 	assertPathQueryE2EOmitsReplicas(t, descendantResult.Paths, fixture.deepFile)
+	assertPathQueryE2EQueryString(t, descendantResult.Query, "search_scope", "descendants")
+	assertPathQueryE2EQueryScope(t, descendantResult.Query, fixture.root, "descendants")
 
 	roundTrippedDescendants := postPathQueryE2E(t, client, baseURL, roundTripPathQueryE2ERequest(t, bothDescendantsRequest))
 	assertPathQueryE2EPathsExactly(t, roundTrippedDescendants.Paths, pathQueryE2EPaths(descendantResult.Paths))
@@ -55,7 +57,7 @@ func TestPathQueryAVUE2E(t *testing.T) {
 		IRODSPath:   fixture.root,
 		SearchScope: "children",
 		Kinds:       []string{"data_object"},
-		AVU:         &pathQueryE2EAVUSpec{Attrib: fixture.attrName, Value: "frog-*", Unit: "habitat:p*"},
+		Conditions:  pathQueryE2EAVUConditions(fixture.attrName, "frog-*", "habitat:p*"),
 		Limit:       20,
 	}
 	dataObjectsChildrenResult := postPathQueryE2E(t, client, baseURL, dataObjectsChildrenRequest)
@@ -83,7 +85,7 @@ func TestPathQueryAVUE2E(t *testing.T) {
 		IRODSPath:   fixture.alpha,
 		SearchScope: "descendants",
 		Kinds:       []string{"collection"},
-		AVU:         &pathQueryE2EAVUSpec{Attrib: fixture.attrName, Value: "frog-coll-*", Unit: "habitat:p*"},
+		Conditions:  pathQueryE2EAVUConditions(fixture.attrName, "frog-coll-*", "habitat:p*"),
 		Limit:       20,
 	}
 	collectionsUnderAlphaResult := postPathQueryE2E(t, client, baseURL, collectionsUnderAlphaRequest)
@@ -98,7 +100,7 @@ func TestPathQueryAVUE2E(t *testing.T) {
 		IRODSPath:   fixture.root,
 		SearchScope: "children",
 		Kinds:       []string{"data_object", "collection"},
-		AVU:         &pathQueryE2EAVUSpec{Attrib: fixture.attrName, Value: "frog-%", Unit: "habitat:p%"},
+		Conditions:  pathQueryE2EAVUConditions(fixture.attrName, "frog-%", "habitat:p%"),
 		Limit:       1,
 	}
 	firstPage := postPathQueryE2E(t, client, baseURL, firstPageRequest)
@@ -140,7 +142,6 @@ type pathQueryE2ERequest struct {
 	SearchScope        string                  `json:"search_scope,omitempty"`
 	Kinds              []string                `json:"kinds,omitempty"`
 	Conditions         []pathQueryE2ECondition `json:"conditions,omitempty"`
-	AVU                *pathQueryE2EAVUSpec    `json:"avu,omitempty"`
 	Limit              int                     `json:"limit,omitempty"`
 	PageToken          string                  `json:"page_token,omitempty"`
 	IncludeMatchedAVUs *bool                   `json:"include_matched_avus,omitempty"`
@@ -152,10 +153,31 @@ type pathQueryE2ECondition struct {
 	Value string `json:"value"`
 }
 
-type pathQueryE2EAVUSpec struct {
-	Attrib string `json:"attrib,omitempty"`
-	Value  string `json:"value,omitempty"`
-	Unit   string `json:"unit,omitempty"`
+func pathQueryE2EAVUConditions(attrib string, value string, unit string) []pathQueryE2ECondition {
+	conditions := []pathQueryE2ECondition{}
+	for _, candidate := range []struct {
+		field string
+		value string
+	}{
+		{field: "avu.attrib", value: attrib},
+		{field: "avu.value", value: value},
+		{field: "avu.unit", value: unit},
+	} {
+		value := strings.TrimSpace(candidate.value)
+		if value == "" || value == "*" || value == "%" {
+			continue
+		}
+		op := "="
+		if strings.ContainsAny(value, "*%") {
+			op = "like"
+		}
+		conditions = append(conditions, pathQueryE2ECondition{
+			Field: candidate.field,
+			Op:    op,
+			Value: value,
+		})
+	}
+	return conditions
 }
 
 type pathQueryE2EResponse struct {
@@ -391,6 +413,41 @@ func assertPathQueryE2EOmitsReplicas(t *testing.T, entries []pathQueryE2EPath, d
 		return
 	}
 	t.Fatalf("expected data object %q in entries %+v", dataObjectPath, pathQueryE2EPaths(entries))
+}
+
+func assertPathQueryE2EQueryString(t *testing.T, query map[string]json.RawMessage, field string, expected string) {
+	t.Helper()
+
+	raw, ok := query[field]
+	if !ok {
+		t.Fatalf("expected query summary field %q in %+v", field, query)
+	}
+	var actual string
+	if err := json.Unmarshal(raw, &actual); err != nil {
+		t.Fatalf("decode query summary field %q: %v", field, err)
+	}
+	if actual != expected {
+		t.Fatalf("expected query summary %s=%q, got %q", field, expected, actual)
+	}
+}
+
+func assertPathQueryE2EQueryScope(t *testing.T, query map[string]json.RawMessage, expectedRoot string, expectedMode string) {
+	t.Helper()
+
+	raw, ok := query["scope"]
+	if !ok {
+		t.Fatalf("expected query summary scope in %+v", query)
+	}
+	var scope struct {
+		Root string `json:"root"`
+		Mode string `json:"mode"`
+	}
+	if err := json.Unmarshal(raw, &scope); err != nil {
+		t.Fatalf("decode query summary scope: %v", err)
+	}
+	if scope.Root != expectedRoot || scope.Mode != expectedMode {
+		t.Fatalf("expected query summary scope root=%q mode=%q, got %+v", expectedRoot, expectedMode, scope)
+	}
 }
 
 func pathQueryE2EPaths(entries []pathQueryE2EPath) []string {
