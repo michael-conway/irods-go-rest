@@ -161,7 +161,7 @@ func TestNormalizeUserGroupErrorMapsCatalogAlreadyHasItemToConflict(t *testing.T
 }
 
 func TestNormalizeUserGroupErrorMapsUserNotInGroupToNotFound(t *testing.T) {
-	err := normalizeUserGroupError("remove group member", "research-team", "tempZone", irodstypes.NewIRODSError(irodsUserNotInGroupErrorCode))
+	err := normalizeUserGroupError("remove group member", "research-team", "tempZone", irodstypes.NewIRODSError(irodscommon.ErrorCode(-1830000)))
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected user-not-in-group code to map to not found, got %v", err)
 	}

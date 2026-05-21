@@ -20,12 +20,12 @@ import (
 	irodsfs "github.com/cyverse/go-irodsclient/fs"
 	irodscommon "github.com/cyverse/go-irodsclient/irods/common"
 	irodslibfs "github.com/cyverse/go-irodsclient/irods/fs"
-	irodsmessage "github.com/cyverse/go-irodsclient/irods/message"
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
 	metadataext "github.com/michael-conway/go-irodsclient-extensions/metadata"
 	metadatairodsfs "github.com/michael-conway/go-irodsclient-extensions/metadata/irodsfs"
 	s3adminext "github.com/michael-conway/go-irodsclient-extensions/s3admin"
 	s3adminirodsfs "github.com/michael-conway/go-irodsclient-extensions/s3admin/irodsfs"
+	usersyncirodsfs "github.com/michael-conway/go-irodsclient-extensions/usersync/irodsfs"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 	"github.com/michael-conway/irods-go-rest/internal/domain"
 	"github.com/michael-conway/irods-go-rest/internal/logutil"
@@ -2493,26 +2493,7 @@ func (a *catalogFileSystemAdapter) CreateUser(username string, zoneName string, 
 }
 
 func (a *catalogFileSystemAdapter) CreateUserGroup(groupName string, zoneName string) (*irodstypes.IRODSUser, error) {
-	conn, err := a.filesystem.GetMetadataConnection(true)
-	if err != nil {
-		return nil, err
-	}
-	defer a.filesystem.ReturnMetadataConnection(conn) //nolint:errcheck
-
-	req := irodsmessage.NewIRODSMessageAdminRequest("add", "group", groupName)
-	err = func() error {
-		conn.Lock()
-		defer conn.Unlock()
-		return conn.RequestAndCheck(req, &irodsmessage.IRODSMessageAdminResponse{}, nil, conn.GetOperationTimeout())
-	}()
-	if err != nil {
-		if irodstypes.GetIRODSErrorCode(err) == irodscommon.CAT_NO_ROWS_FOUND {
-			return nil, fmt.Errorf("received create group error for group %q, zone %q: %w", groupName, zoneName, irodstypes.NewUserNotFoundError(groupName))
-		}
-		return nil, fmt.Errorf("received create group error for group %q, zone %q: %w", groupName, zoneName, err)
-	}
-
-	return a.filesystem.GetUser(groupName, zoneName, irodstypes.IRODSUserRodsGroup)
+	return usersyncirodsfs.NewAdapter(a.filesystem).CreateUserGroup(groupName, zoneName)
 }
 
 func (a *catalogFileSystemAdapter) ChangeUserPassword(username string, zoneName string, newPassword string) error {
@@ -2528,26 +2509,7 @@ func (a *catalogFileSystemAdapter) RemoveUser(username string, zoneName string, 
 }
 
 func (a *catalogFileSystemAdapter) RemoveUserGroup(groupName string, zoneName string) error {
-	conn, err := a.filesystem.GetMetadataConnection(true)
-	if err != nil {
-		return err
-	}
-	defer a.filesystem.ReturnMetadataConnection(conn) //nolint:errcheck
-
-	req := irodsmessage.NewIRODSMessageAdminRequest("rm", "group", groupName)
-	err = func() error {
-		conn.Lock()
-		defer conn.Unlock()
-		return conn.RequestAndCheck(req, &irodsmessage.IRODSMessageAdminResponse{}, nil, conn.GetOperationTimeout())
-	}()
-	if err != nil {
-		if irodstypes.GetIRODSErrorCode(err) == irodscommon.CAT_NO_ROWS_FOUND {
-			return fmt.Errorf("received remove group error for group %q, zone %q: %w", groupName, zoneName, irodstypes.NewUserNotFoundError(groupName))
-		}
-		return fmt.Errorf("received remove group error for group %q, zone %q: %w", groupName, zoneName, err)
-	}
-
-	return nil
+	return usersyncirodsfs.NewAdapter(a.filesystem).RemoveUserGroup(groupName, zoneName)
 }
 
 func (a *catalogFileSystemAdapter) AddGroupMember(groupName string, username string, zoneName string) error {
