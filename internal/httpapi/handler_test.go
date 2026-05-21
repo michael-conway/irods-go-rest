@@ -925,10 +925,10 @@ func TestGetPathChildrenSearchRejectsRecursiveAlias(t *testing.T) {
 	}
 }
 
-func TestPostPathQueryAVUShorthandReturnsPagedUnifiedPaths(t *testing.T) {
+func TestPostPathQueryAVUConditionsReturnPagedUnifiedPaths(t *testing.T) {
 	handler := testHandler(t)
 
-	body := `{"irods_path":"/tempZone/home/test1","search_scope":"children","kinds":["data_object","collection"],"avu":{"attrib":"source","value":"test","unit":"*"},"limit":1,"include_matched_avus":true}`
+	body := `{"irods_path":"/tempZone/home/test1","search_scope":"children","kinds":["data_object","collection"],"conditions":[{"field":"avu.attrib","op":"=","value":"source"},{"field":"avu.value","op":"=","value":"test"}],"limit":1,"include_matched_avus":true}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/path/query", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer token123")
 	req.Header.Set("Content-Type", "application/json")
@@ -947,6 +947,13 @@ func TestPostPathQueryAVUShorthandReturnsPagedUnifiedPaths(t *testing.T) {
 			NextPageToken string `json:"next_page_token"`
 		} `json:"page"`
 		MatchedAVUs map[string][]domain.AVUMetadata `json:"matched_avus"`
+		Query       struct {
+			SearchScope string `json:"search_scope"`
+			Scope       struct {
+				Root string `json:"root"`
+				Mode string `json:"mode"`
+			} `json:"scope"`
+		} `json:"query"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &firstPage); err != nil {
 		t.Fatalf("decode first query page: %v", err)
@@ -963,8 +970,11 @@ func TestPostPathQueryAVUShorthandReturnsPagedUnifiedPaths(t *testing.T) {
 	if len(firstPage.MatchedAVUs[firstPage.Paths[0].Path]) != 1 {
 		t.Fatalf("expected matched AVU details for first path, got %+v", firstPage.MatchedAVUs)
 	}
+	if firstPage.Query.SearchScope != "children" || firstPage.Query.Scope.Root != "/tempZone/home/test1" || firstPage.Query.Scope.Mode != "children" {
+		t.Fatalf("expected query summary to include scope mode and root, got %+v", firstPage.Query)
+	}
 
-	secondBody := `{"irods_path":"/tempZone/home/test1","search_scope":"children","kinds":["data_object","collection"],"avu":{"attrib":"source","value":"test","unit":"*"},"limit":1,"include_matched_avus":true,"page_token":"` + firstPage.Page.NextPageToken + `"}`
+	secondBody := `{"irods_path":"/tempZone/home/test1","search_scope":"children","kinds":["data_object","collection"],"conditions":[{"field":"avu.attrib","op":"=","value":"source"},{"field":"avu.value","op":"=","value":"test"}],"limit":1,"include_matched_avus":true,"page_token":"` + firstPage.Page.NextPageToken + `"}`
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/path/query", strings.NewReader(secondBody))
 	req.Header.Set("Authorization", "Bearer token123")
 	req.Header.Set("Content-Type", "application/json")
@@ -1012,6 +1022,9 @@ func TestPostPathQuerySupportsFileConditions(t *testing.T) {
 	}
 	if body := rec.Body.String(); !containsAll(body, `"paths":[`, `"/tempZone/home/test1/project/child.txt"`, `"kind":"data_object"`, `"search_scope":"children"`) {
 		t.Fatalf("unexpected path query response body: %q", body)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"scope":{"root":"/tempZone/home/test1/project","mode":"children"`) {
+		t.Fatalf("expected path query response to include scope root: %q", body)
 	}
 }
 
@@ -2312,17 +2325,16 @@ func TestExtMetadataQueriesLifecycle(t *testing.T) {
 		"name": "Frog AVU query",
 		"description": "find frog-tagged entries",
 		"query": {
-			"type": "avu_query",
+			"type": "entry_query",
 			"kinds": ["data_object", "collection"],
 			"scope": {
 				"root": "/tempZone/home/test1/project",
 				"mode": "descendants"
 			},
-			"avu": {
-				"attrib": "source",
-				"value": "test",
-				"unit": "*"
-			},
+			"conditions": [
+				{"field": "avu.attrib", "op": "=", "value": "source"},
+				{"field": "avu.value", "op": "=", "value": "test"}
+			],
 			"defaults": {
 				"limit": 25,
 				"include_matched_avus": true
@@ -2416,7 +2428,7 @@ func TestExtMetadataQueriesLifecycle(t *testing.T) {
 	if updateRec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", updateRec.Code, updateRec.Body.String())
 	}
-	if body := updateRec.Body.String(); !containsAll(body, `"name":"Updated Frog AVU query"`, `"description":"updated"`, `"limit":10`) {
+	if body := updateRec.Body.String(); !containsAll(body, `"id":"`+queryID+`"`, `"name":"Updated Frog AVU query"`, `"description":"updated"`, `"limit":10`) {
 		t.Fatalf("unexpected update metadata query body: %q", body)
 	}
 
@@ -2437,6 +2449,122 @@ func TestExtMetadataQueriesLifecycle(t *testing.T) {
 	}
 }
 
+func TestExtMetadataQueriesDisplayDefaultsAndDuplicateNames(t *testing.T) {
+	handler := testHandler(t)
+
+	createBody := `{
+		"query": {
+			"kinds": ["data_object"],
+			"conditions": [
+				{"field": "avu.attrib", "op": "=", "value": "source"},
+				{"field": "avu.value", "op": "like", "value": "te%"}
+			]
+		}
+	}`
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/metadata-queries", strings.NewReader(createBody))
+	createReq.Header.Set("Authorization", "Bearer token123")
+	createReq.Header.Set("Content-Type", "application/json")
+	createRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(createRec, createReq)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", createRec.Code, createRec.Body.String())
+	}
+
+	var createResponse struct {
+		MetadataQuery metadataext.SavedEntryQuery `json:"metadata_query"`
+	}
+	if err := json.Unmarshal(createRec.Body.Bytes(), &createResponse); err != nil {
+		t.Fatalf("decode default-name create response: %v", err)
+	}
+	firstID := createResponse.MetadataQuery.ID
+	if strings.TrimSpace(firstID) == "" {
+		t.Fatalf("expected created saved query id: %q", createRec.Body.String())
+	}
+	if createResponse.MetadataQuery.Name != defaultSavedMetadataQueryName {
+		t.Fatalf("expected default saved query name %q, got %q", defaultSavedMetadataQueryName, createResponse.MetadataQuery.Name)
+	}
+	if createResponse.MetadataQuery.Description != "" {
+		t.Fatalf("expected blank default description, got %q", createResponse.MetadataQuery.Description)
+	}
+
+	updateBody := `{
+		"name": "   ",
+		"description": "   ",
+		"query": {
+			"kinds": ["collection"],
+			"conditions": [
+				{"field": "avu.attrib", "op": "=", "value": "source"}
+			]
+		}
+	}`
+	updateReq := httptest.NewRequest(http.MethodPut, "/api/v1/ext/metadata-queries/"+firstID, strings.NewReader(updateBody))
+	updateReq.Header.Set("Authorization", "Bearer token123")
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(updateRec, updateReq)
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", updateRec.Code, updateRec.Body.String())
+	}
+
+	var updateResponse struct {
+		MetadataQuery metadataext.SavedEntryQuery `json:"metadata_query"`
+	}
+	if err := json.Unmarshal(updateRec.Body.Bytes(), &updateResponse); err != nil {
+		t.Fatalf("decode default-name update response: %v", err)
+	}
+	if updateResponse.MetadataQuery.ID != firstID {
+		t.Fatalf("expected update to preserve route id %q, got %q", firstID, updateResponse.MetadataQuery.ID)
+	}
+	if updateResponse.MetadataQuery.Name != defaultSavedMetadataQueryName {
+		t.Fatalf("expected blank update name to default to %q, got %q", defaultSavedMetadataQueryName, updateResponse.MetadataQuery.Name)
+	}
+	if updateResponse.MetadataQuery.Description != "" {
+		t.Fatalf("expected blank update description, got %q", updateResponse.MetadataQuery.Description)
+	}
+
+	duplicateReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/metadata-queries", strings.NewReader(`{
+		"name": "New Query",
+		"description": "duplicate display name",
+		"query": {
+			"kinds": ["data_object"],
+			"conditions": [
+				{"field": "avu.attrib", "op": "=", "value": "source"}
+			]
+		}
+	}`))
+	duplicateReq.Header.Set("Authorization", "Bearer token123")
+	duplicateReq.Header.Set("Content-Type", "application/json")
+	duplicateRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(duplicateRec, duplicateReq)
+	if duplicateRec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for duplicate display name, got %d: %s", duplicateRec.Code, duplicateRec.Body.String())
+	}
+
+	var duplicateResponse struct {
+		MetadataQuery metadataext.SavedEntryQuery `json:"metadata_query"`
+	}
+	if err := json.Unmarshal(duplicateRec.Body.Bytes(), &duplicateResponse); err != nil {
+		t.Fatalf("decode duplicate-name create response: %v", err)
+	}
+	if duplicateResponse.MetadataQuery.ID == "" || duplicateResponse.MetadataQuery.ID == firstID {
+		t.Fatalf("expected duplicate display name to create distinct id, first=%q duplicate=%q", firstID, duplicateResponse.MetadataQuery.ID)
+	}
+	if duplicateResponse.MetadataQuery.Name != defaultSavedMetadataQueryName {
+		t.Fatalf("expected duplicate display name %q, got %q", defaultSavedMetadataQueryName, duplicateResponse.MetadataQuery.Name)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/metadata-queries", nil)
+	listReq.Header.Set("Authorization", "Bearer token123")
+	listRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", listRec.Code, listRec.Body.String())
+	}
+	if body := listRec.Body.String(); !containsAll(body, `"id":"`+firstID+`"`, `"id":"`+duplicateResponse.MetadataQuery.ID+`"`, `"name":"New Query"`, `"count":2`) {
+		t.Fatalf("unexpected duplicate-name list body: %q", body)
+	}
+}
+
 func TestExtMetadataQueriesValidation(t *testing.T) {
 	handler := testHandler(t)
 
@@ -2448,7 +2576,7 @@ func TestExtMetadataQueriesValidation(t *testing.T) {
 	if missingFieldsRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", missingFieldsRec.Code, missingFieldsRec.Body.String())
 	}
-	if body := missingFieldsRec.Body.String(); !containsAll(body, `"name":"name is required"`, `"query":"query is required"`) {
+	if body := missingFieldsRec.Body.String(); !containsAll(body, `"query":"query is required"`) || strings.Contains(body, `"name":"name is required"`) {
 		t.Fatalf("unexpected missing fields body: %q", body)
 	}
 

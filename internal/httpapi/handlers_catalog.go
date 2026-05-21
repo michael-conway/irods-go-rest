@@ -226,7 +226,6 @@ type pathQueryRequest struct {
 	Scope              *metadataext.EntryQueryScope    `json:"scope,omitempty"`
 	Kinds              []metadataext.EntryKind         `json:"kinds,omitempty"`
 	Conditions         []metadataext.EntryCondition    `json:"conditions,omitempty"`
-	AVU                *metadataext.AVUQuerySpec       `json:"avu,omitempty"`
 	Defaults           metadataext.EntryQueryDefaults  `json:"defaults,omitempty"`
 	ReplicaPolicy      metadataext.ReplicaPolicy       `json:"replica_policy,omitempty"`
 	Metadata           map[string]interface{}          `json:"metadata,omitempty"`
@@ -261,6 +260,7 @@ type pathQueryResponse struct {
 
 type pathQuerySummaryResponse struct {
 	SearchScope        metadataext.EntryQueryScopeMode `json:"search_scope,omitempty"`
+	Scope              *metadataext.EntryQueryScope    `json:"scope,omitempty"`
 	Kinds              []metadataext.EntryKind         `json:"kinds"`
 	Conditions         []metadataext.EntryCondition    `json:"conditions,omitempty"`
 	IncludeTotals      bool                            `json:"include_totals,omitempty"`
@@ -353,7 +353,6 @@ func pathQueryDefinition(request pathQueryRequest) (metadataext.EntryQueryDefini
 		Kinds:         request.Kinds,
 		Scope:         scope,
 		Conditions:    request.Conditions,
-		AVU:           request.AVU,
 		Defaults:      request.Defaults,
 		ReplicaPolicy: request.ReplicaPolicy,
 		Metadata:      request.Metadata,
@@ -450,6 +449,9 @@ func pathQuerySummary(query metadataext.EntryQuery) pathQuerySummaryResponse {
 	}
 	if query.Scope != nil {
 		summary.SearchScope = query.Scope.Mode
+		scope := *query.Scope
+		scope.Root = strings.TrimSpace(scope.Root)
+		summary.Scope = &scope
 	}
 	return summary
 }
