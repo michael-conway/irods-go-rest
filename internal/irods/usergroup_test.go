@@ -35,6 +35,52 @@ func TestUserGroupCreateRequiresAdminOrGroupAdmin(t *testing.T) {
 	}
 }
 
+func TestUserGroupReconcileDoesNotBypassPermissionChecks(t *testing.T) {
+	service := newTestUserGroupService(t, newCatalogTestFileSystem())
+	requestContext := bearerRequestContext()
+
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{
+			name: "create group",
+			call: func() error {
+				_, err := service.CreateUserGroup(context.Background(), requestContext, "science-team", "tempZone", UserGroupMutationOptions{Reconcile: true})
+				return err
+			},
+		},
+		{
+			name: "delete group",
+			call: func() error {
+				return service.DeleteUserGroup(context.Background(), requestContext, "research-team", "tempZone", UserGroupMutationOptions{Reconcile: true})
+			},
+		},
+		{
+			name: "add member",
+			call: func() error {
+				_, err := service.AddUserToGroup(context.Background(), requestContext, "research-team", "bob", "tempZone", UserGroupMutationOptions{Reconcile: true})
+				return err
+			},
+		},
+		{
+			name: "remove member",
+			call: func() error {
+				_, err := service.RemoveUserFromGroup(context.Background(), requestContext, "research-team", "alice", "tempZone", UserGroupMutationOptions{Reconcile: true})
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.call(); !errors.Is(err, ErrPermissionDenied) {
+				t.Fatalf("expected permission denied, got %v", err)
+			}
+		})
+	}
+}
+
 func TestUserGroupCreateSucceedsForGroupAdmin(t *testing.T) {
 	service := newTestUserGroupService(t, newCatalogTestFileSystem())
 
@@ -98,6 +144,107 @@ func TestUserGroupCreateReconcileExistingGroup(t *testing.T) {
 	}
 	if group.Name != "research-team" {
 		t.Fatalf("unexpected group: %+v", group)
+	}
+}
+
+func TestUserGroupReconcileOperationsAreRepeatable(t *testing.T) {
+	service := newTestUserGroupService(t, newCatalogTestFileSystem())
+	requestContext := groupAdminRequestContext()
+
+	for i := 0; i < 2; i++ {
+		group, err := service.CreateUserGroup(context.Background(), requestContext, "science-team", "tempZone", UserGroupMutationOptions{Reconcile: true})
+		if err != nil {
+			t.Fatalf("CreateUserGroup reconcile attempt %d returned error: %v", i+1, err)
+		}
+		if group.Name != "science-team" {
+			t.Fatalf("unexpected group after create attempt %d: %+v", i+1, group)
+		}
+	}
+
+	for i := 0; i < 2; i++ {
+		group, err := service.AddUserToGroup(context.Background(), requestContext, "science-team", "bob", "tempZone", UserGroupMutationOptions{Reconcile: true})
+		if err != nil {
+			t.Fatalf("AddUserToGroup reconcile attempt %d returned error: %v", i+1, err)
+		}
+		if len(group.Members) != 1 || group.Members[0].Name != "bob" {
+			t.Fatalf("unexpected members after add attempt %d: %+v", i+1, group.Members)
+		}
+	}
+
+	for i := 0; i < 2; i++ {
+		group, err := service.RemoveUserFromGroup(context.Background(), requestContext, "science-team", "bob", "tempZone", UserGroupMutationOptions{Reconcile: true})
+		if err != nil {
+			t.Fatalf("RemoveUserFromGroup reconcile attempt %d returned error: %v", i+1, err)
+		}
+		if len(group.Members) != 0 {
+			t.Fatalf("expected no members after remove attempt %d, got %+v", i+1, group.Members)
+		}
+	}
+
+	for i := 0; i < 2; i++ {
+		if err := service.DeleteUserGroup(context.Background(), requestContext, "science-team", "tempZone", UserGroupMutationOptions{Reconcile: true}); err != nil {
+			t.Fatalf("DeleteUserGroup reconcile attempt %d returned error: %v", i+1, err)
+		}
+	}
+}
+
+func TestUserGroupMutationsRejectMissingNames(t *testing.T) {
+	service := newTestUserGroupService(t, newCatalogTestFileSystem())
+	requestContext := groupAdminRequestContext()
+
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{
+			name: "create group",
+			call: func() error {
+				_, err := service.CreateUserGroup(context.Background(), requestContext, "", "tempZone", UserGroupMutationOptions{})
+				return err
+			},
+		},
+		{
+			name: "delete group",
+			call: func() error {
+				return service.DeleteUserGroup(context.Background(), requestContext, "", "tempZone", UserGroupMutationOptions{})
+			},
+		},
+		{
+			name: "add missing group",
+			call: func() error {
+				_, err := service.AddUserToGroup(context.Background(), requestContext, "", "bob", "tempZone", UserGroupMutationOptions{})
+				return err
+			},
+		},
+		{
+			name: "add missing user",
+			call: func() error {
+				_, err := service.AddUserToGroup(context.Background(), requestContext, "research-team", "", "tempZone", UserGroupMutationOptions{})
+				return err
+			},
+		},
+		{
+			name: "remove missing group",
+			call: func() error {
+				_, err := service.RemoveUserFromGroup(context.Background(), requestContext, "", "alice", "tempZone", UserGroupMutationOptions{})
+				return err
+			},
+		},
+		{
+			name: "remove missing user",
+			call: func() error {
+				_, err := service.RemoveUserFromGroup(context.Background(), requestContext, "research-team", "", "tempZone", UserGroupMutationOptions{})
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.call(); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("expected not found for missing name, got %v", err)
+			}
+		})
 	}
 }
 

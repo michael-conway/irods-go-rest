@@ -4927,6 +4927,24 @@ func TestPostUserGroupRequiresAdminOrGroupAdmin(t *testing.T) {
 	}
 }
 
+func TestPostUserGroupRejectsMissingName(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/usergroup", strings.NewReader(`{"name":" "}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"code":"invalid_request"`, `"message":"user group create validation failed"`, `"fields":{"name":"name is required"}`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
 func TestPostUserGroupCreatesAsGroupAdmin(t *testing.T) {
 	handler := testHandler(t)
 
@@ -5077,6 +5095,24 @@ func TestPostUserGroupMemberRequiresAdminOrGroupAdmin(t *testing.T) {
 	}
 }
 
+func TestPostUserGroupMemberRejectsMissingUserName(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/usergroup/research-team/member", strings.NewReader(`{"user_name":" "}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"code":"invalid_request"`, `"message":"user group member validation failed"`, `"fields":{"user_name":"user_name is required"}`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
 func TestDeleteUserGroupMemberRemovesUserAsGroupAdmin(t *testing.T) {
 	handler := testHandler(t)
 
@@ -5144,5 +5180,81 @@ func TestUserGroupMutationRejectsInvalidReconcileFlag(t *testing.T) {
 	}
 	if body := rec.Body.String(); !containsAll(body, `"code":"invalid_request"`, `"message":"reconcile must be true or false"`) {
 		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestUserGroupHandlersRejectMissingPathParameters(t *testing.T) {
+	handler := testHandler(t)
+
+	tests := []struct {
+		name       string
+		method     string
+		target     string
+		body       string
+		pathValues map[string]string
+		handle     func(http.ResponseWriter, *http.Request)
+		want       string
+	}{
+		{
+			name:   "get group missing group_name",
+			method: http.MethodGet,
+			target: "/api/v1/usergroup/",
+			handle: handler.getUserGroup,
+			want:   `"message":"group_name path parameter is required"`,
+		},
+		{
+			name:   "delete group missing group_name",
+			method: http.MethodDelete,
+			target: "/api/v1/usergroup/",
+			handle: handler.deleteUserGroup,
+			want:   `"message":"group_name path parameter is required"`,
+		},
+		{
+			name:   "post member missing group_name",
+			method: http.MethodPost,
+			target: "/api/v1/usergroup//member",
+			body:   `{"user_name":"alice"}`,
+			handle: handler.postUserGroupMember,
+			want:   `"message":"group_name path parameter is required"`,
+		},
+		{
+			name:   "delete member missing group_name",
+			method: http.MethodDelete,
+			target: "/api/v1/usergroup//member/alice",
+			handle: handler.deleteUserGroupMember,
+			want:   `"message":"group_name path parameter is required"`,
+		},
+		{
+			name:   "delete member missing user_name",
+			method: http.MethodDelete,
+			target: "/api/v1/usergroup/research-team/member/",
+			pathValues: map[string]string{
+				"group_name": "research-team",
+			},
+			handle: handler.deleteUserGroupMember,
+			want:   `"message":"user_name path parameter is required"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.target, strings.NewReader(tt.body))
+			if tt.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			for key, value := range tt.pathValues {
+				req.SetPathValue(key, value)
+			}
+			rec := httptest.NewRecorder()
+
+			tt.handle(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d", rec.Code)
+			}
+			if body := rec.Body.String(); !containsAll(body, `"code":"invalid_request"`, tt.want) {
+				t.Fatalf("unexpected response body: %q", body)
+			}
+		})
 	}
 }

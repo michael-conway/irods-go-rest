@@ -206,6 +206,21 @@ Collection-specific behavior is expressed through subresources such as `/path/ch
 
 This establishes `/path` as the generic REST pattern for logical-path-oriented operations. Additional routes such as `/path/metadata` and `/path/acl` can be added later without changing the core addressing model.
 
+## Generic User And Group Administration
+
+`/api/v1/usergroup` is the generic REST surface for iRODS group administration:
+
+* `GET /api/v1/usergroup`
+* `POST /api/v1/usergroup`
+* `GET /api/v1/usergroup/{group_name}`
+* `DELETE /api/v1/usergroup/{group_name}`
+* `POST /api/v1/usergroup/{group_name}/member`
+* `DELETE /api/v1/usergroup/{group_name}/member/{user_name}`
+
+Keycloak synchronization workflows should call these routes for iRODS group
+create/delete and membership reconciliation. They should not add parallel
+Keycloak-specific group management routes under `/api/v1/ext`.
+
 ## Extension Endpoint Policy
 
 Opinionated, workflow-specific APIs should live in this service under an explicit extension namespace:

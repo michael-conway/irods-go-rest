@@ -29,7 +29,13 @@ For opinionated features, keep them in this repository but place them under:
 Use this boundary:
 
 - core generic iRODS operations stay under `/api/v1/path*` and related generic resources
+- generic iRODS group operations stay under `/api/v1/usergroup*`
 - opinionated workflow endpoints (for example favorites, metadata manifests, and S3 admin helpers) stay under `/api/v1/ext/*`
+
+Keycloak synchronization should use `/api/v1/usergroup` for iRODS group create,
+delete, add-member, and remove-member operations. Do not add Keycloak-specific
+group management routes under `/api/v1/ext` when the generic usergroup surface
+already expresses the iRODS operation.
 
 Extension support signaling:
 

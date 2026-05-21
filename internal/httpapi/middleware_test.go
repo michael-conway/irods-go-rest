@@ -136,6 +136,34 @@ func TestRequestLoggerPropagatesRequestAuditMetadata(t *testing.T) {
 	}
 }
 
+func TestRequestLoggerGeneratesRequestIDWhenAbsent(t *testing.T) {
+	handler := &Handler{verifier: stubAuthService{}}
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/v1/path", handler.requireBearer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		metadata, ok := requestctx.MetadataFromContext(r.Context())
+		if !ok {
+			t.Fatal("expected request metadata in context")
+		}
+		if strings.TrimSpace(metadata.RequestID) == "" {
+			t.Fatal("expected generated request id in context")
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+
+	record, recorder := captureRequestLogRecordAndRecorder(t, requestLogger(mux), req)
+
+	responseRequestID := recorder.Header().Get(requestIDHeader)
+	if strings.TrimSpace(responseRequestID) == "" {
+		t.Fatal("expected generated response request id")
+	}
+	if got := stringField(record, "request_id"); got != responseRequestID {
+		t.Fatalf("expected log request_id %q, got %q", responseRequestID, got)
+	}
+}
+
 func captureRequestLogRecord(t *testing.T, handler http.Handler, req *http.Request) map[string]any {
 	t.Helper()
 	record, _ := captureRequestLogRecordAndRecorder(t, handler, req)
