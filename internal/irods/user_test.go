@@ -7,6 +7,7 @@ import (
 
 	irodscommon "github.com/cyverse/go-irodsclient/irods/common"
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
+	usersyncext "github.com/michael-conway/go-irodsclient-extensions/usersync"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 )
 
@@ -105,6 +106,27 @@ func TestUserCreateReconcileExistingMatchingType(t *testing.T) {
 	}
 	if user.Name != "alice" || user.Type != string(irodstypes.IRODSUserRodsUser) {
 		t.Fatalf("unexpected reconciled user: %+v", user)
+	}
+}
+
+func TestUserCreateReconcileMarksRequestSourceMetadata(t *testing.T) {
+	filesystem := newCatalogTestFileSystem()
+	service := newTestUserService(t, filesystem)
+	requestContext := groupAdminRequestContext()
+	requestContext.RequestSource = "irods-keycloak-admin"
+
+	_, err := service.CreateUser(context.Background(), requestContext, "charlie", UserCreateOptions{
+		Type: string(irodstypes.IRODSUserRodsUser),
+	}, UserMutationOptions{Reconcile: true})
+	if err != nil {
+		t.Fatalf("CreateUser reconcile returned error: %v", err)
+	}
+
+	if !filesystem.hasUserMetadata("charlie", "tempZone", usersyncext.AVUAttributeManaged, usersyncext.AVUValueTrue, "irods-keycloak-admin") {
+		t.Fatalf("expected managed source metadata for charlie")
+	}
+	if !filesystem.hasUserMetadata("charlie", "tempZone", usersyncext.AVUAttributeSource, "irods-keycloak-admin", "") {
+		t.Fatalf("expected source metadata for charlie")
 	}
 }
 

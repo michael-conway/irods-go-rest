@@ -29,6 +29,18 @@ x-sync-guardrails:
     that behavior is allowed. It does not bypass iRODS authorization, does not ignore
     type mismatches, does not create missing prerequisite resources unless documented,
     and does not make destructive operations implicit.
+    Service-account callers do not receive a separate REST-side authorization store:
+    bearer/basic authentication resolves to an effective iRODS identity and iRODS
+    role checks still decide whether catalog mutations may proceed.
+  usersync_policy:
+    behavior: |
+      Reconciliation uses the shared `go-irodsclient-extensions/usersync` policy.
+      Sync may create/manage normal `rodsuser` accounts and `rodsgroup` groups.
+      It does not create, claim, delete, update, or manage group membership for
+      `groupadmin` or `rodsadmin` users. Created users/groups are marked with
+      `iRODS:USER_SYNCH:MANAGED=true`. Delete-class reconciliation requires this
+      managed marker unless a caller explicitly uses a policy that relaxes the
+      guardrail outside this REST surface.
   idempotency:
     header: Idempotency-Key
     behavior: |
@@ -524,7 +536,8 @@ paths:
       description: |
         Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
         Synchronization clients may use `reconcile=true` to make group creation
-        repeatable when the existing principal is already an iRODS group.
+        repeatable when the existing principal is already an iRODS group. Created
+        groups are marked with `iRODS:USER_SYNCH:MANAGED=true`.
       security:
         - BearerAuth: []
         - BasicAuth: []
@@ -641,7 +654,8 @@ paths:
         Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
         Synchronization clients may use `reconcile=true` so deleting an already absent
         group is reported as success. The operation does not delete users or other
-        non-group principals with the same name.
+        non-group principals with the same name. Reconcile delete of an existing
+        group requires the group to be marked with `iRODS:USER_SYNCH:MANAGED=true`.
       security:
         - BearerAuth: []
         - BasicAuth: []
@@ -697,6 +711,7 @@ paths:
         Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
         Synchronization clients may use `reconcile=true` so an already present
         membership is reported as success. The group and user must already exist.
+        Reconcile mode will not add `groupadmin` or `rodsadmin` users to groups.
       security:
         - BearerAuth: []
         - BasicAuth: []
@@ -768,7 +783,9 @@ paths:
         Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
         Synchronization clients may use `reconcile=true` so an already absent
         membership is reported as success. The group and user principals must still
-        be resolvable for membership reconciliation.
+        be resolvable for membership reconciliation. Reconcile removal requires the
+        group to be marked with `iRODS:USER_SYNCH:MANAGED=true` and will not manage
+        memberships for `groupadmin` or `rodsadmin` users.
       security:
         - BearerAuth: []
         - BasicAuth: []

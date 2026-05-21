@@ -1107,6 +1107,7 @@ type catalogTestFileSystem struct {
 	resources      []*irodstypes.IRODSResource
 	usersByKey     map[string]*irodstypes.IRODSUser
 	groupMembers   map[string][]string
+	metadataByUser map[string][]*irodstypes.IRODSMeta
 	released       bool
 }
 
@@ -1285,6 +1286,7 @@ func newCatalogTestFileSystem() *catalogTestFileSystem {
 		groupMembers: map[string][]string{
 			catalogUserKey("research-team", "tempZone"): {"alice"},
 		},
+		metadataByUser: map[string][]*irodstypes.IRODSMeta{},
 	}
 }
 
@@ -2099,6 +2101,35 @@ func (f *catalogTestFileSystem) ListGroupMembers(zoneName string, groupName stri
 	return members, nil
 }
 
+func (f *catalogTestFileSystem) ListUserMetadata(username string, zoneName string) ([]*irodstypes.IRODSMeta, error) {
+	if _, ok := f.usersByKey[catalogUserKey(username, zoneName)]; !ok {
+		return nil, irodstypes.NewUserNotFoundError(username)
+	}
+
+	metadata := f.metadataByUser[catalogUserKey(username, zoneName)]
+	result := make([]*irodstypes.IRODSMeta, 0, len(metadata))
+	for _, meta := range metadata {
+		if meta == nil {
+			continue
+		}
+		copy := *meta
+		result = append(result, &copy)
+	}
+	return result, nil
+}
+
+func (f *catalogTestFileSystem) AddUserMetadata(username string, zoneName string, attribute string, value string, unit string) error {
+	if _, ok := f.usersByKey[catalogUserKey(username, zoneName)]; !ok {
+		return irodstypes.NewUserNotFoundError(username)
+	}
+	if f.hasUserMetadata(username, zoneName, attribute, value, unit) {
+		return errors.New("already exists")
+	}
+
+	f.addUserMetadata(username, zoneName, attribute, value, unit)
+	return nil
+}
+
 func (f *catalogTestFileSystem) CreateUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error) {
 	key := catalogUserKey(username, zoneName)
 	if existing, ok := f.usersByKey[key]; ok {
@@ -2142,6 +2173,7 @@ func (f *catalogTestFileSystem) RemoveUser(username string, zoneName string, _ i
 	}
 	delete(f.usersByKey, key)
 	delete(f.groupMembers, key)
+	delete(f.metadataByUser, key)
 	for groupKey, members := range f.groupMembers {
 		filtered := members[:0]
 		for _, member := range members {
@@ -2153,6 +2185,28 @@ func (f *catalogTestFileSystem) RemoveUser(username string, zoneName string, _ i
 		f.groupMembers[groupKey] = filtered
 	}
 	return nil
+}
+
+func (f *catalogTestFileSystem) addUserMetadata(username string, zoneName string, attribute string, value string, unit string) {
+	key := catalogUserKey(username, zoneName)
+	f.metadataByUser[key] = append(f.metadataByUser[key], &irodstypes.IRODSMeta{
+		AVUID: int64(len(f.metadataByUser[key]) + 1),
+		Name:  attribute,
+		Value: value,
+		Units: unit,
+	})
+}
+
+func (f *catalogTestFileSystem) hasUserMetadata(username string, zoneName string, attribute string, value string, unit string) bool {
+	for _, meta := range f.metadataByUser[catalogUserKey(username, zoneName)] {
+		if meta == nil {
+			continue
+		}
+		if meta.Name == attribute && meta.Value == value && meta.Units == unit {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *catalogTestFileSystem) RemoveUserGroup(groupName string, zoneName string) error {

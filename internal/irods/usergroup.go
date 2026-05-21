@@ -136,7 +136,7 @@ func (s *userGroupService) CreateUserGroup(ctx context.Context, requestContext *
 	}
 
 	if options.Reconcile {
-		result, err := usersyncext.NewService(filesystem, zone).EnsureGroup(ctx, usersyncext.GroupRef{
+		result, err := newUserSyncService(filesystem, zone, requestContext).EnsureGroup(ctx, usersyncext.GroupRef{
 			Name: groupName,
 			Zone: zone,
 		})
@@ -190,7 +190,7 @@ func (s *userGroupService) DeleteUserGroup(ctx context.Context, requestContext *
 	}
 
 	if options.Reconcile {
-		result, err := usersyncext.NewService(filesystem, zone).EnsureGroupAbsent(ctx, usersyncext.GroupRef{
+		result, err := newUserSyncService(filesystem, zone, requestContext).EnsureGroupAbsent(ctx, usersyncext.GroupRef{
 			Name: groupName,
 			Zone: zone,
 		})
@@ -244,7 +244,7 @@ func (s *userGroupService) AddUserToGroup(ctx context.Context, requestContext *R
 	}
 
 	if options.Reconcile {
-		result, err := usersyncext.NewService(filesystem, zone).EnsureGroupMember(ctx, usersyncext.GroupMemberRef{
+		result, err := newUserSyncService(filesystem, zone, requestContext).EnsureGroupMember(ctx, usersyncext.GroupMemberRef{
 			GroupName: groupName,
 			UserName:  username,
 			Zone:      zone,
@@ -312,7 +312,7 @@ func (s *userGroupService) RemoveUserFromGroup(ctx context.Context, requestConte
 	}
 
 	if options.Reconcile {
-		result, err := usersyncext.NewService(filesystem, zone).EnsureGroupMemberAbsent(ctx, usersyncext.GroupMemberRef{
+		result, err := newUserSyncService(filesystem, zone, requestContext).EnsureGroupMemberAbsent(ctx, usersyncext.GroupMemberRef{
 			GroupName: groupName,
 			UserName:  username,
 			Zone:      zone,

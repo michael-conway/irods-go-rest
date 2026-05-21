@@ -3,10 +3,24 @@ package irods
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	usersyncext "github.com/michael-conway/go-irodsclient-extensions/usersync"
 	"github.com/michael-conway/irods-go-rest/internal/domain"
 )
+
+func newUserSyncService(filesystem usersyncext.Filesystem, zone string, requestContext *RequestContext) *usersyncext.Service {
+	source := ""
+	if requestContext != nil {
+		source = strings.TrimSpace(requestContext.RequestSource)
+	}
+	if source == "" {
+		return usersyncext.NewService(filesystem, zone)
+	}
+	return usersyncext.NewService(filesystem, zone, usersyncext.WithSyncMetadata(usersyncext.SyncMetadata{
+		Source: source,
+	}))
+}
 
 func mapUserSyncError(err error) error {
 	if err == nil {
@@ -19,6 +33,8 @@ func mapUserSyncError(err error) error {
 	case errors.Is(err, usersyncext.ErrPermissionDenied):
 		return fmt.Errorf("%w: %v", ErrPermissionDenied, err)
 	case errors.Is(err, usersyncext.ErrConflict):
+		return fmt.Errorf("%w: %v", ErrConflict, err)
+	case errors.Is(err, usersyncext.ErrPolicyViolation):
 		return fmt.Errorf("%w: %v", ErrConflict, err)
 	default:
 		return err

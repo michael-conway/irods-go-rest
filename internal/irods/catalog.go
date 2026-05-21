@@ -224,6 +224,8 @@ type CatalogFileSystem interface {
 	GetUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error)
 	ListUsers(zoneName string, userType irodstypes.IRODSUserType) ([]*irodstypes.IRODSUser, error)
 	ListGroupMembers(zoneName string, groupName string) ([]*irodstypes.IRODSUser, error)
+	ListUserMetadata(username string, zoneName string) ([]*irodstypes.IRODSMeta, error)
+	AddUserMetadata(username string, zoneName string, attribute string, value string, unit string) error
 	CreateUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error)
 	CreateUserGroup(groupName string, zoneName string) (*irodstypes.IRODSUser, error)
 	ChangeUserPassword(username string, zoneName string, newPassword string) error
@@ -2486,6 +2488,14 @@ func (a *catalogFileSystemAdapter) ListUsers(zoneName string, userType irodstype
 
 func (a *catalogFileSystemAdapter) ListGroupMembers(zoneName string, groupName string) ([]*irodstypes.IRODSUser, error) {
 	return a.filesystem.ListGroupMembers(zoneName, groupName)
+}
+
+func (a *catalogFileSystemAdapter) ListUserMetadata(username string, zoneName string) ([]*irodstypes.IRODSMeta, error) {
+	return a.filesystem.ListUserMetadata(username, zoneName)
+}
+
+func (a *catalogFileSystemAdapter) AddUserMetadata(username string, zoneName string, attribute string, value string, unit string) error {
+	return a.filesystem.AddUserMetadata(username, zoneName, attribute, value, unit)
 }
 
 func (a *catalogFileSystemAdapter) CreateUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error) {

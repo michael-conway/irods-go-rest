@@ -24,6 +24,7 @@ import (
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
 	metadataext "github.com/michael-conway/go-irodsclient-extensions/metadata"
 	s3adminext "github.com/michael-conway/go-irodsclient-extensions/s3admin"
+	usersyncext "github.com/michael-conway/go-irodsclient-extensions/usersync"
 	"github.com/michael-conway/irods-go-rest/internal/auth"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 	"github.com/michael-conway/irods-go-rest/internal/domain"
@@ -3091,6 +3092,7 @@ type testCatalogFileSystem struct {
 	serverVersion      *irodstypes.IRODSVersion
 	usersByKey         map[string]*irodstypes.IRODSUser
 	groupMembers       map[string][]string
+	metadataByUser     map[string][]*irodstypes.IRODSMeta
 	lastTrimMinCopies  int
 	lastTrimMinAgeMins int
 }
@@ -3339,6 +3341,7 @@ func newTestCatalogFileSystem() *testCatalogFileSystem {
 		groupMembers: map[string][]string{
 			userKey("research-team", "tempZone"): {"alice"},
 		},
+		metadataByUser: map[string][]*irodstypes.IRODSMeta{},
 	}
 }
 
@@ -4123,6 +4126,35 @@ func (f *testCatalogFileSystem) ListGroupMembers(zoneName string, groupName stri
 	return members, nil
 }
 
+func (f *testCatalogFileSystem) ListUserMetadata(username string, zoneName string) ([]*irodstypes.IRODSMeta, error) {
+	if _, ok := f.usersByKey[userKey(username, zoneName)]; !ok {
+		return nil, irodstypes.NewUserNotFoundError(username)
+	}
+
+	metadata := f.metadataByUser[userKey(username, zoneName)]
+	result := make([]*irodstypes.IRODSMeta, 0, len(metadata))
+	for _, meta := range metadata {
+		if meta == nil {
+			continue
+		}
+		copy := *meta
+		result = append(result, &copy)
+	}
+	return result, nil
+}
+
+func (f *testCatalogFileSystem) AddUserMetadata(username string, zoneName string, attribute string, value string, unit string) error {
+	if _, ok := f.usersByKey[userKey(username, zoneName)]; !ok {
+		return irodstypes.NewUserNotFoundError(username)
+	}
+	if f.hasUserMetadata(username, zoneName, attribute, value, unit) {
+		return errors.New("already exists")
+	}
+
+	f.addUserMetadata(username, zoneName, attribute, value, unit)
+	return nil
+}
+
 func (f *testCatalogFileSystem) CreateUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error) {
 	key := userKey(username, zoneName)
 	if existing, ok := f.usersByKey[key]; ok {
@@ -4166,6 +4198,7 @@ func (f *testCatalogFileSystem) RemoveUser(username string, zoneName string, _ i
 	}
 	delete(f.usersByKey, key)
 	delete(f.groupMembers, key)
+	delete(f.metadataByUser, key)
 	for groupKey, members := range f.groupMembers {
 		filtered := members[:0]
 		for _, member := range members {
@@ -4224,6 +4257,28 @@ func (f *testCatalogFileSystem) RemoveGroupMember(groupName string, username str
 	}
 	f.groupMembers[key] = filtered
 	return nil
+}
+
+func (f *testCatalogFileSystem) addUserMetadata(username string, zoneName string, attribute string, value string, unit string) {
+	key := userKey(username, zoneName)
+	f.metadataByUser[key] = append(f.metadataByUser[key], &irodstypes.IRODSMeta{
+		AVUID: int64(len(f.metadataByUser[key]) + 1),
+		Name:  attribute,
+		Value: value,
+		Units: unit,
+	})
+}
+
+func (f *testCatalogFileSystem) hasUserMetadata(username string, zoneName string, attribute string, value string, unit string) bool {
+	for _, meta := range f.metadataByUser[userKey(username, zoneName)] {
+		if meta == nil {
+			continue
+		}
+		if meta.Name == attribute && meta.Value == value && meta.Units == unit {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *testCatalogFileSystem) Release() {}
@@ -5040,7 +5095,8 @@ func TestDeleteUserGroupMemberRemovesUserAsGroupAdmin(t *testing.T) {
 }
 
 func TestDeleteUserGroupMemberReconcileMissingAsGroupAdmin(t *testing.T) {
-	handler := testHandler(t)
+	handler, filesystem := testHandlerWithConfig(t, nil)
+	filesystem.addUserMetadata("research-team", "tempZone", usersyncext.AVUAttributeManaged, usersyncext.AVUValueTrue, "")
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/usergroup/research-team/member/bob?reconcile=true", nil)
 	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))

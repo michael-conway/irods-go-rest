@@ -165,7 +165,7 @@ func (s *userService) CreateUser(ctx context.Context, requestContext *RequestCon
 	}
 
 	if mutation.Reconcile {
-		result, err := usersyncext.NewService(filesystem, zone).EnsureUser(ctx, usersyncext.EnsureUserRequest{
+		result, err := newUserSyncService(filesystem, zone, requestContext).EnsureUser(ctx, usersyncext.EnsureUserRequest{
 			Name:     username,
 			Zone:     zone,
 			Type:     userType,
@@ -225,23 +225,56 @@ func (s *userService) UpdateUser(ctx context.Context, requestContext *RequestCon
 		return domain.User{}, err
 	}
 
-	result, err := usersyncext.NewService(filesystem, zone).UpdateUser(ctx, usersyncext.UpdateUserRequest{
-		Name:            username,
-		Zone:            zone,
-		Type:            irodstypes.IRODSUserType(strings.TrimSpace(options.Type)),
-		Password:        options.Password,
-		ChangeType:      options.ChangeType,
-		ChangePassword:  options.ChangePassword,
-		CreateIfMissing: mutation.Reconcile,
-	})
-	if err != nil {
-		mappedErr := mapUserSyncError(err)
-		logIRODSError("user UpdateUser failed", mappedErr, append([]any{"user", username, "zone", zone, "change_type", options.ChangeType, "change_password", options.ChangePassword, "reconcile", mutation.Reconcile}, requestContextLogArgs(requestContext)...)...)
-		return domain.User{}, mappedErr
+	if mutation.Reconcile {
+		result, err := newUserSyncService(filesystem, zone, requestContext).UpdateUser(ctx, usersyncext.UpdateUserRequest{
+			Name:            username,
+			Zone:            zone,
+			Type:            irodstypes.IRODSUserType(strings.TrimSpace(options.Type)),
+			Password:        options.Password,
+			ChangeType:      options.ChangeType,
+			ChangePassword:  options.ChangePassword,
+			CreateIfMissing: true,
+		})
+		if err != nil {
+			mappedErr := mapUserSyncError(err)
+			logIRODSError("user UpdateUser reconcile failed", mappedErr, append([]any{"user", username, "zone", zone, "change_type", options.ChangeType, "change_password", options.ChangePassword, "reconcile", mutation.Reconcile}, requestContextLogArgs(requestContext)...)...)
+			return domain.User{}, mappedErr
+		}
+
+		slog.Info("user UpdateUser completed", append([]any{"user", username, "zone", zone, "outcome", string(result.Outcome)}, requestContextLogArgs(requestContext)...)...)
+		return mapUserSyncUser(result.User), nil
 	}
 
-	slog.Info("user UpdateUser completed", append([]any{"user", username, "zone", zone, "outcome", string(result.Outcome)}, requestContextLogArgs(requestContext)...)...)
-	return mapUserSyncUser(result.User), nil
+	existing, err := filesystem.GetUser(username, zone, "")
+	if err != nil {
+		normalizedErr := normalizeUserError("get user", username, zone, err)
+		logIRODSError("user UpdateUser get target failed", normalizedErr, append([]any{"user", username, "zone", zone, "change_type", options.ChangeType, "change_password", options.ChangePassword, "reconcile", mutation.Reconcile}, requestContextLogArgs(requestContext)...)...)
+		return domain.User{}, normalizedErr
+	}
+	if !isUserType(string(existing.Type)) {
+		return domain.User{}, fmt.Errorf("%w: user %q", ErrNotFound, username)
+	}
+
+	if options.ChangeType {
+		newType := irodstypes.IRODSUserType(strings.TrimSpace(options.Type))
+		if existing.Type != newType {
+			if err := filesystem.ChangeUserType(username, zone, newType); err != nil {
+				logIRODSError("user UpdateUser change type failed", err, append([]any{"user", username, "zone", zone, "type", newType, "reconcile", mutation.Reconcile}, requestContextLogArgs(requestContext)...)...)
+				return domain.User{}, normalizeUserError("update user type", username, zone, err)
+			}
+		}
+		existing.Type = newType
+	}
+
+	if options.ChangePassword {
+		if err := filesystem.ChangeUserPassword(username, zone, options.Password); err != nil {
+			logIRODSError("user UpdateUser change password failed", err, append([]any{"user", username, "zone", zone, "reconcile", mutation.Reconcile}, requestContextLogArgs(requestContext)...)...)
+			return domain.User{}, normalizeUserError("update user password", username, zone, err)
+		}
+	}
+
+	slog.Info("user UpdateUser completed", append([]any{"user", username, "zone", zone, "outcome", "updated"}, requestContextLogArgs(requestContext)...)...)
+	return mapUser(existing), nil
 }
 
 func (s *userService) DeleteUser(ctx context.Context, requestContext *RequestContext, username string, zone string, mutation UserMutationOptions) error {
@@ -265,7 +298,7 @@ func (s *userService) DeleteUser(ctx context.Context, requestContext *RequestCon
 	}
 
 	if mutation.Reconcile {
-		result, err := usersyncext.NewService(filesystem, zone).EnsureUserAbsent(ctx, usersyncext.UserRef{
+		result, err := newUserSyncService(filesystem, zone, requestContext).EnsureUserAbsent(ctx, usersyncext.UserRef{
 			Name: username,
 			Zone: zone,
 		})

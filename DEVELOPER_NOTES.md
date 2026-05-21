@@ -63,6 +63,40 @@ Current API auth supports:
 
 Browser login stays under `/web/*`.
 
+### User/Group Sync Authorization
+
+`reconcile=true` user and usergroup calls follow normal iRODS authority. REST
+does not maintain a separate sync ACL or service-account state store.
+
+Service-account callers are handled by the same path as other bearer callers:
+the token is validated, REST resolves the effective/proxy iRODS account, and
+the iRODS user type determines whether catalog mutations may proceed. Service
+accounts that need sync authority must map to an underlying iRODS user with the
+required iRODS role.
+
+Keep sync policy in `go-irodsclient-extensions/usersync` where possible:
+
+- `usersync` assumes an already-authorized iRODS filesystem
+- sync may create/manage normal `rodsuser` accounts and `rodsgroup` groups
+- sync must not create, claim, delete, update, or manage memberships for
+  `groupadmin` or `rodsadmin` users
+- iRODS administrative privilege adjustments remain outside sync and should be
+  performed through iRODS admin workflows such as iCommands
+
+Durable sync ownership state must be iRODS-native AVUs using:
+
+- `iRODS:USER_SYNCH:MANAGED`
+- `iRODS:USER_SYNCH:SOURCE`
+- `iRODS:USER_SYNCH:REALM`
+- `iRODS:USER_SYNCH:EXTERNAL_ID`
+- `iRODS:USER_SYNCH:LAST_SYNC_AT`
+- `iRODS:USER_SYNCH:LAST_PLAN_ID`
+
+REST request audit context is carried through logs and service calls using
+`X-Request-ID`, `X-IRODS-Source`, `X-IRODS-Actor`, `Idempotency-Key`, and bearer
+auth subject/client/scope/audience when present. If `X-Request-ID` is absent,
+REST generates one and returns it in the response header.
+
 ## Testing
 
 Use three layers:

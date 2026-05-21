@@ -7,6 +7,7 @@ import (
 
 	irodscommon "github.com/cyverse/go-irodsclient/irods/common"
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
+	usersyncext "github.com/michael-conway/go-irodsclient-extensions/usersync"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 )
 
@@ -132,7 +133,9 @@ func TestUserGroupAddReconcileExistingMember(t *testing.T) {
 }
 
 func TestUserGroupRemoveReconcileMissingMember(t *testing.T) {
-	service := newTestUserGroupService(t, newCatalogTestFileSystem())
+	filesystem := newCatalogTestFileSystem()
+	filesystem.addUserMetadata("research-team", "tempZone", usersyncext.AVUAttributeManaged, usersyncext.AVUValueTrue, "")
+	service := newTestUserGroupService(t, filesystem)
 
 	_, strictErr := service.RemoveUserFromGroup(context.Background(), groupAdminRequestContext(), "research-team", "bob", "tempZone", UserGroupMutationOptions{})
 	if !errors.Is(strictErr, ErrNotFound) {
@@ -145,6 +148,15 @@ func TestUserGroupRemoveReconcileMissingMember(t *testing.T) {
 	}
 	if len(group.Members) != 1 || group.Members[0].Name != "alice" {
 		t.Fatalf("unexpected members: %+v", group.Members)
+	}
+}
+
+func TestUserGroupRemoveReconcileRejectsUnmanagedGroup(t *testing.T) {
+	service := newTestUserGroupService(t, newCatalogTestFileSystem())
+
+	_, err := service.RemoveUserFromGroup(context.Background(), groupAdminRequestContext(), "research-team", "bob", "tempZone", UserGroupMutationOptions{Reconcile: true})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("expected unmanaged group removal conflict, got %v", err)
 	}
 }
 
