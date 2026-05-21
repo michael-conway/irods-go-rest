@@ -37,6 +37,8 @@ type Principal struct {
 	Subject  string   `json:"subject,omitempty"`
 	Username string   `json:"username,omitempty"`
 	Scope    []string `json:"scope,omitempty"`
+	ClientID string   `json:"client_id,omitempty"`
+	Audience []string `json:"audience,omitempty"`
 	Active   bool     `json:"active"`
 }
 
@@ -264,6 +266,8 @@ func (k *KeycloakService) VerifyToken(ctx context.Context, accessToken string) (
 		Scope             string `json:"scope"`
 		PreferredUsername string `json:"preferred_username"`
 		Sub               string `json:"sub"`
+		ClientID          string `json:"client_id"`
+		Audience          any    `json:"aud"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
@@ -280,8 +284,34 @@ func (k *KeycloakService) VerifyToken(ctx context.Context, accessToken string) (
 		Subject:  payload.Sub,
 		Username: payload.PreferredUsername,
 		Scope:    strings.Fields(payload.Scope),
+		ClientID: strings.TrimSpace(payload.ClientID),
+		Audience: audienceValues(payload.Audience),
 		Active:   payload.Active,
 	}, nil
+}
+
+func audienceValues(raw any) []string {
+	switch typed := raw.(type) {
+	case string:
+		audience := strings.TrimSpace(typed)
+		if audience == "" {
+			return nil
+		}
+		return []string{audience}
+	case []any:
+		values := make([]string, 0, len(typed))
+		for _, value := range typed {
+			if audience, ok := value.(string); ok {
+				audience = strings.TrimSpace(audience)
+				if audience != "" {
+					values = append(values, audience)
+				}
+			}
+		}
+		return values
+	default:
+		return nil
+	}
 }
 
 func logAuthError(msg string, err error, args ...any) {

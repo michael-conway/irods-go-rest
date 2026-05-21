@@ -10,6 +10,10 @@ tags:
   - name: health
   - name: path
   - name: user
+    description: |
+      iRODS user and group administration endpoints. Mutating operations are intended
+      for authenticated administrative callers and may be used by synchronization
+      controllers when the documented reconciliation guardrails are followed.
   - name: ext
     description: |
       iRODS-specific extension endpoints under `/api/v1/ext/*`.
@@ -17,6 +21,25 @@ tags:
       Extension operations may be deployment-gated. Unsupported capability mode returns
       `501` (`code=not_supported`), while missing required feature configuration returns
       `503` (`code=not_configured`).
+x-sync-guardrails:
+  description: |
+    User and group mutation endpoints support desired-state synchronization through
+    the `reconcile=true` query flag. Reconciliation only converts already-satisfied
+    state or already-absent state into success where each operation explicitly says
+    that behavior is allowed. It does not bypass iRODS authorization, does not ignore
+    type mismatches, does not create missing prerequisite resources unless documented,
+    and does not make destructive operations implicit.
+  idempotency:
+    header: Idempotency-Key
+    behavior: |
+      `Idempotency-Key` is accepted as audit/correlation metadata and is emitted in
+      service logs. It is not currently a server-side replay cache or write
+      deduplication mechanism; clients should still use `reconcile=true` for
+      repeatable desired-state sync operations.
+  audit_headers:
+    X-Request-ID: Correlates requests and is echoed in the response when supplied.
+    X-IRODS-Source: Identifies the sync controller, service, or tool issuing the request.
+    X-IRODS-Actor: Identifies the logical actor or sync operation behind the request.
 paths:
   /healthz:
     get:
@@ -200,7 +223,12 @@ paths:
       operationId: postUser
       tags: [user]
       summary: Create one iRODS user
-      description: Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+      description: |
+        Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+        Synchronization clients may use `reconcile=true` to make creation repeatable
+        when the existing principal is already the requested user type. The operation
+        remains a conflict when the existing principal is a group or when the existing
+        user type differs from the requested type.
       security:
         - BearerAuth: []
         - BasicAuth: []
@@ -211,6 +239,17 @@ paths:
           schema:
             type: string
           description: iRODS zone. Defaults to the configured iRODS zone.
+        - in: query
+          name: reconcile
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: |
+            Desired-state sync mode. Treat an existing user with the requested type
+            as success instead of returning 409. A type mismatch or non-user
+            principal with the same name remains a conflict. If a password is supplied
+            for an existing matching user, the password is applied.
       requestBody:
         required: true
         content:
@@ -218,6 +257,12 @@ paths:
             schema:
               $ref: "#/components/schemas/UserCreateRequest"
       responses:
+        "200":
+          description: Desired user state satisfied when reconciliation mode is used
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
         "201":
           description: User created
           content:
@@ -298,7 +343,12 @@ paths:
       operationId: putUser
       tags: [user]
       summary: Update one iRODS user
-      description: Requires the authenticated iRODS user to have type `rodsadmin`.
+      description: |
+        Requires the authenticated iRODS user to have type `rodsadmin`.
+        Synchronization clients may use `reconcile=true` as a constrained upsert:
+        a missing user is created only when the request includes `type`. Password-only
+        updates still require the user to exist, and existing non-user principals or
+        incompatible types remain guarded by normal error handling.
       security:
         - BearerAuth: []
         - BasicAuth: []
@@ -315,6 +365,16 @@ paths:
           schema:
             type: string
           description: iRODS zone. Defaults to the configured iRODS zone.
+        - in: query
+          name: reconcile
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: |
+            Desired-state sync mode. Create the user when missing if the request
+            includes a target `type`; password-only updates still return 404 when
+            the user is absent. Reconciliation does not bypass rodsadmin authorization.
       requestBody:
         required: true
         content:
@@ -356,7 +416,11 @@ paths:
       operationId: deleteUser
       tags: [user]
       summary: Delete one iRODS user
-      description: Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+      description: |
+        Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+        Synchronization clients may use `reconcile=true` so deleting an already absent
+        user is reported as success. The operation does not delete groups or other
+        non-user principals with the same name.
       security:
         - BearerAuth: []
         - BasicAuth: []
@@ -373,6 +437,15 @@ paths:
           schema:
             type: string
           description: iRODS zone. Defaults to the configured iRODS zone.
+        - in: query
+          name: reconcile
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: |
+            Desired-state sync mode. Treat a missing user, or an existing non-user
+            principal with this name, as already absent and return success.
       responses:
         "204":
           description: User deleted
@@ -448,7 +521,10 @@ paths:
       operationId: postUserGroup
       tags: [user]
       summary: Create one iRODS group
-      description: Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+      description: |
+        Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+        Synchronization clients may use `reconcile=true` to make group creation
+        repeatable when the existing principal is already an iRODS group.
       security:
         - BearerAuth: []
         - BasicAuth: []
@@ -459,6 +535,15 @@ paths:
           schema:
             type: string
           description: iRODS zone. Defaults to the configured iRODS zone.
+        - in: query
+          name: reconcile
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: |
+            Desired-state sync mode. Treat an existing group as success instead of
+            returning 409. A same-name non-group principal remains a conflict.
       requestBody:
         required: true
         content:
@@ -466,6 +551,12 @@ paths:
             schema:
               $ref: "#/components/schemas/UserGroupCreateRequest"
       responses:
+        "200":
+          description: Desired group state satisfied when reconciliation mode is used
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserGroupResponse"
         "201":
           description: Group created
           content:
@@ -546,7 +637,11 @@ paths:
       operationId: deleteUserGroup
       tags: [user]
       summary: Delete one iRODS group
-      description: Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+      description: |
+        Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+        Synchronization clients may use `reconcile=true` so deleting an already absent
+        group is reported as success. The operation does not delete users or other
+        non-group principals with the same name.
       security:
         - BearerAuth: []
         - BasicAuth: []
@@ -563,6 +658,15 @@ paths:
           schema:
             type: string
           description: iRODS zone. Defaults to the configured iRODS zone.
+        - in: query
+          name: reconcile
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: |
+            Desired-state sync mode. Treat a missing group, or an existing non-group
+            principal with this name, as already absent and return success.
       responses:
         "204":
           description: Group deleted
@@ -589,7 +693,10 @@ paths:
       operationId: postUserGroupMember
       tags: [user]
       summary: Add one user to an iRODS group
-      description: Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+      description: |
+        Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+        Synchronization clients may use `reconcile=true` so an already present
+        membership is reported as success. The group and user must already exist.
       security:
         - BearerAuth: []
         - BasicAuth: []
@@ -606,6 +713,15 @@ paths:
           schema:
             type: string
           description: iRODS zone. Defaults to the configured iRODS zone.
+        - in: query
+          name: reconcile
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: |
+            Desired-state sync mode. Treat an existing membership as success. Missing
+            group or user prerequisites still return 404.
       requestBody:
         required: true
         content:
@@ -648,7 +764,11 @@ paths:
       operationId: deleteUserGroupMember
       tags: [user]
       summary: Remove one user from an iRODS group
-      description: Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+      description: |
+        Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+        Synchronization clients may use `reconcile=true` so an already absent
+        membership is reported as success. The group and user principals must still
+        be resolvable for membership reconciliation.
       security:
         - BearerAuth: []
         - BasicAuth: []
@@ -671,6 +791,15 @@ paths:
           schema:
             type: string
           description: iRODS zone. Defaults to the configured iRODS zone.
+        - in: query
+          name: reconcile
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: |
+            Desired-state sync mode. Treat a missing membership as already absent and
+            return success. Missing group or user prerequisites still return 404.
       responses:
         "200":
           description: Group membership updated

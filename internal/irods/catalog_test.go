@@ -2115,6 +2115,10 @@ func (f *catalogTestFileSystem) CreateUser(username string, zoneName string, use
 	return user, nil
 }
 
+func (f *catalogTestFileSystem) CreateUserGroup(groupName string, zoneName string) (*irodstypes.IRODSUser, error) {
+	return f.CreateUser(groupName, zoneName, irodstypes.IRODSUserRodsGroup)
+}
+
 func (f *catalogTestFileSystem) ChangeUserPassword(username string, zoneName string, _ string) error {
 	if _, ok := f.usersByKey[catalogUserKey(username, zoneName)]; !ok {
 		return irodstypes.NewUserNotFoundError(username)
@@ -2151,6 +2155,10 @@ func (f *catalogTestFileSystem) RemoveUser(username string, zoneName string, _ i
 	return nil
 }
 
+func (f *catalogTestFileSystem) RemoveUserGroup(groupName string, zoneName string) error {
+	return f.RemoveUser(groupName, zoneName, irodstypes.IRODSUserRodsGroup)
+}
+
 func (f *catalogTestFileSystem) AddGroupMember(groupName string, username string, zoneName string) error {
 	group, ok := f.usersByKey[catalogUserKey(groupName, zoneName)]
 	if !ok || group.Type != irodstypes.IRODSUserRodsGroup {
@@ -2164,7 +2172,7 @@ func (f *catalogTestFileSystem) AddGroupMember(groupName string, username string
 	members := f.groupMembers[key]
 	for _, member := range members {
 		if member == username {
-			return nil
+			return errors.New("already exists")
 		}
 	}
 	f.groupMembers[key] = append(members, username)

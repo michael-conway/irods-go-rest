@@ -28,12 +28,14 @@ func (h *Handler) requireBearer(next http.Handler) http.Handler {
 		case "basic":
 			setRequestAuthMetadata(w, "basic", authz.Username)
 			slog.Debug("http auth resolved basic credentials", "path", r.URL.Path, "username", authz.Username)
-			ctx := auth.WithPrincipal(r.Context(), auth.Principal{
+			principal := auth.Principal{
 				Subject:  authz.Username,
 				Username: authz.Username,
 				Scope:    []string{"basic"},
 				Active:   true,
-			})
+			}
+			setRequestPrincipalMetadata(w, principal)
+			ctx := auth.WithPrincipal(r.Context(), principal)
 			ctx = auth.WithBasicPassword(ctx, authz.Password)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
@@ -58,6 +60,7 @@ func (h *Handler) requireBearer(next http.Handler) http.Handler {
 				return
 			}
 			setRequestAuthMetadata(w, "bearer", principal.Username)
+			setRequestPrincipalMetadata(w, principal)
 			next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
 			return
 		default:
@@ -91,12 +94,14 @@ func (h *Handler) requireDownloadBearer(next http.Handler) http.Handler {
 		case "basic":
 			setRequestAuthMetadata(w, "basic", authz.Username)
 			slog.Debug("http download auth resolved basic credentials", "path", r.URL.Path, "username", authz.Username)
-			ctx := auth.WithPrincipal(r.Context(), auth.Principal{
+			principal := auth.Principal{
 				Subject:  authz.Username,
 				Username: authz.Username,
 				Scope:    []string{"basic"},
 				Active:   true,
-			})
+			}
+			setRequestPrincipalMetadata(w, principal)
+			ctx := auth.WithPrincipal(r.Context(), principal)
 			ctx = auth.WithBasicPassword(ctx, authz.Password)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
@@ -128,6 +133,7 @@ func (h *Handler) requireDownloadBearer(next http.Handler) http.Handler {
 			}
 
 			setRequestAuthMetadata(w, "bearer", principal.Username)
+			setRequestPrincipalMetadata(w, principal)
 			next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
 			return
 		default:

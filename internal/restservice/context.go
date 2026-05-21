@@ -5,13 +5,18 @@ import (
 	"fmt"
 
 	"github.com/michael-conway/irods-go-rest/internal/auth"
+	"github.com/michael-conway/irods-go-rest/internal/requestctx"
 )
 
 type RequestContext struct {
-	AuthScheme    string
-	Principal     *auth.Principal
-	BasicPassword string
-	Ticket        string
+	AuthScheme     string
+	Principal      *auth.Principal
+	BasicPassword  string
+	Ticket         string
+	RequestID      string
+	RequestSource  string
+	RequestActor   string
+	IdempotencyKey string
 }
 
 func RequestContextFromContext(ctx context.Context) (*RequestContext, error) {
@@ -20,10 +25,12 @@ func RequestContextFromContext(ctx context.Context) (*RequestContext, error) {
 	}
 
 	if ticket, ok := auth.TicketFromContext(ctx); ok && ticket != "" {
-		return &RequestContext{
+		requestContext := &RequestContext{
 			AuthScheme: "bearer-ticket",
 			Ticket:     ticket,
-		}, nil
+		}
+		applyRequestMetadata(requestContext, ctx)
+		return requestContext, nil
 	}
 
 	principal, principalOK := auth.PrincipalFromContext(ctx)
@@ -41,5 +48,22 @@ func RequestContextFromContext(ctx context.Context) (*RequestContext, error) {
 		requestContext.BasicPassword = password
 	}
 
+	applyRequestMetadata(requestContext, ctx)
 	return requestContext, nil
+}
+
+func applyRequestMetadata(requestContext *RequestContext, ctx context.Context) {
+	if requestContext == nil {
+		return
+	}
+
+	metadata, ok := requestctx.MetadataFromContext(ctx)
+	if !ok {
+		return
+	}
+
+	requestContext.RequestID = metadata.RequestID
+	requestContext.RequestSource = metadata.Source
+	requestContext.RequestActor = metadata.Actor
+	requestContext.IdempotencyKey = metadata.IdempotencyKey
 }

@@ -92,6 +92,11 @@ func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) postUser(w http.ResponseWriter, r *http.Request) {
+	mutation, ok := userMutationOptionsFromRequest(w, r)
+	if !ok {
+		return
+	}
+
 	var request userCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
@@ -104,18 +109,27 @@ func (h *Handler) postUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.users.CreateUser(r.Context(), username, options)
+	user, err := h.users.CreateUser(r.Context(), username, options, mutation)
 	if err != nil {
 		writeUserError(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]any{
+	status := http.StatusCreated
+	if mutation.Reconcile {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, map[string]any{
 		"user": userResponse(user),
 	})
 }
 
 func (h *Handler) putUser(w http.ResponseWriter, r *http.Request) {
+	mutation, ok := userMutationOptionsFromRequest(w, r)
+	if !ok {
+		return
+	}
+
 	username := pathValue(r, "user_name")
 	if username == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "user_name path parameter is required")
@@ -134,7 +148,7 @@ func (h *Handler) putUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.users.UpdateUser(r.Context(), username, options)
+	user, err := h.users.UpdateUser(r.Context(), username, options, mutation)
 	if err != nil {
 		writeUserError(w, err)
 		return
@@ -146,13 +160,18 @@ func (h *Handler) putUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
+	mutation, ok := userMutationOptionsFromRequest(w, r)
+	if !ok {
+		return
+	}
+
 	username := pathValue(r, "user_name")
 	if username == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "user_name path parameter is required")
 		return
 	}
 
-	if err := h.users.DeleteUser(r.Context(), username, h.userZoneFromRequest(r)); err != nil {
+	if err := h.users.DeleteUser(r.Context(), username, h.userZoneFromRequest(r), mutation); err != nil {
 		writeUserError(w, err)
 		return
 	}
@@ -320,6 +339,18 @@ func userListHref(zone string, userType string, prefix string) string {
 		return "/api/v1/user?" + encoded
 	}
 	return "/api/v1/user"
+}
+
+func userMutationOptionsFromRequest(w http.ResponseWriter, r *http.Request) (restservice.UserMutationOptions, bool) {
+	reconcile, err := optionalBoolQuery(r, "reconcile")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return restservice.UserMutationOptions{}, false
+	}
+
+	return restservice.UserMutationOptions{
+		Reconcile: reconcile,
+	}, true
 }
 
 func writeUserError(w http.ResponseWriter, err error) {

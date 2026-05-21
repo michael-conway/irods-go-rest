@@ -376,17 +376,33 @@ func irodsRequestContext(requestContext *RequestContext) *irods.RequestContext {
 	}
 
 	username := ""
+	subject := ""
+	clientID := ""
+	scopes := []string(nil)
+	audience := []string(nil)
 	if requestContext.Principal != nil {
 		username = requestContext.Principal.Username
 		if username == "" {
 			username = requestContext.Principal.Subject
 		}
+		subject = requestContext.Principal.Subject
+		clientID = requestContext.Principal.ClientID
+		scopes = append(scopes, requestContext.Principal.Scope...)
+		audience = append(audience, requestContext.Principal.Audience...)
 	}
 
 	return &irods.RequestContext{
-		AuthScheme:    requestContext.AuthScheme,
-		Username:      username,
-		BasicPassword: requestContext.BasicPassword,
-		Ticket:        requestContext.Ticket,
+		AuthScheme:     requestContext.AuthScheme,
+		Username:       username,
+		BasicPassword:  requestContext.BasicPassword,
+		Ticket:         requestContext.Ticket,
+		RequestID:      requestContext.RequestID,
+		RequestSource:  requestContext.RequestSource,
+		RequestActor:   requestContext.RequestActor,
+		IdempotencyKey: requestContext.IdempotencyKey,
+		Subject:        subject,
+		ClientID:       clientID,
+		Scopes:         scopes,
+		Audience:       audience,
 	}
 }

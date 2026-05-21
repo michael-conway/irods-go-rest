@@ -27,12 +27,16 @@ type UserCreateOptions struct {
 	Password string
 }
 
+type UserMutationOptions struct {
+	Reconcile bool
+}
+
 type UserService interface {
 	ListUsers(ctx context.Context, options UserListOptions) ([]domain.User, error)
 	GetUser(ctx context.Context, username string, zone string) (domain.User, error)
-	CreateUser(ctx context.Context, username string, options UserCreateOptions) (domain.User, error)
-	UpdateUser(ctx context.Context, username string, options UserUpdateOptions) (domain.User, error)
-	DeleteUser(ctx context.Context, username string, zone string) error
+	CreateUser(ctx context.Context, username string, options UserCreateOptions, mutation UserMutationOptions) (domain.User, error)
+	UpdateUser(ctx context.Context, username string, options UserUpdateOptions, mutation UserMutationOptions) (domain.User, error)
+	DeleteUser(ctx context.Context, username string, zone string, mutation UserMutationOptions) error
 }
 
 type userService struct {
@@ -65,7 +69,7 @@ func (s *userService) GetUser(ctx context.Context, username string, zone string)
 	return s.users.GetUser(ctx, irodsRequestContext(requestContext), username, zone)
 }
 
-func (s *userService) CreateUser(ctx context.Context, username string, options UserCreateOptions) (domain.User, error) {
+func (s *userService) CreateUser(ctx context.Context, username string, options UserCreateOptions, mutation UserMutationOptions) (domain.User, error) {
 	requestContext, err := RequestContextFromContext(ctx)
 	if err != nil {
 		return domain.User{}, err
@@ -75,10 +79,12 @@ func (s *userService) CreateUser(ctx context.Context, username string, options U
 		Zone:     options.Zone,
 		Type:     options.Type,
 		Password: options.Password,
+	}, irods.UserMutationOptions{
+		Reconcile: mutation.Reconcile,
 	})
 }
 
-func (s *userService) UpdateUser(ctx context.Context, username string, options UserUpdateOptions) (domain.User, error) {
+func (s *userService) UpdateUser(ctx context.Context, username string, options UserUpdateOptions, mutation UserMutationOptions) (domain.User, error) {
 	requestContext, err := RequestContextFromContext(ctx)
 	if err != nil {
 		return domain.User{}, err
@@ -90,14 +96,18 @@ func (s *userService) UpdateUser(ctx context.Context, username string, options U
 		Password:       options.Password,
 		ChangeType:     options.ChangeType,
 		ChangePassword: options.ChangePassword,
+	}, irods.UserMutationOptions{
+		Reconcile: mutation.Reconcile,
 	})
 }
 
-func (s *userService) DeleteUser(ctx context.Context, username string, zone string) error {
+func (s *userService) DeleteUser(ctx context.Context, username string, zone string, mutation UserMutationOptions) error {
 	requestContext, err := RequestContextFromContext(ctx)
 	if err != nil {
 		return err
 	}
 
-	return s.users.DeleteUser(ctx, irodsRequestContext(requestContext), username, zone)
+	return s.users.DeleteUser(ctx, irodsRequestContext(requestContext), username, zone, irods.UserMutationOptions{
+		Reconcile: mutation.Reconcile,
+	})
 }

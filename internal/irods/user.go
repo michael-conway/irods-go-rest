@@ -35,12 +35,16 @@ type UserCreateOptions struct {
 	Password string
 }
 
+type UserMutationOptions struct {
+	Reconcile bool
+}
+
 type UserService interface {
 	ListUsers(ctx context.Context, requestContext *RequestContext, options UserListOptions) ([]domain.User, error)
 	GetUser(ctx context.Context, requestContext *RequestContext, username string, zone string) (domain.User, error)
-	CreateUser(ctx context.Context, requestContext *RequestContext, username string, options UserCreateOptions) (domain.User, error)
-	UpdateUser(ctx context.Context, requestContext *RequestContext, username string, options UserUpdateOptions) (domain.User, error)
-	DeleteUser(ctx context.Context, requestContext *RequestContext, username string, zone string) error
+	CreateUser(ctx context.Context, requestContext *RequestContext, username string, options UserCreateOptions, mutation UserMutationOptions) (domain.User, error)
+	UpdateUser(ctx context.Context, requestContext *RequestContext, username string, options UserUpdateOptions, mutation UserMutationOptions) (domain.User, error)
+	DeleteUser(ctx context.Context, requestContext *RequestContext, username string, zone string, mutation UserMutationOptions) error
 }
 
 type userService struct {
@@ -137,7 +141,7 @@ func (s *userService) GetUser(_ context.Context, requestContext *RequestContext,
 	return mapped, nil
 }
 
-func (s *userService) CreateUser(_ context.Context, requestContext *RequestContext, username string, options UserCreateOptions) (domain.User, error) {
+func (s *userService) CreateUser(_ context.Context, requestContext *RequestContext, username string, options UserCreateOptions, mutation UserMutationOptions) (domain.User, error) {
 	username = strings.TrimSpace(username)
 	zone := s.userZone(options.Zone)
 	userType := irodstypes.IRODSUserType(strings.TrimSpace(options.Type))
@@ -148,11 +152,11 @@ func (s *userService) CreateUser(_ context.Context, requestContext *RequestConte
 		return domain.User{}, fmt.Errorf("invalid user type %q", options.Type)
 	}
 
-	slog.Debug("user CreateUser start", "user", username, "zone", zone, "type", userType, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+	slog.Debug("user CreateUser start", append([]any{"user", username, "zone", zone, "type", userType, "reconcile", mutation.Reconcile}, requestContextLogArgs(requestContext)...)...)
 
 	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-create-user")
 	if err != nil {
-		logIRODSError("user CreateUser filesystem setup failed", err, "user", username, "zone", zone, "type", userType, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		logIRODSError("user CreateUser filesystem setup failed", err, append([]any{"user", username, "zone", zone, "type", userType, "reconcile", mutation.Reconcile}, requestContextLogArgs(requestContext)...)...)
 		return domain.User{}, err
 	}
 	defer filesystem.Release()
@@ -162,39 +166,44 @@ func (s *userService) CreateUser(_ context.Context, requestContext *RequestConte
 	}
 
 	if _, err := filesystem.CreateUser(username, zone, userType); err != nil {
-		logIRODSError("user CreateUser create failed", err, "user", username, "zone", zone, "type", userType, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
-		return domain.User{}, normalizeUserError("create user", username, zone, err)
+		normalizedErr := normalizeUserError("create user", username, zone, err)
+		if mutation.Reconcile && errors.Is(normalizedErr, ErrConflict) {
+			return s.reconcileExistingUser(filesystem, requestContext, username, zone, userType, options.Password)
+		}
+		logIRODSError("user CreateUser create failed", normalizedErr, append([]any{"user", username, "zone", zone, "type", userType, "reconcile", mutation.Reconcile}, requestContextLogArgs(requestContext)...)...)
+		return domain.User{}, normalizedErr
 	}
 
 	password := strings.TrimSpace(options.Password)
 	if password != "" {
 		if err := filesystem.ChangeUserPassword(username, zone, options.Password); err != nil {
-			logIRODSError("user CreateUser set password failed", err, "user", username, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			logIRODSError("user CreateUser set password failed", err, append([]any{"user", username, "zone", zone, "type", userType, "reconcile", mutation.Reconcile}, requestContextLogArgs(requestContext)...)...)
 			return domain.User{}, normalizeUserError("create user password", username, zone, err)
 		}
 	}
 
 	created, err := filesystem.GetUser(username, zone, "")
 	if err != nil {
-		logIRODSError("user CreateUser get created failed", err, "user", username, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		logIRODSError("user CreateUser get created failed", err, append([]any{"user", username, "zone", zone, "type", userType, "reconcile", mutation.Reconcile}, requestContextLogArgs(requestContext)...)...)
 		return domain.User{}, normalizeUserError("get user", username, zone, err)
 	}
 
+	slog.Info("user CreateUser completed", append([]any{"user", username, "zone", zone, "type", userType, "outcome", "created"}, requestContextLogArgs(requestContext)...)...)
 	return mapUser(created), nil
 }
 
-func (s *userService) UpdateUser(_ context.Context, requestContext *RequestContext, username string, options UserUpdateOptions) (domain.User, error) {
+func (s *userService) UpdateUser(_ context.Context, requestContext *RequestContext, username string, options UserUpdateOptions, mutation UserMutationOptions) (domain.User, error) {
 	username = strings.TrimSpace(username)
 	zone := s.userZone(options.Zone)
 	if username == "" {
 		return domain.User{}, fmt.Errorf("%w: user %q", ErrNotFound, username)
 	}
 
-	slog.Debug("user UpdateUser start", "user", username, "zone", zone, "change_type", options.ChangeType, "change_password", options.ChangePassword, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+	slog.Debug("user UpdateUser start", append([]any{"user", username, "zone", zone, "change_type", options.ChangeType, "change_password", options.ChangePassword, "reconcile", mutation.Reconcile}, requestContextLogArgs(requestContext)...)...)
 
 	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-update-user")
 	if err != nil {
-		logIRODSError("user UpdateUser filesystem setup failed", err, "user", username, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		logIRODSError("user UpdateUser filesystem setup failed", err, append([]any{"user", username, "zone", zone, "change_type", options.ChangeType, "change_password", options.ChangePassword, "reconcile", mutation.Reconcile}, requestContextLogArgs(requestContext)...)...)
 		return domain.User{}, err
 	}
 	defer filesystem.Release()
@@ -205,8 +214,12 @@ func (s *userService) UpdateUser(_ context.Context, requestContext *RequestConte
 
 	existing, err := filesystem.GetUser(username, zone, "")
 	if err != nil {
-		logIRODSError("user UpdateUser get target failed", err, "user", username, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
-		return domain.User{}, normalizeUserError("get user", username, zone, err)
+		normalizedErr := normalizeUserError("get user", username, zone, err)
+		if mutation.Reconcile && errors.Is(normalizedErr, ErrNotFound) && options.ChangeType {
+			return s.createUserForUpdateReconcile(filesystem, requestContext, username, zone, options)
+		}
+		logIRODSError("user UpdateUser get target failed", normalizedErr, append([]any{"user", username, "zone", zone, "change_type", options.ChangeType, "change_password", options.ChangePassword, "reconcile", mutation.Reconcile}, requestContextLogArgs(requestContext)...)...)
+		return domain.User{}, normalizedErr
 	}
 	if !isUserType(string(existing.Type)) {
 		return domain.User{}, fmt.Errorf("%w: user %q", ErrNotFound, username)
@@ -216,7 +229,7 @@ func (s *userService) UpdateUser(_ context.Context, requestContext *RequestConte
 		newType := irodstypes.IRODSUserType(strings.TrimSpace(options.Type))
 		if existing.Type != newType {
 			if err := filesystem.ChangeUserType(username, zone, newType); err != nil {
-				logIRODSError("user UpdateUser change type failed", err, "user", username, "zone", zone, "type", newType, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+				logIRODSError("user UpdateUser change type failed", err, append([]any{"user", username, "zone", zone, "type", newType, "reconcile", mutation.Reconcile}, requestContextLogArgs(requestContext)...)...)
 				return domain.User{}, normalizeUserError("update user type", username, zone, err)
 			}
 		}
@@ -225,26 +238,27 @@ func (s *userService) UpdateUser(_ context.Context, requestContext *RequestConte
 
 	if options.ChangePassword {
 		if err := filesystem.ChangeUserPassword(username, zone, options.Password); err != nil {
-			logIRODSError("user UpdateUser change password failed", err, "user", username, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+			logIRODSError("user UpdateUser change password failed", err, append([]any{"user", username, "zone", zone, "reconcile", mutation.Reconcile}, requestContextLogArgs(requestContext)...)...)
 			return domain.User{}, normalizeUserError("update user password", username, zone, err)
 		}
 	}
 
+	slog.Info("user UpdateUser completed", append([]any{"user", username, "zone", zone, "outcome", "updated"}, requestContextLogArgs(requestContext)...)...)
 	return mapUser(existing), nil
 }
 
-func (s *userService) DeleteUser(_ context.Context, requestContext *RequestContext, username string, zone string) error {
+func (s *userService) DeleteUser(_ context.Context, requestContext *RequestContext, username string, zone string, mutation UserMutationOptions) error {
 	username = strings.TrimSpace(username)
 	zone = s.userZone(zone)
 	if username == "" {
 		return fmt.Errorf("%w: user %q", ErrNotFound, username)
 	}
 
-	slog.Debug("user DeleteUser start", "user", username, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+	slog.Debug("user DeleteUser start", append([]any{"user", username, "zone", zone, "reconcile", mutation.Reconcile}, requestContextLogArgs(requestContext)...)...)
 
 	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-delete-user")
 	if err != nil {
-		logIRODSError("user DeleteUser filesystem setup failed", err, "user", username, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		logIRODSError("user DeleteUser filesystem setup failed", err, append([]any{"user", username, "zone", zone, "reconcile", mutation.Reconcile}, requestContextLogArgs(requestContext)...)...)
 		return err
 	}
 	defer filesystem.Release()
@@ -255,18 +269,33 @@ func (s *userService) DeleteUser(_ context.Context, requestContext *RequestConte
 
 	user, err := filesystem.GetUser(username, zone, "")
 	if err != nil {
-		logIRODSError("user DeleteUser get target failed", err, "user", username, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
-		return normalizeUserError("get user", username, zone, err)
+		normalizedErr := normalizeUserError("get user", username, zone, err)
+		if mutation.Reconcile && errors.Is(normalizedErr, ErrNotFound) {
+			slog.Info("user DeleteUser reconciled absent user", append([]any{"user", username, "zone", zone, "outcome", "already_absent"}, requestContextLogArgs(requestContext)...)...)
+			return nil
+		}
+		logIRODSError("user DeleteUser get target failed", normalizedErr, append([]any{"user", username, "zone", zone, "reconcile", mutation.Reconcile}, requestContextLogArgs(requestContext)...)...)
+		return normalizedErr
 	}
 	if !isUserType(string(user.Type)) {
+		if mutation.Reconcile {
+			slog.Info("user DeleteUser reconciled non-user principal", append([]any{"user", username, "zone", zone, "existing_type", user.Type, "outcome", "already_absent"}, requestContextLogArgs(requestContext)...)...)
+			return nil
+		}
 		return fmt.Errorf("%w: user %q", ErrNotFound, username)
 	}
 
 	if err := filesystem.RemoveUser(username, zone, user.Type); err != nil {
-		logIRODSError("user DeleteUser remove failed", err, "user", username, "zone", zone, "type", user.Type, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
-		return normalizeUserError("delete user", username, zone, err)
+		normalizedErr := normalizeUserError("delete user", username, zone, err)
+		if mutation.Reconcile && errors.Is(normalizedErr, ErrNotFound) {
+			slog.Info("user DeleteUser reconciled absent user", append([]any{"user", username, "zone", zone, "outcome", "already_absent"}, requestContextLogArgs(requestContext)...)...)
+			return nil
+		}
+		logIRODSError("user DeleteUser remove failed", normalizedErr, append([]any{"user", username, "zone", zone, "type", user.Type, "reconcile", mutation.Reconcile}, requestContextLogArgs(requestContext)...)...)
+		return normalizedErr
 	}
 
+	slog.Info("user DeleteUser completed", append([]any{"user", username, "zone", zone, "type", user.Type, "outcome", "deleted"}, requestContextLogArgs(requestContext)...)...)
 	return nil
 }
 
@@ -276,6 +305,65 @@ func (s *userService) filesystemForRequest(requestContext *RequestContext, appli
 		createFileSystem: s.createFileSystem,
 	}
 	return catalog.filesystemForRequest(requestContext, applicationName)
+}
+
+func (s *userService) reconcileExistingUser(filesystem CatalogFileSystem, requestContext *RequestContext, username string, zone string, requestedType irodstypes.IRODSUserType, password string) (domain.User, error) {
+	existing, err := filesystem.GetUser(username, zone, "")
+	if err != nil {
+		return domain.User{}, normalizeUserError("get existing user", username, zone, err)
+	}
+
+	mapped := mapUser(existing)
+	if !isUserType(mapped.Type) {
+		return domain.User{}, fmt.Errorf("%w: existing principal %q has type %q, expected %q", ErrConflict, username, mapped.Type, requestedType)
+	}
+	if mapped.Type != string(requestedType) {
+		return domain.User{}, fmt.Errorf("%w: existing user %q has type %q, expected %q", ErrConflict, username, mapped.Type, requestedType)
+	}
+
+	if strings.TrimSpace(password) != "" {
+		if err := filesystem.ChangeUserPassword(username, zone, password); err != nil {
+			return domain.User{}, normalizeUserError("reconcile user password", username, zone, err)
+		}
+	}
+
+	slog.Info("user CreateUser reconciled existing user", append([]any{"user", username, "zone", zone, "type", requestedType, "outcome", "already_exists"}, requestContextLogArgs(requestContext)...)...)
+	return mapped, nil
+}
+
+func (s *userService) createUserForUpdateReconcile(filesystem CatalogFileSystem, requestContext *RequestContext, username string, zone string, options UserUpdateOptions) (domain.User, error) {
+	userType := irodstypes.IRODSUserType(strings.TrimSpace(options.Type))
+	if !isUserType(string(userType)) {
+		return domain.User{}, fmt.Errorf("invalid user type %q", options.Type)
+	}
+
+	if _, err := filesystem.CreateUser(username, zone, userType); err != nil {
+		normalizedErr := normalizeUserError("reconcile create user", username, zone, err)
+		if !errors.Is(normalizedErr, ErrConflict) {
+			return domain.User{}, normalizedErr
+		}
+	}
+
+	if options.ChangePassword {
+		if err := filesystem.ChangeUserPassword(username, zone, options.Password); err != nil {
+			return domain.User{}, normalizeUserError("reconcile user password", username, zone, err)
+		}
+	}
+
+	created, err := filesystem.GetUser(username, zone, "")
+	if err != nil {
+		return domain.User{}, normalizeUserError("get reconciled user", username, zone, err)
+	}
+	mapped := mapUser(created)
+	if !isUserType(mapped.Type) {
+		return domain.User{}, fmt.Errorf("%w: existing principal %q has type %q, expected %q", ErrConflict, username, mapped.Type, userType)
+	}
+	if mapped.Type != string(userType) {
+		return domain.User{}, fmt.Errorf("%w: existing user %q has type %q, expected %q", ErrConflict, username, mapped.Type, userType)
+	}
+
+	slog.Info("user UpdateUser reconciled missing user", append([]any{"user", username, "zone", zone, "type", userType, "outcome", "created"}, requestContextLogArgs(requestContext)...)...)
+	return mapped, nil
 }
 
 func (s *userService) requireRodsAdmin(filesystem CatalogFileSystem, requestContext *RequestContext) error {
@@ -381,6 +469,8 @@ func normalizeUserError(operation string, username string, zone string, err erro
 		return fmt.Errorf("%w: user %q", ErrPermissionDenied, username)
 	case irodscommon.CAT_NO_ROWS_FOUND:
 		return fmt.Errorf("%w: user %q", ErrNotFound, username)
+	case irodscommon.CATALOG_ALREADY_HAS_ITEM_BY_THAT_NAME:
+		return fmt.Errorf("%w: user %q", ErrConflict, username)
 	}
 
 	if irodstypes.IsUserNotFoundError(err) {
@@ -391,7 +481,10 @@ func normalizeUserError(operation string, username string, zone string, err erro
 	if strings.Contains(message, "not found") || strings.Contains(message, "no rows") {
 		return fmt.Errorf("%w: user %q", ErrNotFound, username)
 	}
-	if strings.Contains(message, "already exists") || strings.Contains(message, "exists as") {
+	if strings.Contains(message, "already exists") ||
+		strings.Contains(message, "already has item by that name") ||
+		strings.Contains(message, "catalog_already_has_item_by_that_name") ||
+		strings.Contains(message, "exists as") {
 		return fmt.Errorf("%w: user %q", ErrConflict, username)
 	}
 	if strings.Contains(message, "no access permission") || strings.Contains(message, "permission denied") || strings.Contains(message, "not authorized") {

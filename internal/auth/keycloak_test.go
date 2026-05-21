@@ -106,6 +106,8 @@ func TestVerifyTokenSuccess(t *testing.T) {
 			"scope":              "openid profile",
 			"preferred_username": "alice",
 			"sub":                "user-123",
+			"client_id":          "irods-go-rest",
+			"aud":                []string{"irods-go-rest", "account"},
 		})
 	}))
 	defer server.Close()
@@ -120,6 +122,12 @@ func TestVerifyTokenSuccess(t *testing.T) {
 
 	if principal.Username != "alice" {
 		t.Fatalf("expected principal username alice, got %q", principal.Username)
+	}
+	if principal.ClientID != "irods-go-rest" {
+		t.Fatalf("expected principal client id irods-go-rest, got %q", principal.ClientID)
+	}
+	if len(principal.Audience) != 2 || principal.Audience[0] != "irods-go-rest" || principal.Audience[1] != "account" {
+		t.Fatalf("unexpected principal audience: %+v", principal.Audience)
 	}
 }
 
