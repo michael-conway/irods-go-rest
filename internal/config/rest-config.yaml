@@ -19,6 +19,7 @@ IrodsSSLConfig:
   ServerName:
 IrodsDefaultResource:
 OidcUrl:
+OidcAuthUrl:
 OidcClientId: irods-go-rest
 OidcClientSecret:
 OidcClientSecretFile:

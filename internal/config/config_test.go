@@ -35,6 +35,7 @@ func TestReadRestConfigEnvOverride(t *testing.T) {
 	t.Setenv("GOREST_CORS_ALLOWED_ORIGINS", "http://localhost:8081, http://127.0.0.1:8081")
 	t.Setenv("IRODS_REST_ADDR", ":18080")
 	t.Setenv("GOREST_IRODS_ADMIN_LOGIN_TYPE", "native")
+	t.Setenv("GOREST_OIDC_AUTH_URL", "https://localhost:8443")
 
 	cfg, err := ReadRestConfig("rest-config", "yaml", []string{dir})
 	if err != nil {
@@ -78,6 +79,9 @@ func TestReadRestConfigEnvOverride(t *testing.T) {
 	}
 	if cfg.IrodsAdminLoginType != "native" {
 		t.Fatalf("expected IrodsAdminLoginType from env override, got %q", cfg.IrodsAdminLoginType)
+	}
+	if cfg.OidcAuthUrl != "https://localhost:8443" {
+		t.Fatalf("expected OidcAuthUrl from env override, got %q", cfg.OidcAuthUrl)
 	}
 }
 

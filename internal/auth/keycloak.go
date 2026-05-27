@@ -61,6 +61,7 @@ type KeycloakService struct {
 	httpClient   HTTPClient
 	verifier     BearerTokenVerifier
 	baseURL      string
+	authBaseURL  string
 	realm        string
 	clientID     string
 	clientSecret string
@@ -78,10 +79,16 @@ func NewKeycloakService(cfg config.RestConfig) *KeycloakService {
 		InsecureSkipVerify: cfg.OidcInsecureSkipVerify,
 	}
 
+	authBaseURL := strings.TrimRight(cfg.OidcAuthUrl, "/")
+	if authBaseURL == "" {
+		authBaseURL = strings.TrimRight(cfg.OidcUrl, "/")
+	}
+
 	return &KeycloakService{
 		httpClient:   &http.Client{Timeout: 10 * time.Second, Transport: httpTransport},
 		verifier:     oidcverify.NewVerifier(oidcverify.Config{BaseURL: cfg.OidcUrl, Realm: cfg.OidcRealm, ClientID: cfg.OidcClientId, ClientSecret: cfg.OidcClientSecret, InsecureSkipVerify: cfg.OidcInsecureSkipVerify}),
 		baseURL:      strings.TrimRight(cfg.OidcUrl, "/"),
+		authBaseURL:  authBaseURL,
 		realm:        cfg.OidcRealm,
 		clientID:     cfg.OidcClientId,
 		clientSecret: cfg.OidcClientSecret,
@@ -98,6 +105,9 @@ func (k *KeycloakService) configError(requireRedirect bool) error {
 	missing := []string{}
 	if k.baseURL == "" {
 		missing = append(missing, "oidc_url")
+	}
+	if k.authBaseURL == "" {
+		missing = append(missing, "oidc_auth_url")
 	}
 	if k.realm == "" {
 		missing = append(missing, "oidc_realm")
@@ -136,9 +146,9 @@ func (k *KeycloakService) AuthorizationURL(state string) (string, error) {
 		return "", fmt.Errorf("%w: missing state", ErrInvalidCallback)
 	}
 
-	authURL, err := url.Parse(fmt.Sprintf("%s/realms/%s/protocol/openid-connect/auth", k.baseURL, url.PathEscape(k.realm)))
+	authURL, err := url.Parse(fmt.Sprintf("%s/realms/%s/protocol/openid-connect/auth", k.authBaseURL, url.PathEscape(k.realm)))
 	if err != nil {
-		logAuthError("keycloak AuthorizationURL parse failed", err, "base_url", k.baseURL, "realm", k.realm)
+		logAuthError("keycloak AuthorizationURL parse failed", err, "auth_base_url", k.authBaseURL, "realm", k.realm)
 		return "", fmt.Errorf("build authorization url: %w", err)
 	}
 

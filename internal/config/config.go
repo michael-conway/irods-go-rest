@@ -43,6 +43,7 @@ type RestConfig struct {
 	ReplicaTrimMinCopies       int
 	ReplicaTrimMinAgeMinutes   int
 	OidcUrl                    string
+	OidcAuthUrl                string
 	OidcClientId               string
 	OidcClientSecret           string
 	OidcClientSecretFile       string
@@ -220,6 +221,7 @@ func bindEnvVars(v *viper.Viper) error {
 		"ReplicaTrimMinCopies":                   {"GOREST_REPLICA_TRIM_MIN_COPIES"},
 		"ReplicaTrimMinAgeMinutes":               {"GOREST_REPLICA_TRIM_MIN_AGE_MINUTES"},
 		"OidcUrl":                                {"GOREST_OIDC_URL", "GOREST_OIDCURL"},
+		"OidcAuthUrl":                            {"GOREST_OIDC_AUTH_URL", "GOREST_OIDCAUTHURL"},
 		"OidcClientId":                           {"GOREST_OIDC_CLIENT_ID", "GOREST_OIDCCLIENTID"},
 		"OidcClientSecret":                       {"GOREST_OIDC_CLIENT_SECRET", "GOREST_OIDCCLIENTSECRET"},
 		"OidcClientSecretFile":                   {"GOREST_OIDC_CLIENT_SECRET_FILE", "GOREST_OIDCCLIENTSECRETFILE"},

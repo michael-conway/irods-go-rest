@@ -41,6 +41,27 @@ func TestAuthorizationURL(t *testing.T) {
 	assertQueryValue(t, parsed.Query(), "state", "state123")
 }
 
+func TestAuthorizationURLUsesOidcAuthURLWhenConfigured(t *testing.T) {
+	cfg := keycloakUnitTestConfig(t)
+	cfg.OidcUrl = "https://keycloak:8443"
+	cfg.OidcAuthUrl = "https://localhost:8443"
+	service := NewKeycloakService(cfg)
+
+	redirectURL, err := service.AuthorizationURL("state123")
+	if err != nil {
+		t.Fatalf("authorization url failed: %v", err)
+	}
+
+	parsed, err := url.Parse(redirectURL)
+	if err != nil {
+		t.Fatalf("parse authorization url: %v", err)
+	}
+
+	if got := parsed.Scheme + "://" + parsed.Host; got != cfg.OidcAuthUrl {
+		t.Fatalf("expected authorization host %q, got %q", cfg.OidcAuthUrl, got)
+	}
+}
+
 func TestExchangeCodeSuccess(t *testing.T) {
 	cfg := keycloakUnitTestConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -74,6 +95,7 @@ func TestExchangeCodeSuccess(t *testing.T) {
 	defer server.Close()
 
 	cfg.OidcUrl = server.URL
+	cfg.OidcAuthUrl = "https://localhost:8443"
 	service := NewKeycloakService(cfg)
 
 	token, err := service.ExchangeCode(context.Background(), "code123")

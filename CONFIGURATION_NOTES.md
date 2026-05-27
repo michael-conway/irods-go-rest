@@ -40,6 +40,7 @@ GOREST_REPLICA_TRIM_MIN_COPIES=1
 GOREST_REPLICA_TRIM_MIN_AGE_MINUTES=0
 
 GOREST_OIDC_URL=https://localhost:8443
+GOREST_OIDC_AUTH_URL=https://localhost:8443
 GOREST_OIDC_REALM=drs
 GOREST_OIDC_CLIENT_ID=irods-go-rest
 GOREST_OIDC_SCOPE="openid profile email"
@@ -64,6 +65,11 @@ GOREST_OIDC_INSECURE_SKIP_VERIFY=true
 ```
 
 Use that only for local development.
+
+`GOREST_OIDC_URL` is the base URL used by REST for backend OIDC token exchange
+and introspection calls. `GOREST_OIDC_AUTH_URL` is optional and controls the
+browser redirect target for `/web/login`. If unset, `/web/login` uses
+`GOREST_OIDC_URL`.
 
 ## iRODS SSL
 
