@@ -89,26 +89,35 @@ func TestExchangeCodeSuccess(t *testing.T) {
 func TestVerifyTokenSuccess(t *testing.T) {
 	cfg := keycloakUnitTestConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != fmt.Sprintf("/realms/%s/protocol/openid-connect/token/introspect", cfg.OidcRealm) {
+		switch r.URL.Path {
+		case fmt.Sprintf("/realms/%s/protocol/openid-connect/token/introspect", cfg.OidcRealm):
+			if err := r.ParseForm(); err != nil {
+				t.Fatalf("parse form: %v", err)
+			}
+
+			assertQueryValue(t, r.Form, "token", "abc123")
+			assertQueryValue(t, r.Form, "client_id", cfg.OidcClientId)
+			assertQueryValue(t, r.Form, "client_secret", cfg.OidcClientSecret)
+
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"active":             true,
+				"scope":              "openid profile",
+				"preferred_username": "introspection-alice",
+				"sub":                "user-123",
+				"client_id":          "irods-go-rest",
+				"aud":                []string{"irods-go-rest", "account"},
+			})
+		case fmt.Sprintf("/realms/%s/protocol/openid-connect/userinfo", cfg.OidcRealm):
+			if got := r.Header.Get("Authorization"); got != "Bearer abc123" {
+				t.Fatalf("expected Authorization header, got %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"preferred_username": "alice",
+				"sub":                "user-123",
+			})
+		default:
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
-
-		if err := r.ParseForm(); err != nil {
-			t.Fatalf("parse form: %v", err)
-		}
-
-		assertQueryValue(t, r.Form, "token", "abc123")
-		assertQueryValue(t, r.Form, "client_id", cfg.OidcClientId)
-		assertQueryValue(t, r.Form, "client_secret", cfg.OidcClientSecret)
-
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"active":             true,
-			"scope":              "openid profile",
-			"preferred_username": "alice",
-			"sub":                "user-123",
-			"client_id":          "irods-go-rest",
-			"aud":                []string{"irods-go-rest", "account"},
-		})
 	}))
 	defer server.Close()
 

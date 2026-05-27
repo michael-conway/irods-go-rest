@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/michael-conway/go-irodsclient-extensions/oidcverify"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 	"github.com/michael-conway/irods-go-rest/internal/logutil"
 )
@@ -58,12 +59,17 @@ type HTTPClient interface {
 
 type KeycloakService struct {
 	httpClient   HTTPClient
+	verifier     BearerTokenVerifier
 	baseURL      string
 	realm        string
 	clientID     string
 	clientSecret string
 	redirectURL  string
 	scopes       string
+}
+
+type BearerTokenVerifier interface {
+	VerifyToken(ctx context.Context, accessToken string) (*oidcverify.VerifiedToken, error)
 }
 
 func NewKeycloakService(cfg config.RestConfig) *KeycloakService {
@@ -74,6 +80,7 @@ func NewKeycloakService(cfg config.RestConfig) *KeycloakService {
 
 	return &KeycloakService{
 		httpClient:   &http.Client{Timeout: 10 * time.Second, Transport: httpTransport},
+		verifier:     oidcverify.NewVerifier(oidcverify.Config{BaseURL: cfg.OidcUrl, Realm: cfg.OidcRealm, ClientID: cfg.OidcClientId, ClientSecret: cfg.OidcClientSecret, InsecureSkipVerify: cfg.OidcInsecureSkipVerify}),
 		baseURL:      strings.TrimRight(cfg.OidcUrl, "/"),
 		realm:        cfg.OidcRealm,
 		clientID:     cfg.OidcClientId,
@@ -224,94 +231,36 @@ func (k *KeycloakService) NewState() (string, error) {
 }
 
 func (k *KeycloakService) VerifyToken(ctx context.Context, accessToken string) (Principal, error) {
+	if k == nil || k.verifier == nil {
+		return Principal{}, ErrNotConfigured
+	}
+
 	if err := k.configError(false); err != nil {
 		logAuthError("keycloak VerifyToken config error", err, "base_url", k.baseURL, "realm", k.realm, "client_id", k.clientID)
 		return Principal{}, err
 	}
-
-	if strings.TrimSpace(accessToken) == "" {
-		return Principal{}, ErrUnauthorized
-	}
-
-	form := url.Values{}
-	form.Set("token", accessToken)
-	form.Set("client_id", k.clientID)
-	if k.clientSecret != "" {
-		form.Set("client_secret", k.clientSecret)
-	}
-
-	introspectURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token/introspect", k.baseURL, url.PathEscape(k.realm))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, introspectURL, strings.NewReader(form.Encode()))
+	verified, err := k.verifier.VerifyToken(ctx, accessToken)
 	if err != nil {
-		logAuthError("keycloak VerifyToken request build failed", err, "introspect_url", introspectURL, "client_id", k.clientID)
-		return Principal{}, fmt.Errorf("build keycloak introspection request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := k.httpClient.Do(req)
-	if err != nil {
-		logAuthError("keycloak VerifyToken request failed", err, "introspect_url", introspectURL, "client_id", k.clientID)
-		return Principal{}, fmt.Errorf("request keycloak introspection: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		logAuthError("keycloak VerifyToken non-success status", fmt.Errorf("keycloak introspection failed: %s", resp.Status), "introspect_url", introspectURL, "client_id", k.clientID, "status_code", resp.StatusCode)
-		return Principal{}, fmt.Errorf("keycloak introspection failed: %s", resp.Status)
-	}
-
-	var payload struct {
-		Active            bool   `json:"active"`
-		Scope             string `json:"scope"`
-		PreferredUsername string `json:"preferred_username"`
-		Sub               string `json:"sub"`
-		ClientID          string `json:"client_id"`
-		Audience          any    `json:"aud"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		logAuthError("keycloak VerifyToken decode failed", err, "introspect_url", introspectURL, "client_id", k.clientID)
-		return Principal{}, fmt.Errorf("decode keycloak introspection response: %w", err)
-	}
-
-	if !payload.Active {
-		logAuthError("keycloak VerifyToken inactive token", ErrUnauthorized, "introspect_url", introspectURL, "client_id", k.clientID)
-		return Principal{}, ErrUnauthorized
+		switch {
+		case errors.Is(err, oidcverify.ErrNotConfigured):
+			return Principal{}, ErrNotConfigured
+		case errors.Is(err, oidcverify.ErrUnauthorized):
+			return Principal{}, ErrUnauthorized
+		case errors.Is(err, oidcverify.ErrMissingUser):
+			return Principal{}, ErrUnauthorized
+		default:
+			return Principal{}, err
+		}
 	}
 
 	return Principal{
-		Subject:  payload.Sub,
-		Username: payload.PreferredUsername,
-		Scope:    strings.Fields(payload.Scope),
-		ClientID: strings.TrimSpace(payload.ClientID),
-		Audience: audienceValues(payload.Audience),
-		Active:   payload.Active,
+		Subject:  verified.Introspection.Subject,
+		Username: verified.Username,
+		Scope:    strings.Fields(verified.Introspection.Scope),
+		ClientID: strings.TrimSpace(verified.Introspection.ClientID),
+		Audience: verified.Introspection.Audience,
+		Active:   verified.Introspection.Active,
 	}, nil
-}
-
-func audienceValues(raw any) []string {
-	switch typed := raw.(type) {
-	case string:
-		audience := strings.TrimSpace(typed)
-		if audience == "" {
-			return nil
-		}
-		return []string{audience}
-	case []any:
-		values := make([]string, 0, len(typed))
-		for _, value := range typed {
-			if audience, ok := value.(string); ok {
-				audience = strings.TrimSpace(audience)
-				if audience != "" {
-					values = append(values, audience)
-				}
-			}
-		}
-		return values
-	default:
-		return nil
-	}
 }
 
 func logAuthError(msg string, err error, args ...any) {

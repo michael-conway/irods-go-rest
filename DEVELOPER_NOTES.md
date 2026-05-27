@@ -2,6 +2,62 @@
 
 Use this file for the main working rules in `irods-go-rest`.
 
+## Alpha Release Gate
+
+- [ ] Harden S3 user-secret authorization policy and document it explicitly.
+  - Define and enforce one policy for `GET/POST/PUT/DELETE /api/v1/ext/s3/user-secrets*`:
+    - admin-only, or
+    - self-only (`user_name` must equal authenticated principal), with admin override if intended.
+  - Verify runtime behavior matches docs/OpenAPI and negative tests.
+  - References:
+    - `internal/httpapi/handlers_ext.go`
+    - `internal/irods/s3admin.go`
+
+- [ ] Remove backend/internal error detail leakage from client responses.
+  - Replace direct `err.Error()` passthrough in HTTP responses with stable public messages and codes.
+  - Keep full detail in structured logs with request identifiers.
+  - References:
+    - `internal/httpapi/respond.go`
+    - `internal/httpapi/handlers_catalog.go`
+    - `internal/httpapi/handlers_ext.go`
+    - `internal/httpapi/handlers_ticket.go`
+    - `internal/httpapi/handlers_web.go`
+
+- [ ] Gate or disable `/web/*` token-display flow for alpha deployments.
+  - Browser token rendering in `/web/` must be explicitly opt-in outside local dev.
+  - Add config flag + docs for deployment posture.
+  - References:
+    - `internal/httpapi/handler.go`
+    - `internal/httpapi/handlers_web.go`
+
+- [ ] Complete HTTP server timeout hardening defaults.
+  - Set and validate `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, and `MaxHeaderBytes` in addition to `ReadHeaderTimeout`.
+  - Document operational defaults.
+  - Reference:
+    - `internal/app/app.go`
+
+- [ ] Add web-session expiration/eviction policy.
+  - Session storage must enforce TTL aligned to token expiry and bounded memory behavior.
+  - Reference:
+    - `internal/auth/session_store.go`
+
+- [ ] Tighten forwarded-header trust for generated server URLs.
+  - Do not trust `X-Forwarded-*` unless behind trusted proxy policy.
+  - Prefer explicit `PublicURL` in untrusted environments.
+  - Reference:
+    - `internal/httpapi/handler.go`
+
+- [ ] Remove fragile substring-based error classification.
+  - Replace `strings.Contains(err.Error(), ...)` branches with sentinel/type-based error mapping where feasible.
+  - Reference:
+    - `internal/httpapi/handlers_catalog.go`
+    - `internal/httpapi/handlers_ticket.go`
+
+- [ ] Reduce stack-trace noise for expected auth failures.
+  - Avoid stack traces for routine `401`/header parse failures; keep for internal faults.
+  - Reference:
+    - `internal/httpapi/middleware_auth.go`
+
 ## API model
 
 The service is path-oriented.
