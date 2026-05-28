@@ -238,6 +238,23 @@ func setBasicAuth(req *http.Request) {
 	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(credentials)))
 }
 
+func sameHostOrLoopback(actual string, expected string) bool {
+	normalize := func(host string) string {
+		host = strings.TrimSpace(strings.ToLower(host))
+		host = strings.TrimPrefix(host, "[")
+		host = strings.TrimSuffix(host, "]")
+
+		switch host {
+		case "localhost", "127.0.0.1", "::1":
+			return "loopback"
+		default:
+			return host
+		}
+	}
+
+	return normalize(actual) == normalize(expected)
+}
+
 func setBasicAuthCredentials(req *http.Request, username string, password string) {
 	credentials := strings.TrimSpace(username) + ":" + strings.TrimSpace(password)
 	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(credentials)))

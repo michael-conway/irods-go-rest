@@ -2,8 +2,11 @@ package httpapi
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/michael-conway/irods-go-rest/internal/requestctx"
 )
 
 type errorResponse struct {
@@ -25,6 +28,65 @@ func writeError(w http.ResponseWriter, status int, code string, message string) 
 		Code:    code,
 		Message: message,
 	})
+}
+
+func writeErrorFromErr(w http.ResponseWriter, r *http.Request, status int, code string, err error) {
+	if err != nil {
+		logArgs := []any{
+			"status", status,
+			"error_code", strings.TrimSpace(strings.ToLower(code)),
+			"error_detail", err.Error(),
+		}
+		if r != nil {
+			logArgs = append(logArgs, "method", r.Method, "path", r.URL.Path)
+			if metadata, ok := requestctx.MetadataFromContext(r.Context()); ok && strings.TrimSpace(metadata.RequestID) != "" {
+				logArgs = append(logArgs, "request_id", metadata.RequestID)
+			}
+		}
+
+		if status >= http.StatusInternalServerError {
+			slog.Error("request failed", logArgs...)
+		} else {
+			slog.Warn("request failed", logArgs...)
+		}
+	}
+
+	writeError(w, status, code, publicErrorMessage(status, code))
+}
+
+func publicErrorMessage(status int, code string) string {
+	switch strings.TrimSpace(strings.ToLower(code)) {
+	case "not_found":
+		return "resource not found"
+	case "permission_denied":
+		return "permission denied"
+	case "conflict":
+		return "request conflicts with current resource state"
+	case "invalid_range":
+		return "invalid range requested"
+	case "invalid_request":
+		return "invalid request"
+	case "not_supported":
+		return "operation not supported"
+	case "not_configured":
+		return "operation is not configured"
+	case "auth_not_configured":
+		return "authentication is not configured"
+	case "auth_failed":
+		return "authentication failed"
+	case "invalid_callback":
+		return "invalid callback request"
+	case "internal_error":
+		return "internal server error"
+	}
+
+	if status >= http.StatusInternalServerError {
+		return "internal server error"
+	}
+	if status >= http.StatusBadRequest {
+		return "request failed"
+	}
+	return "request failed"
 }
 
 func writeValidationError(w http.ResponseWriter, status int, code string, message string, fields map[string]string) {

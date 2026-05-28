@@ -3426,6 +3426,7 @@ paths:
       operationId: postExtS3UserSecret
       tags: [ext]
       summary: Store an iRODS S3 API secret key for a user
+      description: Self-only by default (`user_name` must match the authenticated principal username), with rodsadmin override.
       security:
         - BearerAuth: []
         - BasicAuth: []
@@ -3476,6 +3477,7 @@ paths:
       operationId: putExtS3UserSecret
       tags: [ext]
       summary: Update or generate an iRODS S3 API secret key for a user
+      description: Self-only by default (`user_name` must match the authenticated principal username), with rodsadmin override.
       security:
         - BearerAuth: []
         - BasicAuth: []
@@ -3573,6 +3575,7 @@ paths:
       operationId: getExtS3UserSecret
       tags: [ext]
       summary: Get an iRODS S3 API secret key for a user
+      description: Self-only by default (`user_name` path value must match the authenticated principal username), with rodsadmin override.
       security:
         - BearerAuth: []
         - BasicAuth: []
@@ -3630,6 +3633,7 @@ paths:
       operationId: deleteExtS3UserSecret
       tags: [ext]
       summary: Delete an iRODS S3 API secret key for a user
+      description: Self-only by default (`user_name` path value must match the authenticated principal username), with rodsadmin override.
       security:
         - BearerAuth: []
         - BasicAuth: []

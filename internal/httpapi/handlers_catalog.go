@@ -39,22 +39,22 @@ func (h *Handler) getPath(w http.ResponseWriter, r *http.Request) {
 
 	verboseLevel, err := queryVerboseLevel(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 		return
 	}
 
 	object, err := h.paths.GetPath(r.Context(), objectPath, irods.PathLookupOptions{VerboseLevel: verboseLevel})
 	if err != nil {
 		if errors.Is(err, irods.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", err.Error())
+			writeErrorFromErr(w, r, http.StatusNotFound, "not_found", err)
 			return
 		}
 		if errors.Is(err, irods.ErrPermissionDenied) {
-			writeError(w, http.StatusForbidden, "permission_denied", err.Error())
+			writeErrorFromErr(w, r, http.StatusForbidden, "permission_denied", err)
 			return
 		}
 
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeErrorFromErr(w, r, http.StatusInternalServerError, "internal_error", err)
 		return
 	}
 
@@ -70,16 +70,16 @@ func (h *Handler) deletePath(w http.ResponseWriter, r *http.Request) {
 
 	force, err := queryForceFlag(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 		return
 	}
 
 	if err := h.paths.DeletePath(r.Context(), objectPath, force); err != nil {
 		if errors.Is(err, irods.ErrConflict) {
-			writeError(w, http.StatusConflict, "conflict", err.Error())
+			writeErrorFromErr(w, r, http.StatusConflict, "conflict", err)
 			return
 		}
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -123,12 +123,11 @@ func (h *Handler) patchPath(w http.ResponseWriter, r *http.Request) {
 		DestinationPath: request.DestinationPath,
 	})
 	if err != nil {
-		lowerErr := strings.ToLower(err.Error())
-		if strings.Contains(lowerErr, "new_name") || strings.Contains(lowerErr, "destination_path") || strings.Contains(lowerErr, "operation") {
-			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		if errors.Is(err, irods.ErrInvalidRequest) {
+			writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 			return
 		}
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -144,7 +143,7 @@ func (h *Handler) getPathChildren(w http.ResponseWriter, r *http.Request) {
 
 	searchOptions, err := queryPathChildrenSearchOptions(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 		return
 	}
 
@@ -152,15 +151,15 @@ func (h *Handler) getPathChildren(w http.ResponseWriter, r *http.Request) {
 		children, listErr := h.paths.GetPathChildren(r.Context(), objectPath)
 		if listErr != nil {
 			if errors.Is(listErr, irods.ErrNotFound) {
-				writeError(w, http.StatusNotFound, "not_found", listErr.Error())
+				writeErrorFromErr(w, r, http.StatusNotFound, "not_found", listErr)
 				return
 			}
 			if errors.Is(listErr, irods.ErrPermissionDenied) {
-				writeError(w, http.StatusForbidden, "permission_denied", listErr.Error())
+				writeErrorFromErr(w, r, http.StatusForbidden, "permission_denied", listErr)
 				return
 			}
 
-			writeError(w, http.StatusInternalServerError, "internal_error", listErr.Error())
+			writeErrorFromErr(w, r, http.StatusInternalServerError, "internal_error", listErr)
 			return
 		}
 
@@ -183,15 +182,15 @@ func (h *Handler) getPathChildren(w http.ResponseWriter, r *http.Request) {
 	searchResult, err := h.paths.SearchPathChildren(r.Context(), objectPath, searchOptions)
 	if err != nil {
 		if errors.Is(err, irods.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", err.Error())
+			writeErrorFromErr(w, r, http.StatusNotFound, "not_found", err)
 			return
 		}
 		if errors.Is(err, irods.ErrPermissionDenied) {
-			writeError(w, http.StatusForbidden, "permission_denied", err.Error())
+			writeErrorFromErr(w, r, http.StatusForbidden, "permission_denied", err)
 			return
 		}
 
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeErrorFromErr(w, r, http.StatusInternalServerError, "internal_error", err)
 		return
 	}
 
@@ -270,19 +269,19 @@ type pathQuerySummaryResponse struct {
 func (h *Handler) postPathQuery(w http.ResponseWriter, r *http.Request) {
 	request, err := decodePathQueryRequest(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 		return
 	}
 
 	cursor, err := decodeEntryQueryPageToken(request.PageToken)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 		return
 	}
 
 	definition, err := pathQueryDefinition(request)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 		return
 	}
 
@@ -293,17 +292,17 @@ func (h *Handler) postPathQuery(w http.ResponseWriter, r *http.Request) {
 		IncludeMatchedAVUs: request.IncludeMatchedAVUs,
 	})
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 		return
 	}
 
 	result, err := h.paths.QueryPathEntries(r.Context(), irods.PathQueryOptions{Query: query})
 	if err != nil {
 		if errors.Is(err, metadataext.ErrInvalidEntryQuery) {
-			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 			return
 		}
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -472,13 +471,13 @@ func (h *Handler) getPathReplicas(w http.ResponseWriter, r *http.Request) {
 
 	verboseLevel, err := queryVerboseLevel(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 		return
 	}
 
 	replicas, err := h.paths.GetPathReplicas(r.Context(), objectPath, verboseLevel)
 	if err != nil {
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 	replicas = pathReplicaResponseList(objectPath, replicas)
@@ -519,12 +518,11 @@ func (h *Handler) postPathReplicas(w http.ResponseWriter, r *http.Request) {
 		Update:   request.Update,
 	})
 	if err != nil {
-		lowerErr := strings.ToLower(err.Error())
-		if strings.Contains(lowerErr, "resource is required") {
-			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		if errors.Is(err, irods.ErrInvalidRequest) {
+			writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 			return
 		}
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 	replicas = pathReplicaResponseList(objectPath, replicas)
@@ -593,12 +591,11 @@ func (h *Handler) patchPathReplicas(w http.ResponseWriter, r *http.Request) {
 		MinAgeMinutes:       minAgeMinutes,
 	})
 	if err != nil {
-		lowerErr := strings.ToLower(err.Error())
-		if strings.Contains(lowerErr, "source_resource is required") || strings.Contains(lowerErr, "destination_resource is required") || strings.Contains(lowerErr, "must differ") {
-			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		if errors.Is(err, irods.ErrInvalidRequest) {
+			writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 			return
 		}
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 	replicas = pathReplicaResponseList(objectPath, replicas)
@@ -664,12 +661,11 @@ func (h *Handler) deletePathReplicas(w http.ResponseWriter, r *http.Request) {
 		MinAgeMinutes: minAgeMinutes,
 	})
 	if err != nil {
-		lowerErr := strings.ToLower(err.Error())
-		if strings.Contains(lowerErr, "resource or replica_index is required") || strings.Contains(lowerErr, "replica_index") {
-			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		if errors.Is(err, irods.ErrInvalidRequest) {
+			writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 			return
 		}
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 	replicas = pathReplicaResponseList(objectPath, replicas)
@@ -705,7 +701,7 @@ func (h *Handler) getPathACL(w http.ResponseWriter, r *http.Request) {
 
 	acl, err := h.paths.GetPathACL(r.Context(), objectPath)
 	if err != nil {
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -770,12 +766,11 @@ func (h *Handler) postPathACL(w http.ResponseWriter, r *http.Request) {
 		AccessLevel: irodstypes.GetIRODSAccessLevelType(accessLevel),
 	}, request.Recursive)
 	if err != nil {
-		lowerErr := strings.ToLower(err.Error())
-		if strings.Contains(lowerErr, "name is required") || strings.Contains(lowerErr, "access_level is required") {
-			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		if errors.Is(err, irods.ErrInvalidRequest) {
+			writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 			return
 		}
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -816,12 +811,11 @@ func (h *Handler) putPathACL(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := h.paths.UpdatePathACL(r.Context(), objectPath, aclID, request.AccessLevel, request.Recursive)
 	if err != nil {
-		lowerErr := strings.ToLower(err.Error())
-		if strings.Contains(lowerErr, "access_level is required") || strings.Contains(lowerErr, "invalid acl id") {
-			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		if errors.Is(err, irods.ErrInvalidRequest) {
+			writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 			return
 		}
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -846,12 +840,11 @@ func (h *Handler) deletePathACL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.paths.DeletePathACL(r.Context(), objectPath, aclID); err != nil {
-		lowerErr := strings.ToLower(err.Error())
-		if strings.Contains(lowerErr, "invalid acl id") {
-			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		if errors.Is(err, irods.ErrInvalidRequest) {
+			writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 			return
 		}
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -881,7 +874,7 @@ func (h *Handler) putPathACLInheritance(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := h.paths.SetPathACLInheritance(r.Context(), objectPath, *request.Enabled, request.Recursive); err != nil {
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -909,7 +902,7 @@ func (h *Handler) deletePathACLInheritance(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := h.paths.SetPathACLInheritance(r.Context(), objectPath, false, recursive); err != nil {
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -957,12 +950,11 @@ func (h *Handler) createPath(w http.ResponseWriter, r *http.Request) {
 		Mkdirs:    request.Mkdirs,
 	})
 	if err != nil {
-		lowerErr := strings.ToLower(err.Error())
-		if strings.Contains(lowerErr, "child_name") || strings.Contains(lowerErr, "kind must be") || strings.Contains(lowerErr, "mkdirs is only supported") {
-			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		if errors.Is(err, irods.ErrInvalidRequest) {
+			writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 			return
 		}
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -994,13 +986,13 @@ func (h *Handler) postPathContents(w http.ResponseWriter, r *http.Request) {
 
 	checksum, err := multipartFormBool(r, "checksum")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 		return
 	}
 
 	overwrite, err := multipartFormBool(r, "overwrite")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 		return
 	}
 
@@ -1018,12 +1010,11 @@ func (h *Handler) postPathContents(w http.ResponseWriter, r *http.Request) {
 		Overwrite: overwrite,
 	})
 	if err != nil {
-		lowerErr := strings.ToLower(err.Error())
-		if strings.Contains(lowerErr, "file_name is required") || strings.Contains(lowerErr, "content is required") {
-			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		if errors.Is(err, irods.ErrInvalidRequest) {
+			writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 			return
 		}
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -1044,22 +1035,22 @@ func (h *Handler) getPathAVUs(w http.ResponseWriter, r *http.Request) {
 
 	options, err := queryAVUListOptions(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 		return
 	}
 
 	metadata, err := h.paths.GetPathMetadata(r.Context(), objectPath)
 	if err != nil {
 		if errors.Is(err, irods.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", err.Error())
+			writeErrorFromErr(w, r, http.StatusNotFound, "not_found", err)
 			return
 		}
 		if errors.Is(err, irods.ErrPermissionDenied) {
-			writeError(w, http.StatusForbidden, "permission_denied", err.Error())
+			writeErrorFromErr(w, r, http.StatusForbidden, "permission_denied", err)
 			return
 		}
 
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeErrorFromErr(w, r, http.StatusInternalServerError, "internal_error", err)
 		return
 	}
 
@@ -1119,11 +1110,11 @@ func (h *Handler) postPathAVU(w http.ResponseWriter, r *http.Request) {
 
 	created, err := h.paths.AddPathMetadata(r.Context(), objectPath, request.Attrib, request.Value, request.Unit)
 	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "attrib and value are required") {
-			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		if errors.Is(err, irods.ErrInvalidRequest) {
+			writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 			return
 		}
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -1163,12 +1154,11 @@ func (h *Handler) putPathAVU(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := h.paths.UpdatePathMetadata(r.Context(), objectPath, avuID, request.Attrib, request.Value, request.Unit)
 	if err != nil {
-		lowerErr := strings.ToLower(err.Error())
-		if strings.Contains(lowerErr, "attrib and value are required") || strings.Contains(lowerErr, "invalid avu id") {
-			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		if errors.Is(err, irods.ErrInvalidRequest) {
+			writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 			return
 		}
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -1193,11 +1183,11 @@ func (h *Handler) deletePathAVU(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.paths.DeletePathMetadata(r.Context(), objectPath, avuID); err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "invalid avu id") {
-			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		if errors.Is(err, irods.ErrInvalidRequest) {
+			writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 			return
 		}
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -1213,7 +1203,7 @@ func (h *Handler) getPathChecksum(w http.ResponseWriter, r *http.Request) {
 
 	checksum, err := h.paths.GetPathChecksum(r.Context(), objectPath)
 	if err != nil {
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -1229,7 +1219,7 @@ func (h *Handler) postPathChecksum(w http.ResponseWriter, r *http.Request) {
 
 	checksum, err := h.paths.ComputePathChecksum(r.Context(), objectPath)
 	if err != nil {
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -1254,15 +1244,15 @@ func (h *Handler) servePathContents(w http.ResponseWriter, r *http.Request, head
 	content, err := h.paths.GetObjectContentByPath(r.Context(), objectPath)
 	if err != nil {
 		if errors.Is(err, irods.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", err.Error())
+			writeErrorFromErr(w, r, http.StatusNotFound, "not_found", err)
 			return
 		}
 		if errors.Is(err, irods.ErrPermissionDenied) {
-			writeError(w, http.StatusForbidden, "permission_denied", err.Error())
+			writeErrorFromErr(w, r, http.StatusForbidden, "permission_denied", err)
 			return
 		}
 
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeErrorFromErr(w, r, http.StatusInternalServerError, "internal_error", err)
 		return
 	}
 	defer func() {
@@ -1280,7 +1270,7 @@ func (h *Handler) servePathContents(w http.ResponseWriter, r *http.Request, head
 	status, contentRange, start, end, err := resolveByteRange(rangeHeader, content)
 	if err != nil {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", content.Size))
-		writeError(w, http.StatusRequestedRangeNotSatisfiable, "invalid_range", err.Error())
+		writeErrorFromErr(w, r, http.StatusRequestedRangeNotSatisfiable, "invalid_range", err)
 		return
 	}
 
@@ -1313,7 +1303,7 @@ func (h *Handler) servePathContents(w http.ResponseWriter, r *http.Request, head
 
 	reader := io.NewSectionReader(content.Reader, start, end-start)
 	if _, err := io.CopyN(w, reader, end-start); err != nil && !errors.Is(err, io.EOF) {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeErrorFromErr(w, r, http.StatusInternalServerError, "internal_error", err)
 	}
 }
 
@@ -1355,21 +1345,21 @@ func multipartFormBool(r *http.Request, fieldName string) (bool, error) {
 	return value, nil
 }
 
-func writePathError(w http.ResponseWriter, err error) {
+func writePathError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, irods.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", err.Error())
+		writeErrorFromErr(w, r, http.StatusNotFound, "not_found", err)
 		return
 	}
 	if errors.Is(err, irods.ErrPermissionDenied) {
-		writeError(w, http.StatusForbidden, "permission_denied", err.Error())
+		writeErrorFromErr(w, r, http.StatusForbidden, "permission_denied", err)
 		return
 	}
 	if errors.Is(err, irods.ErrConflict) {
-		writeError(w, http.StatusConflict, "conflict", err.Error())
+		writeErrorFromErr(w, r, http.StatusConflict, "conflict", err)
 		return
 	}
 
-	writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+	writeErrorFromErr(w, r, http.StatusInternalServerError, "internal_error", err)
 }
 
 func queryVerboseLevel(r *http.Request) (int, error) {

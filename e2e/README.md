@@ -91,7 +91,7 @@ export GOREST_E2E_CONFIG_FILE=./e2e/rest-config.e2e.sample.yaml
 go test -tags=e2e ./e2e/...
 ```
 
-The sample config assumes the app is reachable at `http://127.0.0.1:8080` and
+The sample config assumes the app is reachable at `http://localhost:8080` and
 uses the default host-facing `irods-grid-stack` ports and resource names. It
 expects all test credentials and test settings in top-level fields. The S3
 mapping file values are absolute-path placeholders; replace

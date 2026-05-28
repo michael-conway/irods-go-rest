@@ -21,13 +21,13 @@ func (h *Handler) postPathTicket(w http.ResponseWriter, r *http.Request) {
 
 	options, err := decodeTicketCreateOptions(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 		return
 	}
 
 	ticket, err := h.tickets.CreateAnonymousTicket(r.Context(), objectPath, options)
 	if err != nil {
-		writeTicketError(w, err)
+		writeTicketError(w, r, err)
 		return
 	}
 
@@ -39,7 +39,7 @@ func (h *Handler) postPathTicket(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) getTickets(w http.ResponseWriter, r *http.Request) {
 	tickets, err := h.tickets.ListTickets(r.Context())
 	if err != nil {
-		writeTicketError(w, err)
+		writeTicketError(w, r, err)
 		return
 	}
 
@@ -80,13 +80,13 @@ func (h *Handler) postTicket(w http.ResponseWriter, r *http.Request) {
 
 	options, err := validateTicketCreateOptions(request.MaximumUses, request.LifetimeMinutes)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 		return
 	}
 
 	ticket, err := h.tickets.CreateAnonymousTicket(r.Context(), request.IRODSPath, options)
 	if err != nil {
-		writeTicketError(w, err)
+		writeTicketError(w, r, err)
 		return
 	}
 
@@ -104,7 +104,7 @@ func (h *Handler) getTicket(w http.ResponseWriter, r *http.Request) {
 
 	ticket, err := h.tickets.GetTicket(r.Context(), ticketName)
 	if err != nil {
-		writeTicketError(w, err)
+		writeTicketError(w, r, err)
 		return
 	}
 
@@ -153,7 +153,7 @@ func (h *Handler) patchTicket(w http.ResponseWriter, r *http.Request) {
 		LifetimeMinutes: request.LifetimeMinutes,
 	})
 	if err != nil {
-		writeTicketError(w, err)
+		writeTicketError(w, r, err)
 		return
 	}
 
@@ -170,7 +170,7 @@ func (h *Handler) deleteTicket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.tickets.DeleteTicket(r.Context(), ticketName); err != nil {
-		writeTicketError(w, err)
+		writeTicketError(w, r, err)
 		return
 	}
 
@@ -211,23 +211,21 @@ func validateTicketCreateOptions(maximumUses *int64, lifetimeMinutes *int) (irod
 	return options, nil
 }
 
-func writeTicketError(w http.ResponseWriter, err error) {
+func writeTicketError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, irods.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "not_found", err.Error())
+		writeErrorFromErr(w, r, http.StatusNotFound, "not_found", err)
 		return
 	}
 	if errors.Is(err, irods.ErrPermissionDenied) {
-		writeError(w, http.StatusForbidden, "permission_denied", err.Error())
+		writeErrorFromErr(w, r, http.StatusForbidden, "permission_denied", err)
+		return
+	}
+	if errors.Is(err, irods.ErrInvalidRequest) {
+		writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 		return
 	}
 
-	lower := strings.ToLower(err.Error())
-	if strings.Contains(lower, "must be zero or greater") || strings.Contains(lower, "required") || strings.Contains(lower, "missing authenticated principal") {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
-
-	writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+	writeErrorFromErr(w, r, http.StatusInternalServerError, "internal_error", err)
 }
 
 func ticketResponseList(tickets []domain.Ticket) []domain.Ticket {

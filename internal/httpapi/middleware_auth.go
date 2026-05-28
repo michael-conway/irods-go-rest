@@ -18,7 +18,7 @@ func (h *Handler) requireBearer(next http.Handler) http.Handler {
 		authz, err := authorizationFromRequest(r)
 		if err != nil {
 			setRequestAuthMetadata(w, "none", "")
-			logAuthMiddlewareError("authorization header parse failed", err, r, "phase", "requireBearer")
+			logExpectedAuthMiddlewareError("authorization header parse failed", err, r, "phase", "requireBearer")
 			w.Header().Set("WWW-Authenticate", `Bearer realm="irods-go-rest", Basic realm="irods-go-rest"`)
 			writeError(w, http.StatusUnauthorized, "missing_authorization", err.Error())
 			return
@@ -43,7 +43,11 @@ func (h *Handler) requireBearer(next http.Handler) http.Handler {
 			setRequestAuthMetadata(w, "bearer", "")
 			principal, err := h.verifier.VerifyToken(r.Context(), authz.Token)
 			if err != nil {
-				logAuthMiddlewareError("bearer token verification failed", err, r, "phase", "requireBearer", "auth_scheme", authz.Scheme)
+				if errors.Is(err, auth.ErrUnauthorized) {
+					logExpectedAuthMiddlewareError("bearer token verification failed", err, r, "phase", "requireBearer", "auth_scheme", authz.Scheme)
+				} else {
+					logInternalAuthMiddlewareError("bearer token verification failed", err, r, "phase", "requireBearer", "auth_scheme", authz.Scheme)
+				}
 				status := http.StatusBadGateway
 				errorCode := "auth_failed"
 				if errors.Is(err, auth.ErrUnauthorized) {
@@ -84,7 +88,7 @@ func (h *Handler) requireDownloadBearer(next http.Handler) http.Handler {
 		authz, err := authorizationFromRequest(r)
 		if err != nil {
 			setRequestAuthMetadata(w, "none", "")
-			logAuthMiddlewareError("authorization header parse failed", err, r, "phase", "requireDownloadBearer")
+			logExpectedAuthMiddlewareError("authorization header parse failed", err, r, "phase", "requireDownloadBearer")
 			w.Header().Set("WWW-Authenticate", `Bearer realm="irods-go-rest", Basic realm="irods-go-rest"`)
 			writeError(w, http.StatusUnauthorized, "missing_authorization", err.Error())
 			return
@@ -115,7 +119,11 @@ func (h *Handler) requireDownloadBearer(next http.Handler) http.Handler {
 			setRequestAuthMetadata(w, "bearer", "")
 			principal, err := h.verifier.VerifyToken(r.Context(), authz.Token)
 			if err != nil {
-				logAuthMiddlewareError("download bearer token verification failed", err, r, "phase", "requireDownloadBearer", "auth_scheme", authz.Scheme)
+				if errors.Is(err, auth.ErrUnauthorized) {
+					logExpectedAuthMiddlewareError("download bearer token verification failed", err, r, "phase", "requireDownloadBearer", "auth_scheme", authz.Scheme)
+				} else {
+					logInternalAuthMiddlewareError("download bearer token verification failed", err, r, "phase", "requireDownloadBearer", "auth_scheme", authz.Scheme)
+				}
 				status := http.StatusBadGateway
 				errorCode := "auth_failed"
 				if errors.Is(err, auth.ErrUnauthorized) {
@@ -200,7 +208,17 @@ func basicCredentialsFromHeader(value string) (string, string, error) {
 	return strings.TrimSpace(username), strings.TrimSpace(password), nil
 }
 
-func logAuthMiddlewareError(msg string, err error, r *http.Request, args ...any) {
+func logExpectedAuthMiddlewareError(msg string, err error, r *http.Request, args ...any) {
+	logArgs := []any{
+		"error", err.Error(),
+		"method", r.Method,
+		"path", r.URL.Path,
+	}
+	logArgs = append(logArgs, args...)
+	slog.Warn(msg, logArgs...)
+}
+
+func logInternalAuthMiddlewareError(msg string, err error, r *http.Request, args ...any) {
 	logArgs := []any{
 		"error", err.Error(),
 		"stack_trace", logutil.StackTrace(),

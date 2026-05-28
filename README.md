@@ -100,8 +100,12 @@ Then visit:
 * `GET /healthz`
 * `GET /swagger`
 * `GET /openapi.yaml`
-* `GET /web/`
-* `GET /web/login`
+
+To enable browser login routes (`/web/*`) for local development, set:
+
+```bash
+GOREST_WEB_ENABLED=true
+```
 
 ## API Documentation
 
@@ -117,6 +121,13 @@ The service reads `rest-config.yaml` plus `GOREST_*` environment variables. Envi
 Common settings include:
 
 * `GOREST_PUBLIC_URL`
+* `GOREST_WEB_ENABLED`
+* `GOREST_TRUST_FORWARDED_HEADERS`
+* `GOREST_HTTP_READ_TIMEOUT_SECONDS`
+* `GOREST_HTTP_READ_HEADER_TIMEOUT_SECONDS`
+* `GOREST_HTTP_WRITE_TIMEOUT_SECONDS`
+* `GOREST_HTTP_IDLE_TIMEOUT_SECONDS`
+* `GOREST_HTTP_MAX_HEADER_BYTES`
 * `GOREST_CORS_ALLOWED_ORIGINS`
 * `GOREST_REST_LOG_LEVEL`
 * `GOREST_IRODS_ZONE`
@@ -144,6 +155,18 @@ Common settings include:
 `GOREST_RESOURCE_AFFINITY` is optional and accepts a comma-separated list of
 iRODS resource names that are proximate to this service instance.
 
+HTTP server hardening defaults:
+
+* read timeout: `30s`
+* read header timeout: `5s`
+* write timeout: `30s`
+* idle timeout: `120s`
+* max header bytes: `1048576`
+
+`GOREST_TRUST_FORWARDED_HEADERS` defaults to `false`. Keep it `false` unless REST
+is running behind a trusted reverse proxy and you need `X-Forwarded-*` for
+generated server URLs.
+
 If you want to point the service at one explicit config file, use:
 
 ```bash
@@ -167,7 +190,7 @@ For download-oriented content endpoints, the service also accepts:
 
 This keeps the download contract compatible with future DRS-issued ticket flows without changing the endpoint shape later.
 
-The browser login flow remains separate under `/web/*`, which keeps the API contract cleaner and easier to use as a machine-facing service.
+The browser login flow remains separate under `/web/*` and is disabled by default. Enable it explicitly with `GOREST_WEB_ENABLED=true` when needed for local development.
 
 ## Path Model
 
@@ -247,13 +270,18 @@ All `/api/v1/ext/*` routes require authenticated API access (Basic or Bearer). U
 | Favorites | `/api/v1/ext/favorites` | Stable alpha | Normal validation/permission errors (`400`, `403`, `404`) |
 | Metadata manifest | `/api/v1/ext/metadata-manifest` | Stable alpha | Normal validation/permission/path errors (`400`, `403`, `404`) |
 | S3 bucket admin | `/api/v1/ext/s3/buckets*` | Conditional alpha (deployment-gated) | `501 not_supported` when `S3ApiSupported=false`; `503 not_configured` when S3 mapping configuration is missing |
-| S3 user-secret admin | `/api/v1/ext/s3/user-secrets*` | Conditional alpha (deployment-gated) | `501 not_supported` when `S3ApiSupported=false`; `503 not_configured` when S3 mapping configuration is missing; `403 permission_denied` for non-admin operations |
+| S3 user-secret admin | `/api/v1/ext/s3/user-secrets*` | Conditional alpha (deployment-gated) | `501 not_supported` when `S3ApiSupported=false`; `503 not_configured` when S3 mapping configuration is missing; `403 permission_denied` when authorization policy fails |
 
 Status semantics for extension routes:
 
 * `501 not_supported`: operation intentionally unavailable in this deployment/runtime capability mode
 * `503 not_configured`: feature is supported in principle, but required deployment configuration is missing
 * `403 permission_denied`: authenticated caller lacks required privileges for the operation
+
+S3 user-secret authorization policy:
+
+* `GET /api/v1/ext/s3/user-secrets` and `POST /api/v1/ext/s3/user-secrets/refresh-mapping` are rodsadmin-only
+* `GET /api/v1/ext/s3/user-secrets/{user_name}`, `POST /api/v1/ext/s3/user-secrets`, `PUT /api/v1/ext/s3/user-secrets`, and `DELETE /api/v1/ext/s3/user-secrets/{user_name}` are self-only by default (`user_name` must match authenticated principal username), with rodsadmin override
 
 The content endpoint supports restart/resume through the standard HTTP `Range` header.
 

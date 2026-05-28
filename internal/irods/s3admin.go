@@ -240,6 +240,10 @@ func (s *catalogService) GetS3UserSecret(_ context.Context, requestContext *Requ
 	}
 	defer filesystem.Release()
 
+	if err := s.requireS3UserSecretSelfOrAdmin(filesystem, requestContext, userAccount.ClientUser, "get s3 user secret"); err != nil {
+		return domain.S3UserSecret{}, err
+	}
+
 	userSecret, err := service.GetUserSecretKey(userAccount)
 	if err != nil {
 		return domain.S3UserSecret{}, normalizeS3AdminError("get s3 user secret", secretPath, err)
@@ -259,6 +263,10 @@ func (s *catalogService) StoreS3UserSecret(_ context.Context, requestContext *Re
 		return domain.S3UserSecret{}, err
 	}
 	defer filesystem.Release()
+
+	if err := s.requireS3UserSecretSelfOrAdmin(filesystem, requestContext, userAccount.ClientUser, "store s3 user secret"); err != nil {
+		return domain.S3UserSecret{}, err
+	}
 
 	var userSecret s3adminext.S3UserMapping
 	if options.AutoGenerate {
@@ -283,6 +291,10 @@ func (s *catalogService) DeleteS3UserSecret(_ context.Context, requestContext *R
 		return err
 	}
 	defer filesystem.Release()
+
+	if err := s.requireS3UserSecretSelfOrAdmin(filesystem, requestContext, userAccount.ClientUser, "delete s3 user secret"); err != nil {
+		return err
+	}
 
 	if err := service.DeleteUserSecretKey(userAccount); err != nil {
 		secretPath, _ := s3adminext.S3UserKeyPath(userAccount)
@@ -417,6 +429,28 @@ func (s *catalogService) requireS3RodsAdminUser(filesystem CatalogFileSystem, re
 	}
 	if user == nil || user.Type != irodstypes.IRODSUserRodsAdmin {
 		return fmt.Errorf("%w: insufficient privilege: %s requires an iRODS user with rodsadmin type", ErrPermissionDenied, operation)
+	}
+
+	return nil
+}
+
+func (s *catalogService) requireS3UserSecretSelfOrAdmin(filesystem CatalogFileSystem, requestContext *RequestContext, targetUserName string, operation string) error {
+	targetUserName = strings.TrimSpace(targetUserName)
+	if targetUserName == "" {
+		return fmt.Errorf("user_name is required")
+	}
+
+	requestUsername := strings.TrimSpace(safeUsername(requestContext))
+	if requestUsername == "" {
+		return fmt.Errorf("%w: insufficient privilege: %s requires the authenticated principal to match user_name or have rodsadmin type", ErrPermissionDenied, operation)
+	}
+
+	if requestUsername == targetUserName {
+		return nil
+	}
+
+	if err := s.requireS3RodsAdminUser(filesystem, requestContext, operation); err != nil {
+		return fmt.Errorf("%w: insufficient privilege: %s requires user_name=%q for non-admin callers", ErrPermissionDenied, operation, requestUsername)
 	}
 
 	return nil

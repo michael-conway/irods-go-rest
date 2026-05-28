@@ -32,6 +32,13 @@ func TestReadRestConfigEnvOverride(t *testing.T) {
 	t.Setenv("GOREST_S3_USER_MAPPING_FILE", "/tmp/s3-users.json")
 	t.Setenv("GOREST_REPLICA_TRIM_MIN_COPIES", "4")
 	t.Setenv("GOREST_REPLICA_TRIM_MIN_AGE_MINUTES", "12")
+	t.Setenv("GOREST_WEB_ENABLED", "true")
+	t.Setenv("GOREST_TRUST_FORWARDED_HEADERS", "true")
+	t.Setenv("GOREST_HTTP_READ_TIMEOUT_SECONDS", "45")
+	t.Setenv("GOREST_HTTP_READ_HEADER_TIMEOUT_SECONDS", "7")
+	t.Setenv("GOREST_HTTP_WRITE_TIMEOUT_SECONDS", "50")
+	t.Setenv("GOREST_HTTP_IDLE_TIMEOUT_SECONDS", "150")
+	t.Setenv("GOREST_HTTP_MAX_HEADER_BYTES", "2097152")
 	t.Setenv("GOREST_CORS_ALLOWED_ORIGINS", "http://localhost:8081, http://127.0.0.1:8081")
 	t.Setenv("IRODS_REST_ADDR", ":18080")
 	t.Setenv("GOREST_IRODS_ADMIN_LOGIN_TYPE", "native")
@@ -76,6 +83,27 @@ func TestReadRestConfigEnvOverride(t *testing.T) {
 	}
 	if cfg.ListenAddr != ":18080" {
 		t.Fatalf("expected ListenAddr from IRODS_REST_ADDR override, got %q", cfg.ListenAddr)
+	}
+	if !cfg.WebEnabled {
+		t.Fatal("expected WebEnabled from env override")
+	}
+	if !cfg.TrustForwardedHeaders {
+		t.Fatal("expected TrustForwardedHeaders from env override")
+	}
+	if cfg.HTTPReadTimeoutSeconds != 45 {
+		t.Fatalf("expected HTTPReadTimeoutSeconds from env override, got %d", cfg.HTTPReadTimeoutSeconds)
+	}
+	if cfg.HTTPReadHeaderTimeoutSeconds != 7 {
+		t.Fatalf("expected HTTPReadHeaderTimeoutSeconds from env override, got %d", cfg.HTTPReadHeaderTimeoutSeconds)
+	}
+	if cfg.HTTPWriteTimeoutSeconds != 50 {
+		t.Fatalf("expected HTTPWriteTimeoutSeconds from env override, got %d", cfg.HTTPWriteTimeoutSeconds)
+	}
+	if cfg.HTTPIdleTimeoutSeconds != 150 {
+		t.Fatalf("expected HTTPIdleTimeoutSeconds from env override, got %d", cfg.HTTPIdleTimeoutSeconds)
+	}
+	if cfg.HTTPMaxHeaderBytes != 2097152 {
+		t.Fatalf("expected HTTPMaxHeaderBytes from env override, got %d", cfg.HTTPMaxHeaderBytes)
 	}
 	if cfg.IrodsAdminLoginType != "native" {
 		t.Fatalf("expected IrodsAdminLoginType from env override, got %q", cfg.IrodsAdminLoginType)
@@ -322,6 +350,40 @@ func TestReadRestConfigTrimsWhitespaceFromInputs(t *testing.T) {
 
 	if cfg.IrodsHost != "trimmed-host" {
 		t.Fatalf("expected IrodsHost from trimmed %s override, got %q", ConfigFileEnvVar, cfg.IrodsHost)
+	}
+}
+
+func TestReadRestConfigHTTPServerDefaults(t *testing.T) {
+	dir := t.TempDir()
+	configBody := "" +
+		"IrodsHost: localhost\n" +
+		"IrodsPort: 1247\n" +
+		"IrodsZone: tempZone\n" +
+		"IrodsAdminUser: rods\n" +
+		"IrodsAuthScheme: native\n" +
+		"IrodsNegotiationPolicy: CS_NEG_DONT_CARE\n" +
+		"RestLogLevel: info\n"
+	writeTestFile(t, dir, "rest-config.yaml", configBody)
+
+	cfg, err := ReadRestConfig("rest-config", "yaml", []string{dir})
+	if err != nil {
+		t.Fatalf("error reading config: %v", err)
+	}
+
+	if cfg.HTTPReadTimeoutSeconds != defaultHTTPReadTimeoutSeconds {
+		t.Fatalf("expected default HTTPReadTimeoutSeconds %d, got %d", defaultHTTPReadTimeoutSeconds, cfg.HTTPReadTimeoutSeconds)
+	}
+	if cfg.HTTPReadHeaderTimeoutSeconds != defaultHTTPReadHeaderTimeoutSeconds {
+		t.Fatalf("expected default HTTPReadHeaderTimeoutSeconds %d, got %d", defaultHTTPReadHeaderTimeoutSeconds, cfg.HTTPReadHeaderTimeoutSeconds)
+	}
+	if cfg.HTTPWriteTimeoutSeconds != defaultHTTPWriteTimeoutSeconds {
+		t.Fatalf("expected default HTTPWriteTimeoutSeconds %d, got %d", defaultHTTPWriteTimeoutSeconds, cfg.HTTPWriteTimeoutSeconds)
+	}
+	if cfg.HTTPIdleTimeoutSeconds != defaultHTTPIdleTimeoutSeconds {
+		t.Fatalf("expected default HTTPIdleTimeoutSeconds %d, got %d", defaultHTTPIdleTimeoutSeconds, cfg.HTTPIdleTimeoutSeconds)
+	}
+	if cfg.HTTPMaxHeaderBytes != defaultHTTPMaxHeaderBytes {
+		t.Fatalf("expected default HTTPMaxHeaderBytes %d, got %d", defaultHTTPMaxHeaderBytes, cfg.HTTPMaxHeaderBytes)
 	}
 }
 

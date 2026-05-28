@@ -23,6 +23,13 @@ These are the settings you will usually care about:
 ```bash
 GOREST_PUBLIC_URL=http://localhost:8080
 IRODS_REST_ADDR=:8080
+GOREST_WEB_ENABLED=false
+GOREST_TRUST_FORWARDED_HEADERS=false
+GOREST_HTTP_READ_TIMEOUT_SECONDS=30
+GOREST_HTTP_READ_HEADER_TIMEOUT_SECONDS=5
+GOREST_HTTP_WRITE_TIMEOUT_SECONDS=30
+GOREST_HTTP_IDLE_TIMEOUT_SECONDS=120
+GOREST_HTTP_MAX_HEADER_BYTES=1048576
 GOREST_CORS_ALLOWED_ORIGINS=http://localhost:8081,http://127.0.0.1:8081,http://localhost:5173,http://127.0.0.1:5173
 GOREST_REST_LOG_LEVEL=info
 
@@ -52,6 +59,19 @@ links. `IRODS_REST_ADDR` is the socket address the HTTP server binds to. In
 containers, use `IRODS_REST_ADDR=:8080` so Docker port publishing can reach the
 service.
 
+Forwarded header trust for generated server URLs is disabled by default.
+`GOREST_TRUST_FORWARDED_HEADERS=true` should be used only behind a trusted
+proxy boundary. In untrusted environments, keep it `false` and prefer explicit
+`GOREST_PUBLIC_URL`.
+
+HTTP transport hardening defaults are enabled unless overridden:
+
+- `GOREST_HTTP_READ_TIMEOUT_SECONDS=30`
+- `GOREST_HTTP_READ_HEADER_TIMEOUT_SECONDS=5`
+- `GOREST_HTTP_WRITE_TIMEOUT_SECONDS=30`
+- `GOREST_HTTP_IDLE_TIMEOUT_SECONDS=120`
+- `GOREST_HTTP_MAX_HEADER_BYTES=1048576`
+
 `GOREST_CORS_ALLOWED_ORIGINS` is optional and accepts a comma-separated list of
 browser origins allowed to call the API from a separate frontend origin. This is
 needed when Starbase is served from a different host or port than
@@ -70,6 +90,16 @@ Use that only for local development.
 and introspection calls. `GOREST_OIDC_AUTH_URL` is optional and controls the
 browser redirect target for `/web/login`. If unset, `/web/login` uses
 `GOREST_OIDC_URL`.
+
+`GOREST_WEB_ENABLED` controls whether `/web/*` routes are exposed. Keep it
+`false` in production and shared alpha deployments. Set it to `true` only for
+local development workflows that need browser login/token copy flow.
+
+When `/web/*` is enabled, server-side web sessions are bounded and expiring:
+
+- session expiry follows token `expires_in` when present
+- fallback session TTL is `15m` when token TTL is not available
+- maximum in-memory sessions: `1024` (oldest session evicted at capacity)
 
 ## iRODS SSL
 
@@ -130,6 +160,15 @@ AVU mutations so the S3 API can reload the mapping.
 mapping JSON. The REST service rewrites this file after successful S3 user secret
 updates and when the user mapping refresh endpoint rebuilds the file from
 `iRODS:S3:Secret` AVUs.
+
+S3 user-secret endpoint authorization policy:
+
+- `GET /api/v1/ext/s3/user-secrets` and `POST /api/v1/ext/s3/user-secrets/refresh-mapping` require rodsadmin.
+- Per-user secret endpoints are self-only by default (`user_name` must match the authenticated principal username), with rodsadmin override:
+  - `GET /api/v1/ext/s3/user-secrets/{user_name}`
+  - `POST /api/v1/ext/s3/user-secrets`
+  - `PUT /api/v1/ext/s3/user-secrets`
+  - `DELETE /api/v1/ext/s3/user-secrets/{user_name}`
 
 Supported forms:
 

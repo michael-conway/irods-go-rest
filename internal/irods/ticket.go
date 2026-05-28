@@ -60,10 +60,10 @@ func (s *catalogService) CreateAnonymousTicket(_ context.Context, requestContext
 		return domain.Ticket{}, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
 	}
 	if options.MaximumUses < 0 {
-		return domain.Ticket{}, fmt.Errorf("maximum uses must be zero or greater")
+		return domain.Ticket{}, newInvalidRequestError("maximum uses must be zero or greater")
 	}
 	if options.LifetimeMinutes < 0 {
-		return domain.Ticket{}, fmt.Errorf("ticket lifetime minutes must be zero or greater")
+		return domain.Ticket{}, newInvalidRequestError("ticket lifetime minutes must be zero or greater")
 	}
 
 	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-create-ticket")
@@ -138,10 +138,10 @@ func (s *catalogService) UpdateTicket(ctx context.Context, requestContext *Reque
 		return domain.Ticket{}, fmt.Errorf("%w: ticket %q", ErrNotFound, ticketName)
 	}
 	if options.MaximumUses != nil && *options.MaximumUses < 0 {
-		return domain.Ticket{}, fmt.Errorf("maximum uses must be zero or greater")
+		return domain.Ticket{}, newInvalidRequestError("maximum uses must be zero or greater")
 	}
 	if options.LifetimeMinutes != nil && *options.LifetimeMinutes < 0 {
-		return domain.Ticket{}, fmt.Errorf("ticket lifetime minutes must be zero or greater")
+		return domain.Ticket{}, newInvalidRequestError("ticket lifetime minutes must be zero or greater")
 	}
 
 	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-update-ticket")

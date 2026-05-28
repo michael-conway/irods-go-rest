@@ -1089,7 +1089,7 @@ func TestPathCollectionCreateDeleteForceBasicAuthE2E(t *testing.T) {
 		Message string `json:"message"`
 	}
 	decodeJSON(t, deleteCollectionResp.Body, &conflictPayload)
-	if conflictPayload.Code != "conflict" || !strings.Contains(conflictPayload.Message, "force=true") {
+	if conflictPayload.Code != "conflict" || conflictPayload.Message != "request conflicts with current resource state" {
 		t.Fatalf("unexpected conflict payload %+v", conflictPayload)
 	}
 	if !waitForIRODSPathFresh(t, collectionPath, 500*time.Millisecond) {

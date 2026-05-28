@@ -134,7 +134,10 @@ func TestOpenAPISpec(t *testing.T) {
 }
 
 func TestOpenAPISpecUsesRequestHost(t *testing.T) {
-	handler := testHandler(t)
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.PublicURL = ""
+		cfg.TrustForwardedHeaders = false
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
 	req.Host = "rest.example.org:18082"
@@ -152,8 +155,35 @@ func TestOpenAPISpecUsesRequestHost(t *testing.T) {
 	}
 }
 
-func TestOpenAPISpecUsesForwardedHostAndProto(t *testing.T) {
-	handler := testHandler(t)
+func TestOpenAPISpecIgnoresForwardedHostAndProtoByDefault(t *testing.T) {
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.PublicURL = ""
+		cfg.TrustForwardedHeaders = false
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
+	req.Host = "internal:8080"
+	req.Header.Set("X-Forwarded-Host", "rest.example.org")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "url: http://internal:8080") {
+		t.Fatalf("expected request host when forwarded headers are untrusted, got %q", body)
+	}
+}
+
+func TestOpenAPISpecUsesForwardedHostAndProtoWhenTrusted(t *testing.T) {
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.PublicURL = ""
+		cfg.TrustForwardedHeaders = true
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
 	req.Host = "internal:8080"
@@ -169,7 +199,31 @@ func TestOpenAPISpecUsesForwardedHostAndProto(t *testing.T) {
 
 	body := rec.Body.String()
 	if !strings.Contains(body, "url: https://rest.example.org") {
-		t.Fatalf("expected forwarded host and proto in openapi server url, got %q", body)
+		t.Fatalf("expected trusted forwarded host and proto in openapi server url, got %q", body)
+	}
+}
+
+func TestOpenAPISpecUsesConfiguredPublicURLOverRequestHeaders(t *testing.T) {
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.PublicURL = "https://api.example.org"
+		cfg.TrustForwardedHeaders = true
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
+	req.Host = "internal:8080"
+	req.Header.Set("X-Forwarded-Host", "rest.example.org")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "url: https://api.example.org") {
+		t.Fatalf("expected configured public url to take precedence, got %q", body)
 	}
 }
 
@@ -195,7 +249,9 @@ func TestSwaggerUI(t *testing.T) {
 }
 
 func TestWebLoginRedirect(t *testing.T) {
-	handler := testHandler(t)
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.WebEnabled = true
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/web/login", nil)
 	rec := httptest.NewRecorder()
@@ -208,7 +264,9 @@ func TestWebLoginRedirect(t *testing.T) {
 }
 
 func TestWebHomeDisplaysBearerToken(t *testing.T) {
-	handler := testHandler(t)
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.WebEnabled = true
+	})
 
 	session, err := handler.webSession.Create(auth.Principal{
 		Subject:  "user-123",
@@ -240,7 +298,9 @@ func TestWebHomeDisplaysBearerToken(t *testing.T) {
 }
 
 func TestWebCallbackCreatesSession(t *testing.T) {
-	handler := testHandler(t)
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.WebEnabled = true
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/web/callback?code=code123&state=state123", nil)
 	req.AddCookie(&http.Cookie{Name: authStateCookieName, Value: "state123"})
@@ -254,7 +314,9 @@ func TestWebCallbackCreatesSession(t *testing.T) {
 }
 
 func TestWebCallbackSurfacesOAuthError(t *testing.T) {
-	handler := testHandler(t)
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.WebEnabled = true
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/web/callback?error=access_denied&error_description=user+canceled&state=state123", nil)
 	rec := httptest.NewRecorder()
@@ -267,6 +329,19 @@ func TestWebCallbackSurfacesOAuthError(t *testing.T) {
 
 	if got := rec.Body.String(); got == "" || !containsAll(got, `"code":"auth_failed"`, `access_denied: user canceled`) {
 		t.Fatalf("unexpected response body: %q", got)
+	}
+}
+
+func TestWebRoutesDisabledByDefault(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/web/login", nil)
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
 	}
 }
 
@@ -659,7 +734,7 @@ func TestDeletePathRejectsNonEmptyCollectionWithoutForce(t *testing.T) {
 		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	if body := rec.Body.String(); !containsAll(body, `"code":"conflict"`, `force=true`) {
+	if body := rec.Body.String(); !containsAll(body, `"code":"conflict"`, `"message":"request conflicts with current resource state"`) {
 		t.Fatalf("unexpected conflict response body: %q", body)
 	}
 }
@@ -2691,8 +2766,8 @@ func TestExtS3BucketsLifecycle(t *testing.T) {
 	if nonAdminRefreshRec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 refreshing bucket mapping as non-admin, got %d: %s", nonAdminRefreshRec.Code, nonAdminRefreshRec.Body.String())
 	}
-	if body := nonAdminRefreshRec.Body.String(); !strings.Contains(body, "insufficient privilege") {
-		t.Fatalf("expected insufficient privilege response, got %s", body)
+	if body := nonAdminRefreshRec.Body.String(); !containsAll(body, `"code":"permission_denied"`, `"message":"permission denied"`) {
+		t.Fatalf("expected permission denied response, got %s", body)
 	}
 
 	refreshReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/buckets/refresh-mapping", nil)
@@ -2784,7 +2859,7 @@ func TestExtS3UserSecretsLifecycle(t *testing.T) {
 	})
 
 	initialSecret := "Aa1Bb~2Cc3.-Dd4Ee5Ff6Gg7Hh8Ii9_Jj0Kk1Ll2"
-	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"test1","secret_key":"`+initialSecret+`"}`))
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"alice","secret_key":"`+initialSecret+`"}`))
 	createReq.Header.Set("Authorization", "Bearer token123")
 	createReq.Header.Set("Content-Type", "application/json")
 	createRec := httptest.NewRecorder()
@@ -2792,24 +2867,24 @@ func TestExtS3UserSecretsLifecycle(t *testing.T) {
 	if createRec.Code != http.StatusCreated {
 		t.Fatalf("expected 201 creating S3 user secret, got %d: %s", createRec.Code, createRec.Body.String())
 	}
-	if body := createRec.Body.String(); !containsAll(body, `"user_name":"test1"`, `"secret_key":"`+initialSecret+`"`, `"irods_path":"/tempZone/home/test1/.irodsext/s3admin/irods-s3-api-secret.txt"`) {
+	if body := createRec.Body.String(); !containsAll(body, `"user_name":"alice"`, `"secret_key":"`+initialSecret+`"`, `"irods_path":"/tempZone/home/alice/.irodsext/s3admin/irods-s3-api-secret.txt"`) {
 		t.Fatalf("unexpected create user secret body: %q", body)
 	}
-	assertS3UserMappingFile(t, userMappingPath, "test1", initialSecret)
+	assertS3UserMappingFile(t, userMappingPath, "alice", initialSecret)
 
-	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets/test1", nil)
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets/alice", nil)
 	getReq.Header.Set("Authorization", "Bearer token123")
 	getRec := httptest.NewRecorder()
 	handler.Routes().ServeHTTP(getRec, getReq)
 	if getRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 getting S3 user secret, got %d: %s", getRec.Code, getRec.Body.String())
 	}
-	if body := getRec.Body.String(); !containsAll(body, `"user_name":"test1"`, `"secret_key":"`+initialSecret+`"`, `"self":{"href":"/api/v1/ext/s3/user-secrets/test1","method":"GET"}`) {
+	if body := getRec.Body.String(); !containsAll(body, `"user_name":"alice"`, `"secret_key":"`+initialSecret+`"`, `"self":{"href":"/api/v1/ext/s3/user-secrets/alice","method":"GET"}`) {
 		t.Fatalf("unexpected get user secret body: %q", body)
 	}
 
 	updatedSecret := strings.Repeat("Z", s3adminext.S3UserSecretKeyLength)
-	updateReq := httptest.NewRequest(http.MethodPut, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"test1","secret_key":"`+updatedSecret+`"}`))
+	updateReq := httptest.NewRequest(http.MethodPut, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"alice","secret_key":"`+updatedSecret+`"}`))
 	updateReq.Header.Set("Authorization", "Bearer token123")
 	updateReq.Header.Set("Content-Type", "application/json")
 	updateRec := httptest.NewRecorder()
@@ -2817,9 +2892,9 @@ func TestExtS3UserSecretsLifecycle(t *testing.T) {
 	if updateRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 updating S3 user secret, got %d: %s", updateRec.Code, updateRec.Body.String())
 	}
-	assertS3UserMappingFile(t, userMappingPath, "test1", updatedSecret)
+	assertS3UserMappingFile(t, userMappingPath, "alice", updatedSecret)
 
-	generateReq := httptest.NewRequest(http.MethodPut, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"test1","auto_generate":true}`))
+	generateReq := httptest.NewRequest(http.MethodPut, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"alice","auto_generate":true}`))
 	generateReq.Header.Set("Authorization", "Bearer token123")
 	generateReq.Header.Set("Content-Type", "application/json")
 	generateRec := httptest.NewRecorder()
@@ -2827,9 +2902,60 @@ func TestExtS3UserSecretsLifecycle(t *testing.T) {
 	if generateRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 generating S3 user secret, got %d: %s", generateRec.Code, generateRec.Body.String())
 	}
-	generatedSecret := readS3UserMappingFile(t, userMappingPath)["test1"].SecretKey
+	generatedSecret := readS3UserMappingFile(t, userMappingPath)["alice"].SecretKey
 	if generatedSecret == "" || generatedSecret == updatedSecret {
 		t.Fatalf("expected generated secret to replace previous mapping, got %q", generatedSecret)
+	}
+
+	nonAdminCrossGetReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets/test1", nil)
+	nonAdminCrossGetReq.Header.Set("Authorization", "Bearer token123")
+	nonAdminCrossGetRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(nonAdminCrossGetRec, nonAdminCrossGetReq)
+	if nonAdminCrossGetRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 getting other user's secret as non-admin, got %d: %s", nonAdminCrossGetRec.Code, nonAdminCrossGetRec.Body.String())
+	}
+
+	nonAdminCrossCreateReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"test1","secret_key":"`+initialSecret+`"}`))
+	nonAdminCrossCreateReq.Header.Set("Authorization", "Bearer token123")
+	nonAdminCrossCreateReq.Header.Set("Content-Type", "application/json")
+	nonAdminCrossCreateRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(nonAdminCrossCreateRec, nonAdminCrossCreateReq)
+	if nonAdminCrossCreateRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 creating other user's secret as non-admin, got %d: %s", nonAdminCrossCreateRec.Code, nonAdminCrossCreateRec.Body.String())
+	}
+
+	nonAdminCrossUpdateReq := httptest.NewRequest(http.MethodPut, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"test1","secret_key":"`+updatedSecret+`"}`))
+	nonAdminCrossUpdateReq.Header.Set("Authorization", "Bearer token123")
+	nonAdminCrossUpdateReq.Header.Set("Content-Type", "application/json")
+	nonAdminCrossUpdateRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(nonAdminCrossUpdateRec, nonAdminCrossUpdateReq)
+	if nonAdminCrossUpdateRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 updating other user's secret as non-admin, got %d: %s", nonAdminCrossUpdateRec.Code, nonAdminCrossUpdateRec.Body.String())
+	}
+
+	nonAdminCrossDeleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/ext/s3/user-secrets/test1", nil)
+	nonAdminCrossDeleteReq.Header.Set("Authorization", "Bearer token123")
+	nonAdminCrossDeleteRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(nonAdminCrossDeleteRec, nonAdminCrossDeleteReq)
+	if nonAdminCrossDeleteRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 deleting other user's secret as non-admin, got %d: %s", nonAdminCrossDeleteRec.Code, nonAdminCrossDeleteRec.Body.String())
+	}
+
+	adminCrossCreateReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"test1","secret_key":"`+initialSecret+`"}`))
+	adminCrossCreateReq.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("otheradmin:secret")))
+	adminCrossCreateReq.Header.Set("Content-Type", "application/json")
+	adminCrossCreateRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(adminCrossCreateRec, adminCrossCreateReq)
+	if adminCrossCreateRec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 creating other user's secret as rodsadmin, got %d: %s", adminCrossCreateRec.Code, adminCrossCreateRec.Body.String())
+	}
+
+	adminCrossDeleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/ext/s3/user-secrets/test1", nil)
+	adminCrossDeleteReq.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("otheradmin:secret")))
+	adminCrossDeleteRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(adminCrossDeleteRec, adminCrossDeleteReq)
+	if adminCrossDeleteRec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 deleting other user's secret as rodsadmin, got %d: %s", adminCrossDeleteRec.Code, adminCrossDeleteRec.Body.String())
 	}
 
 	nonAdminListReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets", nil)
@@ -2847,7 +2973,7 @@ func TestExtS3UserSecretsLifecycle(t *testing.T) {
 	if adminListRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 listing user secrets as rodsadmin, got %d: %s", adminListRec.Code, adminListRec.Body.String())
 	}
-	if body := adminListRec.Body.String(); !containsAll(body, `"user_secrets":`, `"user_name":"test1"`, `"secret_key":"`+generatedSecret+`"`, `"count":1`) {
+	if body := adminListRec.Body.String(); !containsAll(body, `"user_secrets":`, `"user_name":"alice"`, `"secret_key":"`+generatedSecret+`"`, `"count":1`) {
 		t.Fatalf("unexpected user secret list body: %s", body)
 	}
 
@@ -2862,8 +2988,8 @@ func TestExtS3UserSecretsLifecycle(t *testing.T) {
 	if nonAdminRefreshRec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 refreshing user mapping as non-admin, got %d: %s", nonAdminRefreshRec.Code, nonAdminRefreshRec.Body.String())
 	}
-	if body := nonAdminRefreshRec.Body.String(); !strings.Contains(body, "insufficient privilege") {
-		t.Fatalf("expected insufficient privilege response, got %s", body)
+	if body := nonAdminRefreshRec.Body.String(); !containsAll(body, `"code":"permission_denied"`, `"message":"permission denied"`) {
+		t.Fatalf("expected permission denied response, got %s", body)
 	}
 
 	refreshReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/user-secrets/refresh-mapping", nil)
@@ -2873,26 +2999,26 @@ func TestExtS3UserSecretsLifecycle(t *testing.T) {
 	if refreshRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 refreshing S3 user mapping, got %d: %s", refreshRec.Code, refreshRec.Body.String())
 	}
-	if body := refreshRec.Body.String(); !containsAll(body, `"user_mapping":`, `"user_name":"test1"`, `"count":1`) {
+	if body := refreshRec.Body.String(); !containsAll(body, `"user_mapping":`, `"user_name":"alice"`, `"count":1`) {
 		t.Fatalf("unexpected user mapping refresh body: %s", body)
 	}
-	assertS3UserMappingFile(t, userMappingPath, "test1", generatedSecret)
+	assertS3UserMappingFile(t, userMappingPath, "alice", generatedSecret)
 	if mapping := readS3UserMappingFile(t, userMappingPath); mapping["stale"].SecretKey != "" {
 		t.Fatalf("expected stale user mapping to be removed after refresh, got %+v", mapping)
 	}
 
-	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/ext/s3/user-secrets/test1", nil)
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/ext/s3/user-secrets/alice", nil)
 	deleteReq.Header.Set("Authorization", "Bearer token123")
 	deleteRec := httptest.NewRecorder()
 	handler.Routes().ServeHTTP(deleteRec, deleteReq)
 	if deleteRec.Code != http.StatusNoContent {
 		t.Fatalf("expected 204 deleting S3 user secret, got %d: %s", deleteRec.Code, deleteRec.Body.String())
 	}
-	if mapping := readS3UserMappingFile(t, userMappingPath); mapping["test1"].SecretKey != "" {
+	if mapping := readS3UserMappingFile(t, userMappingPath); mapping["alice"].SecretKey != "" {
 		t.Fatalf("expected deleted user secret to be removed from mapping, got %+v", mapping)
 	}
 
-	getAfterDeleteReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets/test1", nil)
+	getAfterDeleteReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets/alice", nil)
 	getAfterDeleteReq.Header.Set("Authorization", "Bearer token123")
 	getAfterDeleteRec := httptest.NewRecorder()
 	handler.Routes().ServeHTTP(getAfterDeleteRec, getAfterDeleteReq)
