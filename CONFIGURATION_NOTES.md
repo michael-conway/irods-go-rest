@@ -78,6 +78,15 @@ needed when Starbase is served from a different host or port than
 `irods-go-rest`, for example `http://localhost:8081` for the containerized
 Starbase frontend or `http://localhost:5173` for the Vite dev server.
 
+The checked-in `internal/config/rest-config.yaml` now defaults to:
+
+- `http://localhost:8081`
+- `http://127.0.0.1:8081`
+- `http://localhost:5173`
+- `http://127.0.0.1:5173`
+
+Override with `GOREST_CORS_ALLOWED_ORIGINS` if your frontend origin differs.
+
 If your local Keycloak uses a self-signed certificate, you can temporarily use:
 
 ```bash
