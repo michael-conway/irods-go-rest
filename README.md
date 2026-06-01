@@ -4,297 +4,166 @@
 [![Container Build](https://github.com/michael-conway/irods-go-rest/actions/workflows/container-build.yml/badge.svg)](https://github.com/michael-conway/irods-go-rest/actions/workflows/container-build.yml)
 [![CodeQL Advanced](https://github.com/michael-conway/irods-go-rest/actions/workflows/codeql.yml/badge.svg)](https://github.com/michael-conway/irods-go-rest/actions/workflows/codeql.yml)
 
-OpenAPI Go REST API for iRODS.
+`irods-go-rest` is an alpha REST service for iRODS. It exposes an OpenAPI-defined HTTP API for logical path access, data-object content, AVU metadata, users, groups, tickets, server information, and selected extension workflows.
 
-## Overview
-
-This project provides a Go-based REST service for iRODS with an OpenAPI-defined HTTP interface, bearer/basic authentication support, browser-based login flow support, and a growing set of endpoints for logical-path lookup, child listing, and byte streaming.
-
-It includes:
-
-* a REST API for iRODS logical-path-oriented access
-* OpenAPI source documents and Swagger UI
-* HTTP middleware for bearer token, basic auth, and ticket-oriented download flows
-* iRODS service-layer boundaries for catalog and content operations
-* unit-testable handler, auth, and service scaffolding for further development
-
-## Project Metadata
+## Status
 
 | Field | Value |
 | --- | --- |
-| Project Name | `iRODS Go REST API` |
-| Current Version | `0.1.0` |
-| Status | `Active Development` |
-| Primary Developer | `Mike Conway` |
-| Organization | `NIEHS` |
-| Repository | `https://github.com/michael-conway/irods-go-rest` |
-| Contact | `mike.conway@nih.gov` |
-| Issue Tracker | `https://github.com/michael-conway/irods-go-rest/issues` |
+| Release | `1.0.0-alpha` |
+| Stability | Alpha |
 | License | `BSD-2-Clause` |
+| Repository | `https://github.com/michael-conway/irods-go-rest` |
+| Issues | `https://github.com/michael-conway/irods-go-rest/issues` |
 
-## Master Index
-
-* [Configuration Notes](./CONFIGURATION_NOTES.md)
-* [Developer Notes](./DEVELOPER_NOTES.md)
-* [OpenAPI Contract](./api/openapi.yaml)
-
-## Project Structure
-
-The repository follows a conventional Go layout centered around an OpenAPI-described HTTP service, HTTP/auth middleware, and iRODS service boundaries.
-
-| Path | Purpose |
-| --- | --- |
-| `cmd/irods-go-rest/` | Main application entrypoint |
-| `internal/app/` | App composition and service lifecycle |
-| `internal/config/` | Runtime configuration and environment binding |
-| `internal/auth/` | Keycloak-backed auth flow and token verification support |
-| `internal/httpapi/` | HTTP routing, middleware, handlers, and responses |
-| `internal/irods/` | iRODS integration boundary and service scaffolding |
-| `internal/domain/` | API-facing domain models |
-| `api/` | OpenAPI contract and embedding support |
-| `e2e/` | End-to-end HTTP tests that run against a reachable REST service and iRODS test grid |
-| `deployments/` | Legacy docker-test-framework assets retained during migration to `irods-grid-stack` |
-
-## Stack and Testing Strategy
-
-The implementation is written in Go and keeps the OpenAPI document in `api/openapi.yaml` as the source of truth for the HTTP contract. The HTTP layer is intentionally separated from the iRODS service layer so routing, auth, and response behavior can evolve without pushing transport concerns into the backend access code.
-
-Testing is currently centered on package-local unit tests, especially in the HTTP layer:
-
-* handler and middleware tests live next to the code they validate
-* HTTP behavior is exercised with `httptest`
-* auth flow and token verification behavior is tested independently from browser login flow support
-* the iRODS adapter remains scaffolded so the contract can evolve before binding fully to go-irodsclient
-
-For HTTP system testing, `irods-go-rest` reserves `e2e/` for explicit end-to-end tests using the `e2e` build tag.
-The preferred local test environment is now
-[`irods-grid-stack`](https://github.com/michael-conway/irods-grid-stack). The
-legacy compose files under `deployments/docker-test-framework/` are deprecated
-and should be treated as compatibility fixtures while REST and DRS development
-workflows move to the shared grid stack.
-
-Use `irods-grid-stack` in one of two modes:
-
-* backend-only: run `docker compose up -d --build` from `irods-grid-stack` to
-  start iRODS provider/resource, Keycloak, and S3 API services, then run
-  `irods-go-rest` or `irods-go-drs` locally from source
-* full stack: run `docker compose --profile frontend up -d --build` from
-  `irods-grid-stack` to also start REST, DRS, and Starbase containers
-
-For host-run `irods-go-rest` integration or E2E tests, point
-`GOREST_E2E_CONFIG_FILE` at a host-facing config such as
-`./e2e/rest-config.e2e.sample.yaml` after reviewing local ports and
-credentials. That sample is aligned with the default `irods-grid-stack` ports
-and resource names.
+The `1.0.0-alpha` release is intended for integration testing and early deployment work. The route model is stable enough for client development, but behavior and response shapes may still change before a final `1.0.0` release.
 
 ## Quick Start
 
-Run the service locally:
+Run from source:
 
 ```bash
 go run ./cmd/irods-go-rest
 ```
 
-Then visit:
+Then open:
 
-* `GET /healthz`
-* `GET /swagger`
-* `GET /openapi.yaml`
-* `GET /web/`
-* `GET /web/login`
+- `http://localhost:8080/healthz`
+- `http://localhost:8080/swagger`
+- `http://localhost:8080/openapi.yaml`
 
-## API Documentation
-
-When the service is running locally on the default port, API documentation is available at:
-
-* Swagger UI: `http://localhost:8080/swagger`
-* OpenAPI spec: `http://localhost:8080/openapi.yaml`
-
-## Configuration
-
-The service reads `rest-config.yaml` plus `GOREST_*` environment variables. Environment variables override file values.
-
-Common settings include:
-
-* `GOREST_PUBLIC_URL`
-* `GOREST_CORS_ALLOWED_ORIGINS`
-* `GOREST_REST_LOG_LEVEL`
-* `GOREST_IRODS_ZONE`
-* `GOREST_IRODS_HOST`
-* `GOREST_IRODS_PORT`
-* `GOREST_IRODS_ADMIN_USER`
-* `GOREST_IRODS_ADMIN_PASSWORD`
-* `GOREST_IRODS_ADMIN_PASSWORD_FILE`
-* `GOREST_IRODS_ADMIN_LOGIN_TYPE`
-* `GOREST_IRODS_AUTH_SCHEME`
-* `GOREST_IRODS_NEGOTIATION_POLICY`
-* `GOREST_IRODS_SSL_CA_CERTIFICATE_FILE`
-* `GOREST_IRODS_SSL_VERIFY_SERVER`
-* `GOREST_IRODS_DEFAULT_RESOURCE`
-* `GOREST_RESOURCE_AFFINITY`
-* `GOREST_OIDC_URL`
-* `GOREST_OIDC_REALM`
-* `GOREST_OIDC_CLIENT_ID`
-* `GOREST_OIDC_CLIENT_SECRET`
-* `GOREST_OIDC_CLIENT_SECRET_FILE`
-* `GOREST_OIDC_SCOPE`
-* `GOREST_OIDC_INSECURE_SKIP_VERIFY`
-
-`GOREST_RESOURCE_AFFINITY` is optional and accepts a comma-separated list of
-iRODS resource names that are proximate to this service instance.
-
-If you want to point the service at one explicit config file, use:
+Use a specific config file with:
 
 ```bash
-IRODS_REST_CONFIG_FILE=/path/to/rest-config.yaml
+IRODS_REST_CONFIG_FILE=/path/to/rest-config.yaml go run ./cmd/irods-go-rest
 ```
 
-See [Configuration Notes](./CONFIGURATION_NOTES.md) for runtime and Docker-oriented configuration details.
+Configuration details live in [CONFIGURATION_NOTES.md](./CONFIGURATION_NOTES.md).
 
-## Auth Model
+## Runtime Model
 
-Protected API endpoints currently accept either:
+The API is path-oriented. Full iRODS logical paths are request data, not URL path segments:
 
-* `Authorization: Bearer <token>`
-* `Authorization: Basic <base64(user:password)>`
+```http
+GET /api/v1/path?irods_path=/tempZone/home/test1/file.txt
+GET /api/v1/path/children?irods_path=/tempZone/home/test1/project
+GET /api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt
+GET /api/v1/path/avu?irods_path=/tempZone/home/test1/file.txt
+```
 
-Bearer tokens are validated against Keycloak. Basic credentials are accepted by the HTTP middleware as an alternate API auth style and are intended to align with future iRODS-backed validation work.
+Protected API endpoints accept:
 
-For download-oriented content endpoints, the service also accepts:
+- `Authorization: Bearer <token>`
+- `Authorization: Basic <base64(user:password)>`
+- `Authorization: Bearer irods-ticket:<ticket>` for content downloads
 
-* `Authorization: Bearer irods-ticket:<ticket>`
+Bearer tokens are validated through OIDC/Keycloak. Basic auth is direct iRODS user authentication. Browser login support is separate under `/web/*` and is enabled only when `GOREST_WEB_ENABLED=true`.
 
-This keeps the download contract compatible with future DRS-issued ticket flows without changing the endpoint shape later.
+## Main API Areas
 
-The browser login flow remains separate under `/web/*`, which keeps the API contract cleaner and easier to use as a machine-facing service.
+| Area | Routes |
+| --- | --- |
+| Path lookup and mutation | `/api/v1/path*` |
+| Data object contents | `/api/v1/path/contents` |
+| Replicas | `/api/v1/path/replicas` |
+| AVUs | `/api/v1/path/avu*` |
+| ACLs | `/api/v1/path/acl*` |
+| Tickets | `/api/v1/ticket*`, `/api/v1/path/ticket` |
+| Users | `/api/v1/user*` |
+| Groups | `/api/v1/usergroup*` |
+| Server info | `/api/v1/server` |
+| Extensions | `/api/v1/ext/*` |
 
-## Path Model
+See [api/openapi.yaml](./api/openapi.yaml) for the HTTP contract.
 
-For iRODS resources whose true identifier is the full iRODS logical path, the API treats that path as request data rather than embedding it in the URL route.
+## Extension Support
 
-Current path-based endpoints:
+Extension endpoints are workflow-specific APIs under `/api/v1/ext/*`. They share the same auth and CORS policy as the core API.
 
-* Path metadata:
-  `GET /api/v1/path?irods_path=/tempZone/home/test1/file.txt`
-* Collection children:
-  `GET /api/v1/path/children?irods_path=/tempZone/home/test1/project`
-* AVU metadata:
-  `GET /api/v1/path/avu?irods_path=/tempZone/home/test1/file.txt`
-* Add AVU metadata:
-  `POST /api/v1/path/avu?irods_path=/tempZone/home/test1/file.txt`
-* Update or delete a single AVU:
-  `PUT /api/v1/path/avu/{avu_id}?irods_path=/tempZone/home/test1/file.txt`
-  `DELETE /api/v1/path/avu/{avu_id}?irods_path=/tempZone/home/test1/file.txt`
-* Content headers:
-  `HEAD /api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt`
-* Content bytes:
-  `GET /api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt`
+| Extension | Routes | Alpha status |
+| --- | --- | --- |
+| Favorites | `/api/v1/ext/favorites` | Stable alpha |
+| Metadata manifest | `/api/v1/ext/metadata-manifest` | Stable alpha |
+| Metadata queries | `/api/v1/ext/metadata-queries` | Stable alpha |
+| S3 bucket admin | `/api/v1/ext/s3/buckets*` | Deployment-gated alpha |
+| S3 user-secret admin | `/api/v1/ext/s3/user-secrets*` | Deployment-gated alpha |
 
-Additional endpoint:
+Deployment-gated endpoints return:
 
-* iRODS server information (miscsvrinfo-style plus configured connection details):
-  `GET /api/v1/server`
+- `501 not_supported` when the extension is disabled for the deployment.
+- `503 not_configured` when required mapping files or runtime settings are missing.
+- `403 permission_denied` when the authenticated caller lacks the required iRODS authority.
 
-`/path` is the primary lookup model for both data objects and collections. The response identifies what the path resolves to using a discriminator such as `kind: data_object` or `kind: collection`.
+## Local Test Stack
 
-Path responses also include a `parent` field when a parent exists. This follows a lightweight HATEOAS pattern by exposing the parent iRODS path along with the REST link that can be followed to retrieve that parent:
+Use [`irods-grid-stack`](https://github.com/michael-conway/irods-grid-stack) for live iRODS, Keycloak, S3 API, DRS, and Starbase workflows.
 
-* `parent.irods_path`
-* `parent.href`
-
-Collection-specific behavior is expressed through subresources such as `/path/children`. AVU metadata is exposed as `/path/avu` so clients can list, create, update, and delete metadata rows while preserving `irods_path` as the resource identifier. Data-object-specific behavior is expressed through subresources such as `/path/contents`.
-
-This establishes `/path` as the generic REST pattern for logical-path-oriented operations. Additional routes such as `/path/metadata` and `/path/acl` can be added later without changing the core addressing model.
-
-## Extension Endpoint Policy
-
-Opinionated, workflow-specific APIs should live in this service under an explicit extension namespace:
-
-* `/api/v1/ext/*`
-
-This keeps the core API surface (`/api/v1/path`, `/api/v1/server`, and related generic resources) focused on broadly reusable iRODS operations, while still allowing higher-level features such as favorites, metadata manifests, and S3 admin workflows to be exposed without introducing a second public service.
-
-Current architectural preference:
-
-* keep one public REST origin for clients
-* reuse the same auth and CORS behavior as core endpoints
-* gate extension features by configuration when needed
-
-Only move extension functionality to a separate sidecar service when there is a clear need for independent deployment, scaling, or security isolation.
-
-### Extension Support Matrix (Alpha)
-
-All `/api/v1/ext/*` routes require authenticated API access (Basic or Bearer). Use this matrix as the alpha support contract.
-
-| Extension area | Routes | Alpha support tier | Unsupported / unavailable behavior |
-|---|---|---|---|
-| Favorites | `/api/v1/ext/favorites` | Stable alpha | Normal validation/permission errors (`400`, `403`, `404`) |
-| Metadata manifest | `/api/v1/ext/metadata-manifest` | Stable alpha | Normal validation/permission/path errors (`400`, `403`, `404`) |
-| S3 bucket admin | `/api/v1/ext/s3/buckets*` | Conditional alpha (deployment-gated) | `501 not_supported` when `S3ApiSupported=false`; `503 not_configured` when S3 mapping configuration is missing |
-| S3 user-secret admin | `/api/v1/ext/s3/user-secrets*` | Conditional alpha (deployment-gated) | `501 not_supported` when `S3ApiSupported=false`; `503 not_configured` when S3 mapping configuration is missing; `403 permission_denied` for non-admin operations |
-
-Status semantics for extension routes:
-
-* `501 not_supported`: operation intentionally unavailable in this deployment/runtime capability mode
-* `503 not_configured`: feature is supported in principle, but required deployment configuration is missing
-* `403 permission_denied`: authenticated caller lacks required privileges for the operation
-
-The content endpoint supports restart/resume through the standard HTTP `Range` header.
-
-Example:
+Backend-only grid:
 
 ```bash
-curl \
-  -H 'Authorization: Bearer YOUR_ACCESS_TOKEN' \
-  -H 'Range: bytes=1024-' \
-  'http://localhost:8080/api/v1/path/contents?irods_path=/tempZone/home/test1/file.txt'
+cd ../irods-grid-stack
+cp .env.example .env
+docker compose up -d --build
 ```
 
-## Docker
+Full frontend stack:
 
-Build the container locally:
+```bash
+docker compose --profile frontend up -d --build
+```
+
+For host-run integration or E2E tests, point `GOREST_E2E_CONFIG_FILE` at a host-facing config:
+
+```bash
+export GOREST_E2E_CONFIG_FILE=./e2e/rest-config.e2e.sample.yaml
+```
+
+## Tests
+
+Unit tests:
+
+```bash
+GOWORK=off go test ./...
+```
+
+Direct iRODS integration tests:
+
+```bash
+GOWORK=off GOREST_E2E_CONFIG_FILE=./e2e/rest-config.e2e.sample.yaml \
+  go test -tags=integration ./internal/irods
+```
+
+HTTP E2E tests:
+
+```bash
+GOWORK=off GOREST_E2E_CONFIG_FILE=./e2e/rest-config.e2e.sample.yaml \
+  go test -tags=e2e ./e2e/...
+```
+
+## Container Images
+
+Build locally:
 
 ```bash
 docker build -t irods-go-rest:local .
 ```
 
-Run it with the service bound on port `8080`:
+Published images use GitHub Container Registry:
 
-```bash
-docker run --rm -p 8080:8080 \
-  -e IRODS_REST_ADDR=:8080 \
-  -e GOREST_IRODS_HOST=irods-provider \
-  -e GOREST_IRODS_PORT=1247 \
-  -e GOREST_OIDC_URL=http://keycloak:8080 \
-  -e GOREST_OIDC_REALM=irods \
-  -e GOREST_OIDC_CLIENT_ID=irods-go-rest \
-  irods-go-rest:local
+```text
+ghcr.io/michael-conway/irods-go-rest:<tag>
 ```
 
-For local compose-backed development, prefer running this service with
-`irods-grid-stack`. The backend-only grid is useful when running
-`irods-go-rest` locally from source; the `frontend` profile can run the REST
-container as part of the complete demo stack. See [Developer Notes](./DEVELOPER_NOTES.md) for the current compose assumptions and runtime environment expectations.
+The container workflow publishes branch tags, SHA tags, `latest` for the default branch, and release tags. Publishing the GitHub release `1.0.0-alpha` publishes:
 
-## OpenAPI Workflow
-
-If you want to regenerate code from the OpenAPI contract, the repository is already structured for it:
-
-```bash
-go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest \
-  --config api/oapi-codegen.yaml \
-  api/openapi.yaml
+```text
+ghcr.io/michael-conway/irods-go-rest:1.0.0-alpha
 ```
 
-The service does not require regeneration to compile today, but the contract and layout are set up so generated code can be introduced cleanly.
+## Developer References
 
-## References
-
-* OpenAPI Specification: https://github.com/OAI/OpenAPI-Specification
-* oapi-codegen: https://github.com/oapi-codegen/oapi-codegen
-* go-irodsclient: https://github.com/cyverse/go-irodsclient
-* Keycloak: https://www.keycloak.org/documentation
-* Go standard `net/http`: https://pkg.go.dev/net/http
-* Go standard `httptest`: https://pkg.go.dev/net/http/httptest
-* Viper: https://github.com/spf13/viper
-* Zerolog: https://github.com/rs/zerolog
+- [DEVELOPER_NOTES.md](./DEVELOPER_NOTES.md) - implementation rules, testing layers, and release checklist
+- [CONFIGURATION_NOTES.md](./CONFIGURATION_NOTES.md) - runtime configuration reference
+- [api/openapi.yaml](./api/openapi.yaml) - OpenAPI source of truth
+- [go-irodsclient](https://github.com/cyverse/go-irodsclient)
+- [go-irodsclient-extensions](https://github.com/michael-conway/go-irodsclient-extensions)

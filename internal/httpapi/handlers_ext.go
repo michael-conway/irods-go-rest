@@ -21,7 +21,7 @@ const defaultSavedMetadataQueryName = "New Query"
 func (h *Handler) getExtFavorites(w http.ResponseWriter, r *http.Request) {
 	favorites, err := h.paths.ListFavorites(r.Context())
 	if err != nil {
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -73,7 +73,7 @@ func (h *Handler) postExtFavorite(w http.ResponseWriter, r *http.Request) {
 
 	favorite, err := h.paths.AddFavorite(r.Context(), request.Name, request.AbsolutePath)
 	if err != nil {
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -100,10 +100,10 @@ func (h *Handler) putExtFavorite(w http.ResponseWriter, r *http.Request) {
 	favorite, err := h.paths.RenameFavorite(r.Context(), request.AbsolutePath, request.Name)
 	if err != nil {
 		if errorsIsNotFound(err) {
-			writeError(w, http.StatusNotFound, "not_found", err.Error())
+			writeErrorFromErr(w, r, http.StatusNotFound, "not_found", err)
 			return
 		}
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -136,7 +136,7 @@ func (h *Handler) deleteExtFavorite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.paths.RemoveFavorite(r.Context(), pathValue); err != nil {
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -154,7 +154,7 @@ func (h *Handler) getExtMetadataManifest(w http.ResponseWriter, r *http.Request)
 
 	manifest, err := h.paths.GetMetadataManifest(r.Context(), irodsPath)
 	if err != nil {
-		writePathError(w, err)
+		writePathError(w, r, err)
 		return
 	}
 
@@ -164,7 +164,7 @@ func (h *Handler) getExtMetadataManifest(w http.ResponseWriter, r *http.Request)
 func (h *Handler) getExtMetadataQueries(w http.ResponseWriter, r *http.Request) {
 	summaries, err := h.paths.ListSavedMetadataQueries(r.Context())
 	if err != nil {
-		writeMetadataQueryError(w, err)
+		writeMetadataQueryError(w, r, err)
 		return
 	}
 
@@ -184,7 +184,7 @@ func (h *Handler) postExtMetadataQuery(w http.ResponseWriter, r *http.Request) {
 
 	saved, err := h.paths.CreateSavedMetadataQuery(r.Context(), update)
 	if err != nil {
-		writeMetadataQueryError(w, err)
+		writeMetadataQueryError(w, r, err)
 		return
 	}
 
@@ -204,7 +204,7 @@ func (h *Handler) getExtMetadataQuery(w http.ResponseWriter, r *http.Request) {
 
 	saved, err := h.paths.GetSavedMetadataQuery(r.Context(), queryID)
 	if err != nil {
-		writeMetadataQueryError(w, err)
+		writeMetadataQueryError(w, r, err)
 		return
 	}
 
@@ -229,7 +229,7 @@ func (h *Handler) putExtMetadataQuery(w http.ResponseWriter, r *http.Request) {
 
 	saved, err := h.paths.UpdateSavedMetadataQuery(r.Context(), queryID, update)
 	if err != nil {
-		writeMetadataQueryError(w, err)
+		writeMetadataQueryError(w, r, err)
 		return
 	}
 
@@ -248,7 +248,7 @@ func (h *Handler) deleteExtMetadataQuery(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := h.paths.DeleteSavedMetadataQuery(r.Context(), queryID); err != nil {
-		writeMetadataQueryError(w, err)
+		writeMetadataQueryError(w, r, err)
 		return
 	}
 
@@ -268,7 +268,7 @@ func (h *Handler) getExtS3Buckets(w http.ResponseWriter, r *http.Request) {
 
 	buckets, err := h.s3Admin.ListBuckets(r.Context(), options)
 	if err != nil {
-		writeS3AdminError(w, err)
+		writeS3AdminError(w, r, err)
 		return
 	}
 
@@ -301,7 +301,7 @@ func (h *Handler) getExtS3Bucket(w http.ResponseWriter, r *http.Request) {
 
 	bucket, err := h.s3Admin.GetBucket(r.Context(), bucketID, options)
 	if err != nil {
-		writeS3AdminError(w, err)
+		writeS3AdminError(w, r, err)
 		return
 	}
 
@@ -325,7 +325,7 @@ func (h *Handler) getExtS3BucketByPath(w http.ResponseWriter, r *http.Request) {
 
 	bucket, err := h.s3Admin.GetBucketByPath(r.Context(), irodsPath)
 	if err != nil {
-		writeS3AdminError(w, err)
+		writeS3AdminError(w, r, err)
 		return
 	}
 
@@ -382,7 +382,7 @@ func (h *Handler) upsertExtS3Bucket(w http.ResponseWriter, r *http.Request) {
 		AutoGenerate: request.AutoGenerate,
 	})
 	if err != nil {
-		writeS3AdminError(w, err)
+		writeS3AdminError(w, r, err)
 		return
 	}
 
@@ -409,7 +409,7 @@ func (h *Handler) deleteExtS3Bucket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.s3Admin.DeleteBucket(r.Context(), bucketID); err != nil {
-		writeS3AdminError(w, err)
+		writeS3AdminError(w, r, err)
 		return
 	}
 
@@ -423,7 +423,7 @@ func (h *Handler) postExtS3BucketMappingRefresh(w http.ResponseWriter, r *http.R
 
 	result, err := h.s3Admin.RebuildBucketMapping(r.Context())
 	if err != nil {
-		writeS3AdminError(w, err)
+		writeS3AdminError(w, r, err)
 		return
 	}
 
@@ -441,7 +441,7 @@ func (h *Handler) getExtS3UserSecrets(w http.ResponseWriter, r *http.Request) {
 
 	userSecrets, err := h.s3Admin.ListUserSecrets(r.Context())
 	if err != nil {
-		writeS3AdminError(w, err)
+		writeS3AdminError(w, r, err)
 		return
 	}
 
@@ -467,7 +467,7 @@ func (h *Handler) getExtS3UserSecret(w http.ResponseWriter, r *http.Request) {
 
 	userSecret, err := h.s3Admin.GetUserSecret(r.Context(), userName)
 	if err != nil {
-		writeS3AdminError(w, err)
+		writeS3AdminError(w, r, err)
 		return
 	}
 
@@ -514,7 +514,7 @@ func (h *Handler) storeExtS3UserSecret(w http.ResponseWriter, r *http.Request, s
 		AutoGenerate: request.AutoGenerate,
 	})
 	if err != nil {
-		writeS3AdminError(w, err)
+		writeS3AdminError(w, r, err)
 		return
 	}
 
@@ -537,7 +537,7 @@ func (h *Handler) deleteExtS3UserSecret(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := h.s3Admin.DeleteUserSecret(r.Context(), userName); err != nil {
-		writeS3AdminError(w, err)
+		writeS3AdminError(w, r, err)
 		return
 	}
 
@@ -551,7 +551,7 @@ func (h *Handler) postExtS3UserMappingRefresh(w http.ResponseWriter, r *http.Req
 
 	result, err := h.s3Admin.RebuildUserMapping(r.Context())
 	if err != nil {
-		writeS3AdminError(w, err)
+		writeS3AdminError(w, r, err)
 		return
 	}
 
@@ -941,46 +941,46 @@ func (h *Handler) requireS3APISupported(w http.ResponseWriter) bool {
 	return false
 }
 
-func writeS3AdminError(w http.ResponseWriter, err error) {
+func writeS3AdminError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, irods.ErrS3AdminNotSupported):
-		writeError(w, http.StatusNotImplemented, "not_supported", err.Error())
+		writeErrorFromErr(w, r, http.StatusNotImplemented, "not_supported", err)
 	case errors.Is(err, irods.ErrS3AdminNotConfigured):
-		writeError(w, http.StatusServiceUnavailable, "not_configured", err.Error())
+		writeErrorFromErr(w, r, http.StatusServiceUnavailable, "not_configured", err)
 	case errors.Is(err, irods.ErrNotFound):
-		writeError(w, http.StatusNotFound, "not_found", err.Error())
+		writeErrorFromErr(w, r, http.StatusNotFound, "not_found", err)
 	case errors.Is(err, irods.ErrPermissionDenied):
-		writeError(w, http.StatusForbidden, "permission_denied", err.Error())
+		writeErrorFromErr(w, r, http.StatusForbidden, "permission_denied", err)
 	case errors.Is(err, irods.ErrConflict), errors.Is(err, s3adminext.ErrDuplicateBucket), errors.Is(err, s3adminext.ErrBucketAlreadySet), errors.Is(err, s3adminext.ErrDuplicateUserMapping):
-		writeError(w, http.StatusConflict, "conflict", err.Error())
+		writeErrorFromErr(w, r, http.StatusConflict, "conflict", err)
 	case errors.Is(err, s3adminext.ErrInvalidBucketName),
 		errors.Is(err, s3adminext.ErrInvalidIRODSPath),
 		errors.Is(err, s3adminext.ErrInvalidScanRoot),
 		errors.Is(err, s3adminext.ErrInvalidUserSecretKey),
 		errors.Is(err, s3adminext.ErrInvalidUserID),
 		errors.Is(err, s3adminext.ErrInvalidUserSecretKeyIRODSPath):
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 	default:
-		writePathError(w, err)
+		writePathError(w, r, err)
 	}
 }
 
-func writeMetadataQueryError(w http.ResponseWriter, err error) {
+func writeMetadataQueryError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, irods.ErrNotFound):
-		writeError(w, http.StatusNotFound, "not_found", err.Error())
+		writeErrorFromErr(w, r, http.StatusNotFound, "not_found", err)
 	case errors.Is(err, irods.ErrPermissionDenied):
-		writeError(w, http.StatusForbidden, "permission_denied", err.Error())
+		writeErrorFromErr(w, r, http.StatusForbidden, "permission_denied", err)
 	case errors.Is(err, irods.ErrConflict):
-		writeError(w, http.StatusConflict, "conflict", err.Error())
+		writeErrorFromErr(w, r, http.StatusConflict, "conflict", err)
 	case errors.Is(err, metadataext.ErrInvalidUserHome),
 		errors.Is(err, metadataext.ErrInvalidSavedEntryQueryID),
 		errors.Is(err, metadataext.ErrInvalidSavedEntryQueryName),
 		errors.Is(err, metadataext.ErrInvalidSavedEntryQuery),
 		errors.Is(err, metadataext.ErrInvalidEntryQuery):
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeErrorFromErr(w, r, http.StatusBadRequest, "invalid_request", err)
 	default:
-		writePathError(w, err)
+		writePathError(w, r, err)
 	}
 }
 

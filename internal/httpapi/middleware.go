@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net"
@@ -12,10 +14,18 @@ import (
 	"time"
 
 	"github.com/michael-conway/irods-go-rest/internal/auth"
+	"github.com/michael-conway/irods-go-rest/internal/requestctx"
 )
 
 const defaultCORSAllowedMethods = "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS"
-const defaultCORSAllowedHeaders = "Authorization, Content-Type, Accept"
+const defaultCORSAllowedHeaders = "Authorization, Content-Type, Accept, X-Request-ID, X-IRODS-Source, X-IRODS-Actor, Idempotency-Key"
+
+const (
+	requestIDHeader      = "X-Request-ID"
+	requestSourceHeader  = "X-IRODS-Source"
+	requestActorHeader   = "X-IRODS-Actor"
+	idempotencyKeyHeader = "Idempotency-Key"
+)
 
 func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
 	allowed := normalizedAllowedOrigins(allowedOrigins)
@@ -104,7 +114,14 @@ func canonicalCORSOrigin(origin string) string {
 func requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		metadata := requestMetadataFromRequest(r)
+		r = r.WithContext(requestctx.WithMetadata(r.Context(), metadata))
+
 		lrw := newLoggingResponseWriter(w)
+		if metadata.RequestID != "" {
+			lrw.Header().Set(requestIDHeader, metadata.RequestID)
+		}
+
 		next.ServeHTTP(lrw, r)
 
 		status := lrw.StatusCode()
@@ -132,6 +149,7 @@ func requestLogger(next http.Handler) http.Handler {
 			"response_bytes", lrw.bytesWritten,
 		}
 
+		logArgs = append(logArgs, requestAuditLogFields(r, lrw)...)
 		logArgs = append(logArgs, requestOperationIdentifiers(r)...)
 		if lrw.errorCode != "" {
 			logArgs = append(logArgs, "error_code", lrw.errorCode)
@@ -152,8 +170,72 @@ func requestLogger(next http.Handler) http.Handler {
 	})
 }
 
+func requestMetadataFromRequest(r *http.Request) requestctx.Metadata {
+	requestID := strings.TrimSpace(r.Header.Get(requestIDHeader))
+	if requestID == "" {
+		requestID = newRequestID()
+	}
+
+	return requestctx.Metadata{
+		RequestID:      requestID,
+		Source:         strings.TrimSpace(r.Header.Get(requestSourceHeader)),
+		Actor:          strings.TrimSpace(r.Header.Get(requestActorHeader)),
+		IdempotencyKey: strings.TrimSpace(r.Header.Get(idempotencyKeyHeader)),
+	}
+}
+
+func newRequestID() string {
+	var buffer [16]byte
+	if _, err := rand.Read(buffer[:]); err == nil {
+		return hex.EncodeToString(buffer[:])
+	}
+	return strconv.FormatInt(time.Now().UnixNano(), 36)
+}
+
+func requestAuditLogFields(r *http.Request, w *loggingResponseWriter) []any {
+	fields := []any{}
+
+	if metadata, ok := requestctx.MetadataFromContext(r.Context()); ok {
+		fields = appendNonEmptyLogField(fields, "request_id", metadata.RequestID)
+		fields = appendNonEmptyLogField(fields, "request_source", metadata.Source)
+		fields = appendNonEmptyLogField(fields, "request_actor", metadata.Actor)
+		fields = appendNonEmptyLogField(fields, "idempotency_key", metadata.IdempotencyKey)
+	}
+
+	if w != nil && (w.authSubject != "" || w.authClientID != "" || w.authScope != "" || w.authAudience != "") {
+		fields = appendNonEmptyLogField(fields, "auth_subject", w.authSubject)
+		fields = appendNonEmptyLogField(fields, "auth_client_id", w.authClientID)
+		fields = appendNonEmptyLogField(fields, "auth_scope", w.authScope)
+		fields = appendNonEmptyLogField(fields, "auth_audience", w.authAudience)
+		return fields
+	}
+
+	if principal, ok := auth.PrincipalFromContext(r.Context()); ok {
+		fields = appendPrincipalLogFields(fields, principal)
+	}
+
+	return fields
+}
+
+func appendPrincipalLogFields(fields []any, principal auth.Principal) []any {
+	fields = appendNonEmptyLogField(fields, "auth_subject", principal.Subject)
+	fields = appendNonEmptyLogField(fields, "auth_client_id", principal.ClientID)
+	fields = appendNonEmptyLogField(fields, "auth_scope", strings.Join(principal.Scope, " "))
+	fields = appendNonEmptyLogField(fields, "auth_audience", strings.Join(principal.Audience, " "))
+	return fields
+}
+
+func appendNonEmptyLogField(fields []any, key string, value string) []any {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fields
+	}
+	return append(fields, key, value)
+}
+
 type requestLogMetadataRecorder interface {
 	setRequestAuth(mode string, principal string)
+	setRequestPrincipal(principal auth.Principal)
 	setRequestError(code string, class string)
 }
 
@@ -163,6 +245,10 @@ type loggingResponseWriter struct {
 	bytesWritten int
 	authMode     string
 	principal    string
+	authSubject  string
+	authClientID string
+	authScope    string
+	authAudience string
 	errorCode    string
 	errorClass   string
 }
@@ -191,6 +277,13 @@ func (w *loggingResponseWriter) setRequestAuth(mode string, principal string) {
 	if principal != "" {
 		w.principal = principal
 	}
+}
+
+func (w *loggingResponseWriter) setRequestPrincipal(principal auth.Principal) {
+	w.authSubject = strings.TrimSpace(principal.Subject)
+	w.authClientID = strings.TrimSpace(principal.ClientID)
+	w.authScope = strings.Join(principal.Scope, " ")
+	w.authAudience = strings.Join(principal.Audience, " ")
 }
 
 func (w *loggingResponseWriter) setRequestError(code string, class string) {
@@ -253,6 +346,14 @@ func setRequestAuthMetadata(w http.ResponseWriter, mode string, principal string
 		return
 	}
 	recorder.setRequestAuth(mode, principal)
+}
+
+func setRequestPrincipalMetadata(w http.ResponseWriter, principal auth.Principal) {
+	recorder, ok := w.(requestLogMetadataRecorder)
+	if !ok {
+		return
+	}
+	recorder.setRequestPrincipal(principal)
 }
 
 func setRequestErrorMetadata(w http.ResponseWriter, code string, class string) {

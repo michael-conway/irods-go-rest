@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/michael-conway/irods-go-rest/internal/domain"
@@ -79,6 +80,11 @@ func (h *Handler) getUserGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) postUserGroup(w http.ResponseWriter, r *http.Request) {
+	options, ok := userGroupMutationOptionsFromRequest(w, r)
+	if !ok {
+		return
+	}
+
 	var request userGroupCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
@@ -93,25 +99,34 @@ func (h *Handler) postUserGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	group, err := h.userGroups.CreateUserGroup(r.Context(), groupName, h.userZoneFromRequest(r))
+	group, err := h.userGroups.CreateUserGroup(r.Context(), groupName, h.userZoneFromRequest(r), options)
 	if err != nil {
 		writeUserGroupError(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]any{
+	status := http.StatusCreated
+	if options.Reconcile {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, map[string]any{
 		"group": userGroupResponse(group),
 	})
 }
 
 func (h *Handler) deleteUserGroup(w http.ResponseWriter, r *http.Request) {
+	options, ok := userGroupMutationOptionsFromRequest(w, r)
+	if !ok {
+		return
+	}
+
 	groupName := pathValue(r, "group_name")
 	if groupName == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "group_name path parameter is required")
 		return
 	}
 
-	if err := h.userGroups.DeleteUserGroup(r.Context(), groupName, h.userZoneFromRequest(r)); err != nil {
+	if err := h.userGroups.DeleteUserGroup(r.Context(), groupName, h.userZoneFromRequest(r), options); err != nil {
 		writeUserGroupError(w, err)
 		return
 	}
@@ -120,6 +135,11 @@ func (h *Handler) deleteUserGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) postUserGroupMember(w http.ResponseWriter, r *http.Request) {
+	options, ok := userGroupMutationOptionsFromRequest(w, r)
+	if !ok {
+		return
+	}
+
 	groupName := pathValue(r, "group_name")
 	if groupName == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "group_name path parameter is required")
@@ -140,7 +160,7 @@ func (h *Handler) postUserGroupMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	group, err := h.userGroups.AddUserToGroup(r.Context(), groupName, username, h.userZoneFromRequest(r))
+	group, err := h.userGroups.AddUserToGroup(r.Context(), groupName, username, h.userZoneFromRequest(r), options)
 	if err != nil {
 		writeUserGroupError(w, err)
 		return
@@ -152,6 +172,11 @@ func (h *Handler) postUserGroupMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteUserGroupMember(w http.ResponseWriter, r *http.Request) {
+	options, ok := userGroupMutationOptionsFromRequest(w, r)
+	if !ok {
+		return
+	}
+
 	groupName := pathValue(r, "group_name")
 	if groupName == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "group_name path parameter is required")
@@ -164,7 +189,7 @@ func (h *Handler) deleteUserGroupMember(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	group, err := h.userGroups.RemoveUserFromGroup(r.Context(), groupName, username, h.userZoneFromRequest(r))
+	group, err := h.userGroups.RemoveUserFromGroup(r.Context(), groupName, username, h.userZoneFromRequest(r), options)
 	if err != nil {
 		writeUserGroupError(w, err)
 		return
@@ -304,6 +329,31 @@ func userGroupListHref(zone string, prefix string) string {
 		return "/api/v1/usergroup?" + encoded
 	}
 	return "/api/v1/usergroup"
+}
+
+func userGroupMutationOptionsFromRequest(w http.ResponseWriter, r *http.Request) (restservice.UserGroupMutationOptions, bool) {
+	reconcile, err := optionalBoolQuery(r, "reconcile")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return restservice.UserGroupMutationOptions{}, false
+	}
+
+	return restservice.UserGroupMutationOptions{
+		Reconcile: reconcile,
+	}, true
+}
+
+func optionalBoolQuery(r *http.Request, name string) (bool, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get(name))
+	if raw == "" {
+		return false, nil
+	}
+
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, errors.New(name + " must be true or false")
+	}
+	return value, nil
 }
 
 func writeUserGroupError(w http.ResponseWriter, err error) {

@@ -15,41 +15,49 @@ import (
 
 // RestConfig Provides configuration for drs behaviors
 type RestConfig struct {
-	PublicURL                  string
-	ListenAddr                 string
-	CORSAllowedOrigins         []string
-	RestLogLevel               string //info, debug
-	IrodsHost                  string
-	IrodsPort                  int
-	IrodsZone                  string
-	IrodsAdminUser             string
-	IrodsAdminPassword         string
-	IrodsAdminPasswordFile     string
-	IrodsPrimaryTestUser       string
-	IrodsPrimaryTestPassword   string
-	IrodsSecondaryTestUser     string
-	IrodsSecondaryTestPassword string
-	IrodsAdminLoginType        string
-	IrodsAuthScheme            string
-	IrodsNegotiationPolicy     string
-	IrodsSSLConfig             IrodsSSLConfig
-	IrodsDefaultResource       string
-	TestResource1              string
-	TestResource2              string
-	ResourceAffinity           []string
-	S3ApiSupported             bool
-	S3BucketMappingFile        string
-	S3UserMappingFile          string
-	ReplicaTrimMinCopies       int
-	ReplicaTrimMinAgeMinutes   int
-	OidcUrl                    string
-	OidcClientId               string
-	OidcClientSecret           string
-	OidcClientSecretFile       string
-	OidcInsecureSkipVerify     bool
-	OidcRealm                  string
-	OidcScope                  string
-	TestBearerToken            string
+	PublicURL                    string
+	ListenAddr                   string
+	WebEnabled                   bool
+	TrustForwardedHeaders        bool
+	HTTPReadTimeoutSeconds       int
+	HTTPReadHeaderTimeoutSeconds int
+	HTTPWriteTimeoutSeconds      int
+	HTTPIdleTimeoutSeconds       int
+	HTTPMaxHeaderBytes           int
+	CORSAllowedOrigins           []string
+	RestLogLevel                 string //info, debug
+	IrodsHost                    string
+	IrodsPort                    int
+	IrodsZone                    string
+	IrodsAdminUser               string
+	IrodsAdminPassword           string
+	IrodsAdminPasswordFile       string
+	IrodsPrimaryTestUser         string
+	IrodsPrimaryTestPassword     string
+	IrodsSecondaryTestUser       string
+	IrodsSecondaryTestPassword   string
+	IrodsAdminLoginType          string
+	IrodsAuthScheme              string
+	IrodsNegotiationPolicy       string
+	IrodsSSLConfig               IrodsSSLConfig
+	IrodsDefaultResource         string
+	TestResource1                string
+	TestResource2                string
+	ResourceAffinity             []string
+	S3ApiSupported               bool
+	S3BucketMappingFile          string
+	S3UserMappingFile            string
+	ReplicaTrimMinCopies         int
+	ReplicaTrimMinAgeMinutes     int
+	OidcUrl                      string
+	OidcAuthUrl                  string
+	OidcClientId                 string
+	OidcClientSecret             string
+	OidcClientSecretFile         string
+	OidcInsecureSkipVerify       bool
+	OidcRealm                    string
+	OidcScope                    string
+	TestBearerToken              string
 }
 
 type IrodsSSLConfig struct {
@@ -185,11 +193,23 @@ const defaultIRODSEncryptionKeySize = 32
 const defaultIRODSEncryptionSaltSize = 8
 const defaultIRODSEncryptionNumHashRounds = 16
 const defaultIRODSSSLVerifyServer = "hostname"
+const defaultHTTPReadTimeoutSeconds = 30
+const defaultHTTPReadHeaderTimeoutSeconds = 5
+const defaultHTTPWriteTimeoutSeconds = 30
+const defaultHTTPIdleTimeoutSeconds = 120
+const defaultHTTPMaxHeaderBytes = 1 << 20
 
 func bindEnvVars(v *viper.Viper) error {
 	envBindings := map[string][]string{
 		"PublicURL":                              {"GOREST_PUBLIC_URL", "GOREST_PUBLICURL"},
 		"ListenAddr":                             {"IRODS_REST_ADDR", "GOREST_LISTEN_ADDR", "GOREST_LISTENADDR"},
+		"WebEnabled":                             {"GOREST_WEB_ENABLED", "GOREST_WEBENABLED"},
+		"TrustForwardedHeaders":                  {"GOREST_TRUST_FORWARDED_HEADERS", "GOREST_TRUSTFORWARDEDHEADERS"},
+		"HTTPReadTimeoutSeconds":                 {"GOREST_HTTP_READ_TIMEOUT_SECONDS", "GOREST_HTTPREADTIMEOUTSECONDS"},
+		"HTTPReadHeaderTimeoutSeconds":           {"GOREST_HTTP_READ_HEADER_TIMEOUT_SECONDS", "GOREST_HTTPREADHEADERTIMEOUTSECONDS"},
+		"HTTPWriteTimeoutSeconds":                {"GOREST_HTTP_WRITE_TIMEOUT_SECONDS", "GOREST_HTTPWRITETIMEOUTSECONDS"},
+		"HTTPIdleTimeoutSeconds":                 {"GOREST_HTTP_IDLE_TIMEOUT_SECONDS", "GOREST_HTTPIDLETIMEOUTSECONDS"},
+		"HTTPMaxHeaderBytes":                     {"GOREST_HTTP_MAX_HEADER_BYTES", "GOREST_HTTPMAXHEADERBYTES"},
 		"RestLogLevel":                           {"GOREST_REST_LOG_LEVEL", "GOREST_RESTLOGLEVEL"},
 		"IrodsHost":                              {"GOREST_IRODS_HOST", "GOREST_IRODSHOST"},
 		"IrodsPort":                              {"GOREST_IRODS_PORT", "GOREST_IRODSPORT"},
@@ -220,6 +240,7 @@ func bindEnvVars(v *viper.Viper) error {
 		"ReplicaTrimMinCopies":                   {"GOREST_REPLICA_TRIM_MIN_COPIES"},
 		"ReplicaTrimMinAgeMinutes":               {"GOREST_REPLICA_TRIM_MIN_AGE_MINUTES"},
 		"OidcUrl":                                {"GOREST_OIDC_URL", "GOREST_OIDCURL"},
+		"OidcAuthUrl":                            {"GOREST_OIDC_AUTH_URL", "GOREST_OIDCAUTHURL"},
 		"OidcClientId":                           {"GOREST_OIDC_CLIENT_ID", "GOREST_OIDCCLIENTID"},
 		"OidcClientSecret":                       {"GOREST_OIDC_CLIENT_SECRET", "GOREST_OIDCCLIENTSECRET"},
 		"OidcClientSecretFile":                   {"GOREST_OIDC_CLIENT_SECRET_FILE", "GOREST_OIDCCLIENTSECRETFILE"},
@@ -339,6 +360,21 @@ func ReadRestConfig(configName string, configType string, configPaths []string) 
 	}
 
 	C.IrodsNegotiationPolicy = NormalizeIRODSNegotiationPolicy(C.IrodsNegotiationPolicy)
+	if C.HTTPReadTimeoutSeconds <= 0 {
+		C.HTTPReadTimeoutSeconds = defaultHTTPReadTimeoutSeconds
+	}
+	if C.HTTPReadHeaderTimeoutSeconds <= 0 {
+		C.HTTPReadHeaderTimeoutSeconds = defaultHTTPReadHeaderTimeoutSeconds
+	}
+	if C.HTTPWriteTimeoutSeconds <= 0 {
+		C.HTTPWriteTimeoutSeconds = defaultHTTPWriteTimeoutSeconds
+	}
+	if C.HTTPIdleTimeoutSeconds <= 0 {
+		C.HTTPIdleTimeoutSeconds = defaultHTTPIdleTimeoutSeconds
+	}
+	if C.HTTPMaxHeaderBytes <= 0 {
+		C.HTTPMaxHeaderBytes = defaultHTTPMaxHeaderBytes
+	}
 	if C.ReplicaTrimMinCopies <= 0 {
 		C.ReplicaTrimMinCopies = 1
 	}

@@ -36,7 +36,7 @@ func (h *Handler) webHome(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) webLogin(w http.ResponseWriter, r *http.Request) {
 	state, err := h.authFlow.NewState()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "auth_failed", err.Error())
+		writeErrorFromErr(w, r, http.StatusInternalServerError, "auth_failed", err)
 		return
 	}
 
@@ -57,7 +57,7 @@ func (h *Handler) webLogin(w http.ResponseWriter, r *http.Request) {
 			code = "auth_not_configured"
 		}
 
-		writeError(w, status, code, err.Error())
+		writeErrorFromErr(w, r, status, code, err)
 		return
 	}
 
@@ -113,19 +113,19 @@ func (h *Handler) webCallback(w http.ResponseWriter, r *http.Request) {
 			responseCode = "invalid_callback"
 		}
 
-		writeError(w, status, responseCode, err.Error())
+		writeErrorFromErr(w, r, status, responseCode, err)
 		return
 	}
 
 	principal, err := h.verifier.VerifyToken(r.Context(), token.AccessToken)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "auth_failed", err.Error())
+		writeErrorFromErr(w, r, http.StatusBadGateway, "auth_failed", err)
 		return
 	}
 
 	session, err := h.webSession.Create(principal, token)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "auth_failed", err.Error())
+		writeErrorFromErr(w, r, http.StatusInternalServerError, "auth_failed", err)
 		return
 	}
 

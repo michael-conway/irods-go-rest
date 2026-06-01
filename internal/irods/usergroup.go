@@ -2,15 +2,14 @@ package irods
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
 
 	irodsfs "github.com/cyverse/go-irodsclient/fs"
-	irodscommon "github.com/cyverse/go-irodsclient/irods/common"
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
+	usersyncext "github.com/michael-conway/go-irodsclient-extensions/usersync"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 	"github.com/michael-conway/irods-go-rest/internal/domain"
 )
@@ -20,13 +19,17 @@ type UserGroupListOptions struct {
 	Prefix string
 }
 
+type UserGroupMutationOptions struct {
+	Reconcile bool
+}
+
 type UserGroupService interface {
 	ListUserGroups(ctx context.Context, requestContext *RequestContext, options UserGroupListOptions) ([]domain.UserGroup, error)
 	GetUserGroup(ctx context.Context, requestContext *RequestContext, groupName string, zone string) (domain.UserGroup, error)
-	CreateUserGroup(ctx context.Context, requestContext *RequestContext, groupName string, zone string) (domain.UserGroup, error)
-	DeleteUserGroup(ctx context.Context, requestContext *RequestContext, groupName string, zone string) error
-	AddUserToGroup(ctx context.Context, requestContext *RequestContext, groupName string, username string, zone string) (domain.UserGroup, error)
-	RemoveUserFromGroup(ctx context.Context, requestContext *RequestContext, groupName string, username string, zone string) (domain.UserGroup, error)
+	CreateUserGroup(ctx context.Context, requestContext *RequestContext, groupName string, zone string, options UserGroupMutationOptions) (domain.UserGroup, error)
+	DeleteUserGroup(ctx context.Context, requestContext *RequestContext, groupName string, zone string, options UserGroupMutationOptions) error
+	AddUserToGroup(ctx context.Context, requestContext *RequestContext, groupName string, username string, zone string, options UserGroupMutationOptions) (domain.UserGroup, error)
+	RemoveUserFromGroup(ctx context.Context, requestContext *RequestContext, groupName string, username string, zone string, options UserGroupMutationOptions) (domain.UserGroup, error)
 }
 
 type userGroupService struct {
@@ -112,18 +115,18 @@ func (s *userGroupService) GetUserGroup(_ context.Context, requestContext *Reque
 	return s.groupWithMembers(filesystem, group)
 }
 
-func (s *userGroupService) CreateUserGroup(_ context.Context, requestContext *RequestContext, groupName string, zone string) (domain.UserGroup, error) {
+func (s *userGroupService) CreateUserGroup(ctx context.Context, requestContext *RequestContext, groupName string, zone string, options UserGroupMutationOptions) (domain.UserGroup, error) {
 	groupName = strings.TrimSpace(groupName)
 	zone = s.userZone(zone)
 	if groupName == "" {
 		return domain.UserGroup{}, fmt.Errorf("%w: group %q", ErrNotFound, groupName)
 	}
 
-	slog.Debug("usergroup CreateUserGroup start", "group", groupName, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+	slog.Debug("usergroup CreateUserGroup start", append([]any{"group", groupName, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
 
 	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-create-user-group")
 	if err != nil {
-		logIRODSError("usergroup CreateUserGroup filesystem setup failed", err, "group", groupName, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		logIRODSError("usergroup CreateUserGroup filesystem setup failed", err, append([]any{"group", groupName, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
 		return domain.UserGroup{}, err
 	}
 	defer filesystem.Release()
@@ -132,9 +135,25 @@ func (s *userGroupService) CreateUserGroup(_ context.Context, requestContext *Re
 		return domain.UserGroup{}, err
 	}
 
-	if _, err := filesystem.CreateUser(groupName, zone, irodstypes.IRODSUserRodsGroup); err != nil {
-		logIRODSError("usergroup CreateUserGroup failed", err, "group", groupName, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
-		return domain.UserGroup{}, normalizeUserGroupError("create group", groupName, zone, err)
+	if options.Reconcile {
+		result, err := newUserSyncService(filesystem, zone, requestContext).EnsureGroup(ctx, usersyncext.GroupRef{
+			Name: groupName,
+			Zone: zone,
+		})
+		if err != nil {
+			mappedErr := mapUserSyncError(err)
+			logIRODSError("usergroup CreateUserGroup reconcile failed", mappedErr, append([]any{"group", groupName, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
+			return domain.UserGroup{}, mappedErr
+		}
+
+		slog.Info("usergroup CreateUserGroup completed", append([]any{"group", groupName, "zone", zone, "outcome", string(result.Outcome)}, requestContextLogArgs(requestContext)...)...)
+		return mapUserSyncGroup(result.Group), nil
+	}
+
+	if _, err := filesystem.CreateUserGroup(groupName, zone); err != nil {
+		normalizedErr := normalizeUserGroupError("create group", groupName, zone, err)
+		logIRODSError("usergroup CreateUserGroup failed", normalizedErr, append([]any{"group", groupName, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
+		return domain.UserGroup{}, normalizedErr
 	}
 
 	group, err := s.getGroup(filesystem, groupName, zone)
@@ -142,21 +161,26 @@ func (s *userGroupService) CreateUserGroup(_ context.Context, requestContext *Re
 		return domain.UserGroup{}, err
 	}
 
-	return s.groupWithMembers(filesystem, group)
+	group, err = s.groupWithMembers(filesystem, group)
+	if err != nil {
+		return domain.UserGroup{}, err
+	}
+	slog.Info("usergroup CreateUserGroup completed", append([]any{"group", groupName, "zone", zone, "outcome", "created"}, requestContextLogArgs(requestContext)...)...)
+	return group, nil
 }
 
-func (s *userGroupService) DeleteUserGroup(_ context.Context, requestContext *RequestContext, groupName string, zone string) error {
+func (s *userGroupService) DeleteUserGroup(ctx context.Context, requestContext *RequestContext, groupName string, zone string, options UserGroupMutationOptions) error {
 	groupName = strings.TrimSpace(groupName)
 	zone = s.userZone(zone)
 	if groupName == "" {
 		return fmt.Errorf("%w: group %q", ErrNotFound, groupName)
 	}
 
-	slog.Debug("usergroup DeleteUserGroup start", "group", groupName, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+	slog.Debug("usergroup DeleteUserGroup start", append([]any{"group", groupName, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
 
 	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-delete-user-group")
 	if err != nil {
-		logIRODSError("usergroup DeleteUserGroup filesystem setup failed", err, "group", groupName, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		logIRODSError("usergroup DeleteUserGroup filesystem setup failed", err, append([]any{"group", groupName, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
 		return err
 	}
 	defer filesystem.Release()
@@ -165,20 +189,37 @@ func (s *userGroupService) DeleteUserGroup(_ context.Context, requestContext *Re
 		return err
 	}
 
+	if options.Reconcile {
+		result, err := newUserSyncService(filesystem, zone, requestContext).EnsureGroupAbsent(ctx, usersyncext.GroupRef{
+			Name: groupName,
+			Zone: zone,
+		})
+		if err != nil {
+			mappedErr := mapUserSyncError(err)
+			logIRODSError("usergroup DeleteUserGroup reconcile failed", mappedErr, append([]any{"group", groupName, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
+			return mappedErr
+		}
+
+		slog.Info("usergroup DeleteUserGroup completed", append([]any{"group", groupName, "zone", zone, "outcome", string(result.Outcome)}, requestContextLogArgs(requestContext)...)...)
+		return nil
+	}
+
 	group, err := s.getGroup(filesystem, groupName, zone)
 	if err != nil {
 		return err
 	}
 
-	if err := filesystem.RemoveUser(group.Name, group.Zone, irodstypes.IRODSUserRodsGroup); err != nil {
-		logIRODSError("usergroup DeleteUserGroup failed", err, "group", groupName, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
-		return normalizeUserGroupError("delete group", groupName, zone, err)
+	if err := filesystem.RemoveUserGroup(group.Name, group.Zone); err != nil {
+		normalizedErr := normalizeUserGroupError("delete group", groupName, zone, err)
+		logIRODSError("usergroup DeleteUserGroup failed", normalizedErr, append([]any{"group", groupName, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
+		return normalizedErr
 	}
 
+	slog.Info("usergroup DeleteUserGroup completed", append([]any{"group", groupName, "zone", zone, "outcome", "deleted"}, requestContextLogArgs(requestContext)...)...)
 	return nil
 }
 
-func (s *userGroupService) AddUserToGroup(_ context.Context, requestContext *RequestContext, groupName string, username string, zone string) (domain.UserGroup, error) {
+func (s *userGroupService) AddUserToGroup(ctx context.Context, requestContext *RequestContext, groupName string, username string, zone string, options UserGroupMutationOptions) (domain.UserGroup, error) {
 	groupName = strings.TrimSpace(groupName)
 	username = strings.TrimSpace(username)
 	zone = s.userZone(zone)
@@ -189,17 +230,33 @@ func (s *userGroupService) AddUserToGroup(_ context.Context, requestContext *Req
 		return domain.UserGroup{}, fmt.Errorf("%w: user %q", ErrNotFound, username)
 	}
 
-	slog.Debug("usergroup AddUserToGroup start", "group", groupName, "user", username, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+	slog.Debug("usergroup AddUserToGroup start", append([]any{"group", groupName, "user", username, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
 
 	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-add-user-to-group")
 	if err != nil {
-		logIRODSError("usergroup AddUserToGroup filesystem setup failed", err, "group", groupName, "user", username, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		logIRODSError("usergroup AddUserToGroup filesystem setup failed", err, append([]any{"group", groupName, "user", username, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
 		return domain.UserGroup{}, err
 	}
 	defer filesystem.Release()
 
 	if err := s.requireManageUserGroupsPermission(filesystem, requestContext); err != nil {
 		return domain.UserGroup{}, err
+	}
+
+	if options.Reconcile {
+		result, err := newUserSyncService(filesystem, zone, requestContext).EnsureGroupMember(ctx, usersyncext.GroupMemberRef{
+			GroupName: groupName,
+			UserName:  username,
+			Zone:      zone,
+		})
+		if err != nil {
+			mappedErr := mapUserSyncError(err)
+			logIRODSError("usergroup AddUserToGroup reconcile failed", mappedErr, append([]any{"group", groupName, "user", username, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
+			return domain.UserGroup{}, mappedErr
+		}
+
+		slog.Info("usergroup AddUserToGroup completed", append([]any{"group", groupName, "user", username, "zone", zone, "outcome", string(result.Outcome)}, requestContextLogArgs(requestContext)...)...)
+		return mapUserSyncGroup(result.Group), nil
 	}
 
 	group, err := s.getGroup(filesystem, groupName, zone)
@@ -209,7 +266,7 @@ func (s *userGroupService) AddUserToGroup(_ context.Context, requestContext *Req
 
 	user, err := filesystem.GetUser(username, zone, "")
 	if err != nil {
-		logIRODSError("usergroup AddUserToGroup get user failed", err, "group", groupName, "user", username, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		logIRODSError("usergroup AddUserToGroup get user failed", err, append([]any{"group", groupName, "user", username, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
 		return domain.UserGroup{}, normalizeUserError("get user", username, zone, err)
 	}
 	if user == nil || strings.TrimSpace(string(user.Type)) == string(irodstypes.IRODSUserRodsGroup) {
@@ -217,14 +274,20 @@ func (s *userGroupService) AddUserToGroup(_ context.Context, requestContext *Req
 	}
 
 	if err := filesystem.AddGroupMember(group.Name, user.Name, zone); err != nil {
-		logIRODSError("usergroup AddUserToGroup failed", err, "group", groupName, "user", username, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
-		return domain.UserGroup{}, normalizeUserGroupError("add group member", groupName, zone, err)
+		normalizedErr := normalizeUserGroupError("add group member", groupName, zone, err)
+		logIRODSError("usergroup AddUserToGroup failed", normalizedErr, append([]any{"group", groupName, "user", username, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
+		return domain.UserGroup{}, normalizedErr
 	}
 
-	return s.groupWithMembers(filesystem, group)
+	group, err = s.groupWithMembers(filesystem, group)
+	if err != nil {
+		return domain.UserGroup{}, err
+	}
+	slog.Info("usergroup AddUserToGroup completed", append([]any{"group", groupName, "user", username, "zone", zone, "outcome", "added"}, requestContextLogArgs(requestContext)...)...)
+	return group, nil
 }
 
-func (s *userGroupService) RemoveUserFromGroup(_ context.Context, requestContext *RequestContext, groupName string, username string, zone string) (domain.UserGroup, error) {
+func (s *userGroupService) RemoveUserFromGroup(ctx context.Context, requestContext *RequestContext, groupName string, username string, zone string, options UserGroupMutationOptions) (domain.UserGroup, error) {
 	groupName = strings.TrimSpace(groupName)
 	username = strings.TrimSpace(username)
 	zone = s.userZone(zone)
@@ -235,11 +298,11 @@ func (s *userGroupService) RemoveUserFromGroup(_ context.Context, requestContext
 		return domain.UserGroup{}, fmt.Errorf("%w: user %q", ErrNotFound, username)
 	}
 
-	slog.Debug("usergroup RemoveUserFromGroup start", "group", groupName, "user", username, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+	slog.Debug("usergroup RemoveUserFromGroup start", append([]any{"group", groupName, "user", username, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
 
 	filesystem, err := s.filesystemForRequest(requestContext, "irods-go-rest-remove-user-from-group")
 	if err != nil {
-		logIRODSError("usergroup RemoveUserFromGroup filesystem setup failed", err, "group", groupName, "user", username, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		logIRODSError("usergroup RemoveUserFromGroup filesystem setup failed", err, append([]any{"group", groupName, "user", username, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
 		return domain.UserGroup{}, err
 	}
 	defer filesystem.Release()
@@ -248,17 +311,39 @@ func (s *userGroupService) RemoveUserFromGroup(_ context.Context, requestContext
 		return domain.UserGroup{}, err
 	}
 
+	if options.Reconcile {
+		result, err := newUserSyncService(filesystem, zone, requestContext).EnsureGroupMemberAbsent(ctx, usersyncext.GroupMemberRef{
+			GroupName: groupName,
+			UserName:  username,
+			Zone:      zone,
+		})
+		if err != nil {
+			mappedErr := mapUserSyncError(err)
+			logIRODSError("usergroup RemoveUserFromGroup reconcile failed", mappedErr, append([]any{"group", groupName, "user", username, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
+			return domain.UserGroup{}, mappedErr
+		}
+
+		slog.Info("usergroup RemoveUserFromGroup completed", append([]any{"group", groupName, "user", username, "zone", zone, "outcome", string(result.Outcome)}, requestContextLogArgs(requestContext)...)...)
+		return mapUserSyncGroup(result.Group), nil
+	}
+
 	group, err := s.getGroup(filesystem, groupName, zone)
 	if err != nil {
 		return domain.UserGroup{}, err
 	}
 
 	if err := filesystem.RemoveGroupMember(group.Name, username, zone); err != nil {
-		logIRODSError("usergroup RemoveUserFromGroup failed", err, "group", groupName, "user", username, "zone", zone, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
-		return domain.UserGroup{}, normalizeUserGroupError("remove group member", groupName, zone, err)
+		normalizedErr := normalizeUserGroupError("remove group member", groupName, zone, err)
+		logIRODSError("usergroup RemoveUserFromGroup failed", normalizedErr, append([]any{"group", groupName, "user", username, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
+		return domain.UserGroup{}, normalizedErr
 	}
 
-	return s.groupWithMembers(filesystem, group)
+	group, err = s.groupWithMembers(filesystem, group)
+	if err != nil {
+		return domain.UserGroup{}, err
+	}
+	slog.Info("usergroup RemoveUserFromGroup completed", append([]any{"group", groupName, "user", username, "zone", zone, "outcome", "removed"}, requestContextLogArgs(requestContext)...)...)
+	return group, nil
 }
 
 func (s *userGroupService) filesystemForRequest(requestContext *RequestContext, applicationName string) (CatalogFileSystem, error) {
@@ -387,37 +472,33 @@ func sortUserGroups(groups []domain.UserGroup) {
 }
 
 func normalizeUserGroupError(operation string, groupName string, zone string, err error) error {
-	if err == nil {
-		return nil
+	return mapUserSyncError(usersyncext.NormalizeGroupError(operation, groupName, zone, err))
+}
+
+func requestContextLogArgs(requestContext *RequestContext) []any {
+	args := []any{
+		"auth_scheme", safeAuthScheme(requestContext),
+		"username", safeUsername(requestContext),
 	}
-	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrPermissionDenied) || errors.Is(err, ErrConflict) {
-		return err
+	if requestContext == nil {
+		return args
 	}
 
-	switch irodstypes.GetIRODSErrorCode(err) {
-	case irodscommon.CAT_NO_ACCESS_PERMISSION, irodscommon.SYS_NO_API_PRIV:
-		return fmt.Errorf("%w: group %q", ErrPermissionDenied, groupName)
-	case irodscommon.CAT_NO_ROWS_FOUND:
-		return fmt.Errorf("%w: group %q", ErrNotFound, groupName)
-	}
+	args = appendNonEmptyIRODSLogArg(args, "request_id", requestContext.RequestID)
+	args = appendNonEmptyIRODSLogArg(args, "request_source", requestContext.RequestSource)
+	args = appendNonEmptyIRODSLogArg(args, "request_actor", requestContext.RequestActor)
+	args = appendNonEmptyIRODSLogArg(args, "idempotency_key", requestContext.IdempotencyKey)
+	args = appendNonEmptyIRODSLogArg(args, "auth_subject", requestContext.Subject)
+	args = appendNonEmptyIRODSLogArg(args, "auth_client_id", requestContext.ClientID)
+	args = appendNonEmptyIRODSLogArg(args, "auth_scope", strings.Join(requestContext.Scopes, " "))
+	args = appendNonEmptyIRODSLogArg(args, "auth_audience", strings.Join(requestContext.Audience, " "))
+	return args
+}
 
-	if irodstypes.IsUserNotFoundError(err) {
-		return fmt.Errorf("%w: group %q", ErrNotFound, groupName)
+func appendNonEmptyIRODSLogArg(args []any, key string, value string) []any {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return args
 	}
-
-	message := strings.ToLower(err.Error())
-	if strings.Contains(message, "not found") || strings.Contains(message, "no rows") {
-		return fmt.Errorf("%w: group %q", ErrNotFound, groupName)
-	}
-	if strings.Contains(message, "already exists") || strings.Contains(message, "exists as") {
-		return fmt.Errorf("%w: group %q", ErrConflict, groupName)
-	}
-	if strings.Contains(message, "no access permission") || strings.Contains(message, "permission denied") || strings.Contains(message, "not authorized") {
-		return fmt.Errorf("%w: group %q", ErrPermissionDenied, groupName)
-	}
-
-	if strings.TrimSpace(zone) != "" {
-		return fmt.Errorf("%s group %q in zone %q: %w", operation, groupName, zone, err)
-	}
-	return fmt.Errorf("%s group %q: %w", operation, groupName, err)
+	return append(args, key, value)
 }

@@ -73,8 +73,8 @@ func TestMetadataManifestBasicAuthE2E(t *testing.T) {
 			t.Fatalf("expected entry.path %q, got %q", pathValue, manifest.Entry.Path)
 		}
 
-		if manifest.IRODSHost != e2eIRODSHost(t) {
-			t.Fatalf("expected irods_host %q, got %q", e2eIRODSHost(t), manifest.IRODSHost)
+		if !sameHostOrLoopback(manifest.IRODSHost, e2eIRODSHost(t)) {
+			t.Fatalf("expected irods_host %q (localhost/loopback equivalent allowed), got %q", e2eIRODSHost(t), manifest.IRODSHost)
 		}
 		if manifest.IRODSPort != e2eIRODSPort(t) {
 			t.Fatalf("expected irods_port %d, got %d", e2eIRODSPort(t), manifest.IRODSPort)

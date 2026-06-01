@@ -52,14 +52,21 @@ func New(cfg config.RestConfig) *App {
 	userGroups := restservice.NewUserGroupService(irods.NewUserGroupService(cfg))
 	tickets := restservice.NewTicketService(irods.NewTicketService(cfg))
 	authService := auth.NewKeycloakService(cfg)
-	sessionStore := auth.NewSessionStore()
+	var sessionStore *auth.SessionStore
+	if cfg.WebEnabled {
+		sessionStore = auth.NewSessionStore()
+	}
 	handler := httpapi.NewHandler(cfg, paths, s3Admin, serverInfo, resources, users, userGroups, tickets, authService, authService, sessionStore)
 
 	return &App{
 		server: &http.Server{
 			Addr:              serverListenAddr(cfg),
 			Handler:           handler.Routes(),
-			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       time.Duration(cfg.HTTPReadTimeoutSeconds) * time.Second,
+			ReadHeaderTimeout: time.Duration(cfg.HTTPReadHeaderTimeoutSeconds) * time.Second,
+			WriteTimeout:      time.Duration(cfg.HTTPWriteTimeoutSeconds) * time.Second,
+			IdleTimeout:       time.Duration(cfg.HTTPIdleTimeoutSeconds) * time.Second,
+			MaxHeaderBytes:    cfg.HTTPMaxHeaderBytes,
 		},
 	}
 }

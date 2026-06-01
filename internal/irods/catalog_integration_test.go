@@ -198,8 +198,12 @@ func TestCatalogDeletePathDataObjectIntegration(t *testing.T) {
 	deletePath := fixture.rootPath + "/delete-me.txt"
 	filesystem := newIntegrationIRODSFilesystem(t)
 	defer filesystem.Release()
-	if _, err := filesystem.CreateFile(deletePath, "", "w"); err != nil {
+	file, err := filesystem.CreateFile(deletePath, "", "w")
+	if err != nil {
 		t.Fatalf("create file %q: %v", deletePath, err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close file %q: %v", deletePath, err)
 	}
 
 	if err := service.DeletePath(context.Background(), integrationCatalogRequestContext(t), deletePath, false); err != nil {

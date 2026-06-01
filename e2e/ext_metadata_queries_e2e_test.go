@@ -219,8 +219,16 @@ func TestExtMetadataQueriesRejectsAVUQueryTypeWithConditionsE2E(t *testing.T) {
 	if status != http.StatusBadRequest {
 		t.Fatalf("expected 400 for avu_query type with canonical conditions, got %d: %s", status, strings.TrimSpace(body))
 	}
-	if !strings.Contains(body, "invalid_request") || !strings.Contains(body, "avu_query") {
-		t.Fatalf("expected invalid_request body to identify avu_query contract error, got %s", strings.TrimSpace(body))
+	var invalidRequestPayload struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	decodeJSON(t, strings.NewReader(body), &invalidRequestPayload)
+	if invalidRequestPayload.Code != "invalid_request" {
+		t.Fatalf("expected invalid_request code for avu_query type with canonical conditions, got %+v", invalidRequestPayload)
+	}
+	if invalidRequestPayload.Message != "invalid request" {
+		t.Fatalf("expected sanitized invalid_request message, got %+v", invalidRequestPayload)
 	}
 
 	canonicalInvocation := map[string]any{

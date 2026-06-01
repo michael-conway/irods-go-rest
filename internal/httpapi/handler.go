@@ -66,10 +66,12 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("GET /healthz", h.getHealth)
 	mux.HandleFunc("GET /openapi.yaml", h.getOpenAPISpec)
 	mux.HandleFunc("GET /swagger", h.getSwaggerUI)
-	mux.HandleFunc("GET /web/", h.webHome)
-	mux.HandleFunc("GET /web/login", h.webLogin)
-	mux.HandleFunc("GET /web/callback", h.webCallback)
-	mux.HandleFunc("POST /web/logout", h.webLogout)
+	if h.cfg.WebEnabled {
+		mux.HandleFunc("GET /web/", h.webHome)
+		mux.HandleFunc("GET /web/login", h.webLogin)
+		mux.HandleFunc("GET /web/callback", h.webCallback)
+		mux.HandleFunc("POST /web/logout", h.webLogout)
+	}
 	mux.Handle("GET /api/v1/path", h.requireBearer(http.HandlerFunc(h.getPath)))
 	mux.Handle("POST /api/v1/path", h.requireBearer(http.HandlerFunc(h.postPath)))
 	mux.Handle("PATCH /api/v1/path", h.requireBearer(http.HandlerFunc(h.patchPath)))
@@ -149,7 +151,7 @@ func pathValue(r *http.Request, key string) string {
 
 func (h *Handler) getOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 	specBytes := api.OpenAPISpec
-	if serverURL := openAPIServerURL(r, h.cfg.PublicURL); serverURL != "" {
+	if serverURL := openAPIServerURL(r, h.cfg.PublicURL, h.cfg.TrustForwardedHeaders); serverURL != "" {
 		specBytes = []byte(strings.Replace(string(api.OpenAPISpec), "url: http://localhost:8080", "url: "+serverURL, 1))
 	}
 
@@ -164,34 +166,42 @@ func (h *Handler) getSwaggerUI(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte(swaggerUIHTML))
 }
 
-func openAPIServerURL(r *http.Request, fallbackPublicURL string) string {
-	host := requestHost(r)
-	if host == "" {
-		return strings.TrimRight(strings.TrimSpace(fallbackPublicURL), "/")
+func openAPIServerURL(r *http.Request, fallbackPublicURL string, trustForwardedHeaders bool) string {
+	if fallbackPublicURL = strings.TrimRight(strings.TrimSpace(fallbackPublicURL), "/"); fallbackPublicURL != "" {
+		return fallbackPublicURL
 	}
 
-	return requestScheme(r) + "://" + host
+	host := requestHost(r, trustForwardedHeaders)
+	if host == "" {
+		return ""
+	}
+
+	return requestScheme(r, trustForwardedHeaders) + "://" + host
 }
 
-func requestHost(r *http.Request) string {
+func requestHost(r *http.Request, trustForwardedHeaders bool) string {
 	if r == nil {
 		return ""
 	}
 
-	if forwardedHost := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); forwardedHost != "" {
-		return forwardedHost
+	if trustForwardedHeaders {
+		if forwardedHost := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); forwardedHost != "" {
+			return forwardedHost
+		}
 	}
 
 	return strings.TrimSpace(r.Host)
 }
 
-func requestScheme(r *http.Request) string {
+func requestScheme(r *http.Request, trustForwardedHeaders bool) string {
 	if r == nil {
 		return "http"
 	}
 
-	if forwardedProto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwardedProto != "" {
-		return forwardedProto
+	if trustForwardedHeaders {
+		if forwardedProto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwardedProto != "" {
+			return forwardedProto
+		}
 	}
 
 	if r.TLS != nil {

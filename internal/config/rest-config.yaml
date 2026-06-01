@@ -1,11 +1,30 @@
-IrodsHost:
-IrodsPort:
-IrodsZone:
-IrodsAdminUser:
-IrodsAdminPassword:
-IrodsAdminPasswordFile:
-IrodsAdminLoginType:
-IrodsAuthScheme:
+PublicURL: http://localhost:8080
+ListenAddr: :8080
+WebEnabled: true
+TrustForwardedHeaders: false
+HTTPReadTimeoutSeconds: 30
+HTTPReadHeaderTimeoutSeconds: 5
+HTTPWriteTimeoutSeconds: 30
+HTTPIdleTimeoutSeconds: 120
+HTTPMaxHeaderBytes: 1048576
+CORSAllowedOrigins:
+  - http://localhost:8081
+  - http://127.0.0.1:8081
+  - http://localhost:5173
+  - http://127.0.0.1:5173
+RestLogLevel: info
+
+IrodsHost: localhost
+IrodsPort: 1247
+IrodsZone: tempZone
+IrodsAdminUser: rods
+IrodsAdminPassword: rods
+IrodsPrimaryTestUser: test1
+IrodsPrimaryTestPassword: test
+IrodsSecondaryTestUser: test2
+IrodsSecondaryTestPassword: test
+IrodsAdminLoginType: native
+IrodsAuthScheme: native
 IrodsNegotiationPolicy: CS_NEG_DONT_CARE
 IrodsSSLConfig:
   CACertificateFile:
@@ -17,23 +36,26 @@ IrodsSSLConfig:
   VerifyServer: hostname
   DHParamsFile:
   ServerName:
-IrodsDefaultResource:
-OidcUrl:
-OidcClientId: irods-go-rest
-OidcClientSecret:
-OidcClientSecretFile:
-OidcInsecureSkipVerify: false
-OidcRealm:
-OidcScope: openid profile email
-PublicUrl: http://localhost:8080
-ListenAddr:
-CORSAllowedOrigins:
-RestLogLevel: info
-ResourceAffinity:
-  - demoResc
-  - test1-resc
-S3ApiSupported: false
-S3BucketMappingFile:
-S3UserMappingFile:
+IrodsDefaultResource: providerResc
+S3ApiSupported: true
+# S3 admin endpoints require absolute host paths. Replace /absolute/path/to
+# with your local irods-grid-stack checkout path.
+S3BucketMappingFile: /Users/conwaymc/Documents/temp/s3-shared/irods-s3-bucket-mapping.json
+S3UserMappingFile: /Users/conwaymc/Documents/temp/s3-shared/irods-s3-user-mapping.json
 ReplicaTrimMinCopies: 1
 ReplicaTrimMinAgeMinutes: 0
+
+TestResource1: providerResc
+TestResource2: resourceResc
+ResourceAffinity:
+  - providerResc
+  - resourceResc
+
+OidcUrl: https://localhost:8443
+OidcAuthUrl: https://localhost:8443
+OidcClientId: irods-go-rest
+OidcClientSecret: secret2
+OidcInsecureSkipVerify: true
+OidcRealm: drs
+OidcScope: openid profile email
+TestBearerToken: ""

@@ -68,8 +68,8 @@ func TestGetServerInfoBasicAuthE2E(t *testing.T) {
 		t.Fatal("expected server_info.api_version to be populated")
 	}
 
-	if payload.ServerInfo.IRODSHost != e2eIRODSHost(t) {
-		t.Fatalf("expected irods_host %q, got %q", e2eIRODSHost(t), payload.ServerInfo.IRODSHost)
+	if !sameHostOrLoopback(payload.ServerInfo.IRODSHost, e2eIRODSHost(t)) {
+		t.Fatalf("expected irods_host %q (localhost/loopback equivalent allowed), got %q", e2eIRODSHost(t), payload.ServerInfo.IRODSHost)
 	}
 	if payload.ServerInfo.IRODSPort != e2eIRODSPort(t) {
 		t.Fatalf("expected irods_port %d, got %d", e2eIRODSPort(t), payload.ServerInfo.IRODSPort)

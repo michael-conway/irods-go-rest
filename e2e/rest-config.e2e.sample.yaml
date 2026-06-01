@@ -1,7 +1,17 @@
-PublicURL: http://127.0.0.1:8080
+PublicURL: http://localhost:8080
+ListenAddr: :8080
+WebEnabled: true
+TrustForwardedHeaders: false
+HTTPReadTimeoutSeconds: 30
+HTTPReadHeaderTimeoutSeconds: 5
+HTTPWriteTimeoutSeconds: 30
+HTTPIdleTimeoutSeconds: 120
+HTTPMaxHeaderBytes: 1048576
+CORSAllowedOrigins:
+  - http://localhost:8081
 RestLogLevel: info
 
-IrodsHost: 127.0.0.1
+IrodsHost: localhost
 IrodsPort: 1247
 IrodsZone: tempZone
 IrodsAdminUser: rods
@@ -10,7 +20,7 @@ IrodsPrimaryTestUser: test1
 IrodsPrimaryTestPassword: test
 IrodsSecondaryTestUser: test2
 IrodsSecondaryTestPassword: test
-IrodsAdminLoginType: nativesecurit
+IrodsAdminLoginType: native
 IrodsAuthScheme: native
 IrodsNegotiationPolicy: CS_NEG_DONT_CARE
 IrodsSSLConfig:
@@ -27,17 +37,21 @@ IrodsDefaultResource: providerResc
 S3ApiSupported: true
 # S3 admin endpoints require absolute host paths. Replace /absolute/path/to
 # with your local irods-grid-stack checkout path.
-S3BucketMappingFile: /absolute/path/to/irods-grid-stack/state/shared-s3/irods-s3-bucket-mapping.json
-S3UserMappingFile: /absolute/path/to/irods-grid-stack/state/shared-s3/irods-s3-user-mapping.json
+S3BucketMappingFile: /Users/conwaymc/Documents/temp/s3-shared/irods-s3-bucket-mapping.json
+S3UserMappingFile: /Users/conwaymc/Documents/temp/s3-shared/irods-s3-user-mapping.json
 ReplicaTrimMinCopies: 1
 ReplicaTrimMinAgeMinutes: 0
 
 TestResource1: providerResc
 TestResource2: resourceResc
+ResourceAffinity:
+  - providerResc
+  - resourceResc
 
 OidcUrl: https://localhost:8443
+OidcAuthUrl: https://localhost:8443
 OidcClientId: irods-go-rest
-OidcClientSecret: change-me
+OidcClientSecret: secret2
 OidcInsecureSkipVerify: true
 OidcRealm: drs
 OidcScope: openid profile email

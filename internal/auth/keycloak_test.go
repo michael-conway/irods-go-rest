@@ -41,6 +41,27 @@ func TestAuthorizationURL(t *testing.T) {
 	assertQueryValue(t, parsed.Query(), "state", "state123")
 }
 
+func TestAuthorizationURLUsesOidcAuthURLWhenConfigured(t *testing.T) {
+	cfg := keycloakUnitTestConfig(t)
+	cfg.OidcUrl = "https://keycloak:8443"
+	cfg.OidcAuthUrl = "https://localhost:8443"
+	service := NewKeycloakService(cfg)
+
+	redirectURL, err := service.AuthorizationURL("state123")
+	if err != nil {
+		t.Fatalf("authorization url failed: %v", err)
+	}
+
+	parsed, err := url.Parse(redirectURL)
+	if err != nil {
+		t.Fatalf("parse authorization url: %v", err)
+	}
+
+	if got := parsed.Scheme + "://" + parsed.Host; got != cfg.OidcAuthUrl {
+		t.Fatalf("expected authorization host %q, got %q", cfg.OidcAuthUrl, got)
+	}
+}
+
 func TestExchangeCodeSuccess(t *testing.T) {
 	cfg := keycloakUnitTestConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -74,6 +95,7 @@ func TestExchangeCodeSuccess(t *testing.T) {
 	defer server.Close()
 
 	cfg.OidcUrl = server.URL
+	cfg.OidcAuthUrl = "https://localhost:8443"
 	service := NewKeycloakService(cfg)
 
 	token, err := service.ExchangeCode(context.Background(), "code123")
@@ -89,24 +111,35 @@ func TestExchangeCodeSuccess(t *testing.T) {
 func TestVerifyTokenSuccess(t *testing.T) {
 	cfg := keycloakUnitTestConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != fmt.Sprintf("/realms/%s/protocol/openid-connect/token/introspect", cfg.OidcRealm) {
+		switch r.URL.Path {
+		case fmt.Sprintf("/realms/%s/protocol/openid-connect/token/introspect", cfg.OidcRealm):
+			if err := r.ParseForm(); err != nil {
+				t.Fatalf("parse form: %v", err)
+			}
+
+			assertQueryValue(t, r.Form, "token", "abc123")
+			assertQueryValue(t, r.Form, "client_id", cfg.OidcClientId)
+			assertQueryValue(t, r.Form, "client_secret", cfg.OidcClientSecret)
+
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"active":             true,
+				"scope":              "openid profile",
+				"preferred_username": "introspection-alice",
+				"sub":                "user-123",
+				"client_id":          "irods-go-rest",
+				"aud":                []string{"irods-go-rest", "account"},
+			})
+		case fmt.Sprintf("/realms/%s/protocol/openid-connect/userinfo", cfg.OidcRealm):
+			if got := r.Header.Get("Authorization"); got != "Bearer abc123" {
+				t.Fatalf("expected Authorization header, got %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"preferred_username": "alice",
+				"sub":                "user-123",
+			})
+		default:
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
-
-		if err := r.ParseForm(); err != nil {
-			t.Fatalf("parse form: %v", err)
-		}
-
-		assertQueryValue(t, r.Form, "token", "abc123")
-		assertQueryValue(t, r.Form, "client_id", cfg.OidcClientId)
-		assertQueryValue(t, r.Form, "client_secret", cfg.OidcClientSecret)
-
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"active":             true,
-			"scope":              "openid profile",
-			"preferred_username": "alice",
-			"sub":                "user-123",
-		})
 	}))
 	defer server.Close()
 
@@ -120,6 +153,12 @@ func TestVerifyTokenSuccess(t *testing.T) {
 
 	if principal.Username != "alice" {
 		t.Fatalf("expected principal username alice, got %q", principal.Username)
+	}
+	if principal.ClientID != "irods-go-rest" {
+		t.Fatalf("expected principal client id irods-go-rest, got %q", principal.ClientID)
+	}
+	if len(principal.Audience) != 2 || principal.Audience[0] != "irods-go-rest" || principal.Audience[1] != "account" {
+		t.Fatalf("unexpected principal audience: %+v", principal.Audience)
 	}
 }
 

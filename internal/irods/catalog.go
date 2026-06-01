@@ -21,10 +21,12 @@ import (
 	irodscommon "github.com/cyverse/go-irodsclient/irods/common"
 	irodslibfs "github.com/cyverse/go-irodsclient/irods/fs"
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
+	irodsauth "github.com/michael-conway/go-irodsclient-extensions/irodsauth"
 	metadataext "github.com/michael-conway/go-irodsclient-extensions/metadata"
 	metadatairodsfs "github.com/michael-conway/go-irodsclient-extensions/metadata/irodsfs"
 	s3adminext "github.com/michael-conway/go-irodsclient-extensions/s3admin"
 	s3adminirodsfs "github.com/michael-conway/go-irodsclient-extensions/s3admin/irodsfs"
+	usersyncirodsfs "github.com/michael-conway/go-irodsclient-extensions/usersync/irodsfs"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 	"github.com/michael-conway/irods-go-rest/internal/domain"
 	"github.com/michael-conway/irods-go-rest/internal/logutil"
@@ -33,14 +35,31 @@ import (
 var ErrNotFound = errors.New("resource not found")
 var ErrPermissionDenied = errors.New("permission denied")
 var ErrConflict = errors.New("conflict")
+var ErrInvalidRequest = errors.New("invalid request")
 var ErrS3AdminNotConfigured = errors.New("s3admin not configured")
 var ErrS3AdminNotSupported = errors.New("s3 api operation not supported")
 
+func newInvalidRequestError(message string) error {
+	return fmt.Errorf("%w: %s", ErrInvalidRequest, message)
+}
+
+func newInvalidRequestErrorf(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", ErrInvalidRequest, fmt.Sprintf(format, args...))
+}
+
 type RequestContext struct {
-	AuthScheme    string
-	Username      string
-	BasicPassword string
-	Ticket        string
+	AuthScheme     string
+	Username       string
+	BasicPassword  string
+	Ticket         string
+	RequestID      string
+	RequestSource  string
+	RequestActor   string
+	IdempotencyKey string
+	Subject        string
+	ClientID       string
+	Scopes         []string
+	Audience       []string
 }
 
 type PathLookupOptions struct {
@@ -215,10 +234,14 @@ type CatalogFileSystem interface {
 	GetUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error)
 	ListUsers(zoneName string, userType irodstypes.IRODSUserType) ([]*irodstypes.IRODSUser, error)
 	ListGroupMembers(zoneName string, groupName string) ([]*irodstypes.IRODSUser, error)
+	ListUserMetadata(username string, zoneName string) ([]*irodstypes.IRODSMeta, error)
+	AddUserMetadata(username string, zoneName string, attribute string, value string, unit string) error
 	CreateUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error)
+	CreateUserGroup(groupName string, zoneName string) (*irodstypes.IRODSUser, error)
 	ChangeUserPassword(username string, zoneName string, newPassword string) error
 	ChangeUserType(username string, zoneName string, newType irodstypes.IRODSUserType) error
 	RemoveUser(username string, zoneName string, userType irodstypes.IRODSUserType) error
+	RemoveUserGroup(groupName string, zoneName string) error
 	AddGroupMember(groupName string, username string, zoneName string) error
 	RemoveGroupMember(groupName string, username string, zoneName string) error
 	GetTicket(ticketName string) (*irodstypes.IRODSTicket, error)
@@ -561,7 +584,7 @@ func (s *catalogService) CreatePathReplica(_ context.Context, requestContext *Re
 		return nil, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
 	}
 	if resource == "" {
-		return nil, fmt.Errorf("resource is required")
+		return nil, newInvalidRequestError("resource is required")
 	}
 
 	slog.Debug("catalog CreatePathReplica start", "path", absolutePath, "resource", resource, "update", options.Update, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
@@ -604,13 +627,13 @@ func (s *catalogService) MovePathReplica(_ context.Context, requestContext *Requ
 		return nil, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
 	}
 	if sourceResource == "" {
-		return nil, fmt.Errorf("source_resource is required")
+		return nil, newInvalidRequestError("source_resource is required")
 	}
 	if destinationResource == "" {
-		return nil, fmt.Errorf("destination_resource is required")
+		return nil, newInvalidRequestError("destination_resource is required")
 	}
 	if sourceResource == destinationResource {
-		return nil, fmt.Errorf("source_resource and destination_resource must differ")
+		return nil, newInvalidRequestError("source_resource and destination_resource must differ")
 	}
 
 	minCopies := options.MinCopies
@@ -726,13 +749,13 @@ func (s *catalogService) CreatePathChild(ctx context.Context, requestContext *Re
 	childName := strings.TrimSpace(options.ChildName)
 	kind := strings.TrimSpace(options.Kind)
 	if childName == "" {
-		return domain.PathEntry{}, fmt.Errorf("child_name is required")
+		return domain.PathEntry{}, newInvalidRequestError("child_name is required")
 	}
 	if kind != "collection" && kind != "data_object" {
-		return domain.PathEntry{}, fmt.Errorf("kind must be collection or data_object")
+		return domain.PathEntry{}, newInvalidRequestError("kind must be collection or data_object")
 	}
 	if options.Mkdirs && kind != "collection" {
-		return domain.PathEntry{}, fmt.Errorf("mkdirs is only supported for collection creation")
+		return domain.PathEntry{}, newInvalidRequestError("mkdirs is only supported for collection creation")
 	}
 
 	childPath, err := resolveChildPath(absolutePath, childName)
@@ -810,10 +833,10 @@ func (s *catalogService) UploadPathContents(ctx context.Context, requestContext 
 
 	fileName := strings.TrimSpace(options.FileName)
 	if fileName == "" {
-		return domain.PathContentsUploadResult{}, fmt.Errorf("file_name is required")
+		return domain.PathContentsUploadResult{}, newInvalidRequestError("file_name is required")
 	}
 	if options.Content == nil {
-		return domain.PathContentsUploadResult{}, fmt.Errorf("content is required")
+		return domain.PathContentsUploadResult{}, newInvalidRequestError("content is required")
 	}
 
 	objectPath, err := resolveChildPath(absolutePath, fileName)
@@ -1120,7 +1143,7 @@ func (s *catalogService) AddPathMetadata(_ context.Context, requestContext *Requ
 		return domain.AVUMetadata{}, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
 	}
 	if attrib == "" || value == "" {
-		return domain.AVUMetadata{}, fmt.Errorf("attrib and value are required")
+		return domain.AVUMetadata{}, newInvalidRequestError("attrib and value are required")
 	}
 
 	slog.Debug("catalog AddPathMetadata start", "path", absolutePath, "attrib", attrib, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
@@ -1166,14 +1189,14 @@ func (s *catalogService) UpdatePathMetadata(_ context.Context, requestContext *R
 		return domain.AVUMetadata{}, fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
 	}
 	if avuID == "" {
-		return domain.AVUMetadata{}, fmt.Errorf("avu_id is required")
+		return domain.AVUMetadata{}, newInvalidRequestError("avu_id is required")
 	}
 	if attrib == "" || value == "" {
-		return domain.AVUMetadata{}, fmt.Errorf("attrib and value are required")
+		return domain.AVUMetadata{}, newInvalidRequestError("attrib and value are required")
 	}
 	avuIDInt, err := strconv.ParseInt(avuID, 10, 64)
 	if err != nil || avuIDInt <= 0 {
-		return domain.AVUMetadata{}, fmt.Errorf("invalid avu id %q", avuID)
+		return domain.AVUMetadata{}, newInvalidRequestErrorf("invalid avu id %q", avuID)
 	}
 
 	slog.Debug("catalog UpdatePathMetadata start", "path", absolutePath, "avu_id", avuID, "attrib", attrib, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
@@ -1229,12 +1252,12 @@ func (s *catalogService) DeletePathMetadata(_ context.Context, requestContext *R
 		return fmt.Errorf("%w: path %q", ErrNotFound, absolutePath)
 	}
 	if avuID == "" {
-		return fmt.Errorf("avu_id is required")
+		return newInvalidRequestError("avu_id is required")
 	}
 
 	avuIDInt, err := strconv.ParseInt(avuID, 10, 64)
 	if err != nil || avuIDInt <= 0 {
-		return fmt.Errorf("invalid avu id %q", avuID)
+		return newInvalidRequestErrorf("invalid avu id %q", avuID)
 	}
 
 	slog.Debug("catalog DeletePathMetadata start", "path", absolutePath, "avu_id", avuID, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
@@ -1322,12 +1345,12 @@ func (s *catalogService) AddPathACL(_ context.Context, requestContext *RequestCo
 		userZone = strings.TrimSpace(s.cfg.IrodsZone)
 	}
 	if userName == "" {
-		return domain.PathACLEntry{}, fmt.Errorf("name is required")
+		return domain.PathACLEntry{}, newInvalidRequestError("name is required")
 	}
 
 	accessLevel := normalizedACLAccessLevel(string(acl.AccessLevel))
 	if accessLevel == irodstypes.IRODSAccessLevelNull {
-		return domain.PathACLEntry{}, fmt.Errorf("access_level is required")
+		return domain.PathACLEntry{}, newInvalidRequestError("access_level is required")
 	}
 
 	slog.Debug("catalog AddPathACL start", "path", absolutePath, "name", userName, "zone", userZone, "access_level", accessLevel, "recursive", recursive, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
@@ -1395,7 +1418,7 @@ func (s *catalogService) UpdatePathACL(_ context.Context, requestContext *Reques
 
 	normalizedAccess := normalizedACLAccessLevel(accessLevel)
 	if normalizedAccess == irodstypes.IRODSAccessLevelNull {
-		return domain.PathACLEntry{}, fmt.Errorf("access_level is required")
+		return domain.PathACLEntry{}, newInvalidRequestError("access_level is required")
 	}
 
 	slog.Debug("catalog UpdatePathACL start", "path", absolutePath, "acl_id", aclEntryID, "access_level", normalizedAccess, "recursive", recursive, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
@@ -1921,6 +1944,24 @@ func (s *catalogService) accountForRequest(requestContext *RequestContext) (*iro
 		return nil, fmt.Errorf("missing request context")
 	}
 
+	request := irodsauth.Request{
+		AuthScheme:    requestContext.AuthScheme,
+		Username:      requestContext.Username,
+		BasicPassword: requestContext.BasicPassword,
+		Ticket:        requestContext.Ticket,
+	}
+	config := irodsauth.Config{
+		Host:                  s.cfg.IrodsHost,
+		Port:                  s.cfg.IrodsPort,
+		Zone:                  s.cfg.IrodsZone,
+		DefaultResource:       s.cfg.IrodsDefaultResource,
+		AdminUser:             s.cfg.IrodsAdminUser,
+		AdminPassword:         s.cfg.IrodsAdminPassword,
+		RequestAuthScheme:     s.cfg.RequestAuthScheme(),
+		AdminAuthScheme:       s.cfg.AdminAuthScheme(),
+		ApplyConnectionConfig: s.cfg.ApplyIRODSConnectionConfig,
+	}
+
 	switch requestContext.AuthScheme {
 	case "basic":
 		slog.Debug(
@@ -1931,20 +1972,12 @@ func (s *catalogService) accountForRequest(requestContext *RequestContext) (*iro
 			"irods_client_user", requestContext.Username,
 			"irods_zone", s.cfg.IrodsZone,
 		)
-		account, err := irodstypes.CreateIRODSAccount(
-			s.cfg.IrodsHost,
-			s.cfg.IrodsPort,
-			requestContext.Username,
-			s.cfg.IrodsZone,
-			s.cfg.RequestAuthScheme(),
-			requestContext.BasicPassword,
-			s.cfg.IrodsDefaultResource,
-		)
+		account, err := irodsauth.CreateAccount(request, config)
 		if err != nil {
 			logIRODSError("catalog direct account creation failed", err, "http_auth_scheme", requestContext.AuthScheme, "irods_proxy_user", requestContext.Username, "irods_client_user", requestContext.Username, "irods_zone", s.cfg.IrodsZone)
-			return nil, fmt.Errorf("create iRODS account: %w", err)
+			return nil, err
 		}
-		return s.cfg.ApplyIRODSConnectionConfig(account), nil
+		return account, nil
 	case "bearer-ticket":
 		slog.Debug(
 			"catalog resolved ticket iRODS account",
@@ -1954,21 +1987,12 @@ func (s *catalogService) accountForRequest(requestContext *RequestContext) (*iro
 			"irods_client_user", s.cfg.IrodsAdminUser,
 			"irods_zone", s.cfg.IrodsZone,
 		)
-		account, err := irodstypes.CreateIRODSAccountForTicket(
-			s.cfg.IrodsHost,
-			s.cfg.IrodsPort,
-			s.cfg.IrodsAdminUser,
-			s.cfg.IrodsZone,
-			s.cfg.AdminAuthScheme(),
-			s.cfg.IrodsAdminPassword,
-			requestContext.Ticket,
-			s.cfg.IrodsDefaultResource,
-		)
+		account, err := irodsauth.CreateAccount(request, config)
 		if err != nil {
 			logIRODSError("catalog ticket account creation failed", err, "http_auth_scheme", requestContext.AuthScheme, "irods_proxy_user", s.cfg.IrodsAdminUser, "irods_client_user", s.cfg.IrodsAdminUser, "irods_zone", s.cfg.IrodsZone)
-			return nil, fmt.Errorf("create iRODS ticket account: %w", err)
+			return nil, err
 		}
-		return s.cfg.ApplyIRODSConnectionConfig(account), nil
+		return account, nil
 	case "bearer":
 		slog.Debug(
 			"catalog resolved proxy iRODS account",
@@ -1978,22 +2002,12 @@ func (s *catalogService) accountForRequest(requestContext *RequestContext) (*iro
 			"irods_client_user", requestContext.Username,
 			"irods_zone", s.cfg.IrodsZone,
 		)
-		account, err := irodstypes.CreateIRODSProxyAccount(
-			s.cfg.IrodsHost,
-			s.cfg.IrodsPort,
-			requestContext.Username,
-			s.cfg.IrodsZone,
-			s.cfg.IrodsAdminUser,
-			s.cfg.IrodsZone,
-			s.cfg.AdminAuthScheme(),
-			s.cfg.IrodsAdminPassword,
-			s.cfg.IrodsDefaultResource,
-		)
+		account, err := irodsauth.CreateAccount(request, config)
 		if err != nil {
 			logIRODSError("catalog proxy account creation failed", err, "http_auth_scheme", requestContext.AuthScheme, "irods_proxy_user", s.cfg.IrodsAdminUser, "irods_client_user", requestContext.Username, "irods_zone", s.cfg.IrodsZone)
-			return nil, fmt.Errorf("create iRODS proxy account: %w", err)
+			return nil, err
 		}
-		return s.cfg.ApplyIRODSConnectionConfig(account), nil
+		return account, nil
 	default:
 		logIRODSError("catalog unsupported auth scheme", fmt.Errorf("unsupported auth scheme %q", requestContext.AuthScheme), "http_auth_scheme", requestContext.AuthScheme, "username", requestContext.Username)
 		return nil, fmt.Errorf("unsupported auth scheme %q", requestContext.AuthScheme)
@@ -2477,8 +2491,20 @@ func (a *catalogFileSystemAdapter) ListGroupMembers(zoneName string, groupName s
 	return a.filesystem.ListGroupMembers(zoneName, groupName)
 }
 
+func (a *catalogFileSystemAdapter) ListUserMetadata(username string, zoneName string) ([]*irodstypes.IRODSMeta, error) {
+	return a.filesystem.ListUserMetadata(username, zoneName)
+}
+
+func (a *catalogFileSystemAdapter) AddUserMetadata(username string, zoneName string, attribute string, value string, unit string) error {
+	return a.filesystem.AddUserMetadata(username, zoneName, attribute, value, unit)
+}
+
 func (a *catalogFileSystemAdapter) CreateUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error) {
 	return a.filesystem.CreateUser(username, zoneName, userType)
+}
+
+func (a *catalogFileSystemAdapter) CreateUserGroup(groupName string, zoneName string) (*irodstypes.IRODSUser, error) {
+	return usersyncirodsfs.NewAdapter(a.filesystem).CreateUserGroup(groupName, zoneName)
 }
 
 func (a *catalogFileSystemAdapter) ChangeUserPassword(username string, zoneName string, newPassword string) error {
@@ -2491,6 +2517,10 @@ func (a *catalogFileSystemAdapter) ChangeUserType(username string, zoneName stri
 
 func (a *catalogFileSystemAdapter) RemoveUser(username string, zoneName string, userType irodstypes.IRODSUserType) error {
 	return a.filesystem.RemoveUser(username, zoneName, userType)
+}
+
+func (a *catalogFileSystemAdapter) RemoveUserGroup(groupName string, zoneName string) error {
+	return usersyncirodsfs.NewAdapter(a.filesystem).RemoveUserGroup(groupName, zoneName)
 }
 
 func (a *catalogFileSystemAdapter) AddGroupMember(groupName string, username string, zoneName string) error {
@@ -2638,18 +2668,18 @@ func resolveChildPath(parentPath string, childName string) (string, error) {
 		return "", fmt.Errorf("%w: path %q", ErrNotFound, parentPath)
 	}
 	if childName == "" {
-		return "", fmt.Errorf("child_name is required")
+		return "", newInvalidRequestError("child_name is required")
 	}
 	if path.IsAbs(childName) {
-		return "", fmt.Errorf("child_name must be relative to the parent path")
+		return "", newInvalidRequestError("child_name must be relative to the parent path")
 	}
 
 	cleaned := path.Clean(childName)
 	if cleaned == "." || cleaned == "" {
-		return "", fmt.Errorf("child_name is required")
+		return "", newInvalidRequestError("child_name is required")
 	}
 	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return "", fmt.Errorf("child_name must remain within the parent path")
+		return "", newInvalidRequestError("child_name must remain within the parent path")
 	}
 
 	return path.Clean(path.Join(parentPath, cleaned)), nil
@@ -2662,23 +2692,23 @@ func resolveRenameDestination(sourcePath string, newName string) (string, error)
 		return "", fmt.Errorf("%w: path %q", ErrNotFound, sourcePath)
 	}
 	if newName == "" {
-		return "", fmt.Errorf("new_name is required")
+		return "", newInvalidRequestError("new_name is required")
 	}
 	if path.IsAbs(newName) {
-		return "", fmt.Errorf("new_name must not be an absolute path")
+		return "", newInvalidRequestError("new_name must not be an absolute path")
 	}
 
 	cleaned := path.Clean(newName)
 	if cleaned == "." || cleaned == "" {
-		return "", fmt.Errorf("new_name is required")
+		return "", newInvalidRequestError("new_name is required")
 	}
 	if strings.Contains(cleaned, "/") || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return "", fmt.Errorf("new_name must be a single path segment")
+		return "", newInvalidRequestError("new_name must be a single path segment")
 	}
 
 	parentPath := path.Dir(path.Clean(sourcePath))
 	if parentPath == "." || parentPath == "" {
-		return "", fmt.Errorf("path %q cannot be renamed", sourcePath)
+		return "", newInvalidRequestErrorf("path %q cannot be renamed", sourcePath)
 	}
 
 	return path.Clean(path.Join(parentPath, cleaned)), nil
@@ -2693,12 +2723,12 @@ func resolveRelocateDestination(sourcePath string, newName string, destinationPa
 
 	if destinationPath != "" {
 		if !path.IsAbs(destinationPath) {
-			return "", fmt.Errorf("destination_path must be absolute")
+			return "", newInvalidRequestError("destination_path must be absolute")
 		}
 
 		cleaned := path.Clean(destinationPath)
 		if cleaned == "." || cleaned == "" || cleaned == "/" {
-			return "", fmt.Errorf("destination_path is invalid")
+			return "", newInvalidRequestError("destination_path is invalid")
 		}
 
 		return cleaned, nil
@@ -2899,17 +2929,17 @@ type aclPrincipal struct {
 func parseACLPrincipal(raw string) (aclPrincipal, error) {
 	parts := strings.Split(strings.TrimSpace(raw), ":")
 	if len(parts) != 3 {
-		return aclPrincipal{}, fmt.Errorf("invalid acl id %q", raw)
+		return aclPrincipal{}, newInvalidRequestErrorf("invalid acl id %q", raw)
 	}
 
 	principalType := strings.TrimSpace(parts[0])
 	zone := strings.TrimSpace(parts[1])
 	name := strings.TrimSpace(parts[2])
 	if principalType != "user" && principalType != "group" {
-		return aclPrincipal{}, fmt.Errorf("invalid acl id %q", raw)
+		return aclPrincipal{}, newInvalidRequestErrorf("invalid acl id %q", raw)
 	}
 	if name == "" {
-		return aclPrincipal{}, fmt.Errorf("invalid acl id %q", raw)
+		return aclPrincipal{}, newInvalidRequestErrorf("invalid acl id %q", raw)
 	}
 
 	return aclPrincipal{
@@ -3466,10 +3496,10 @@ func entryHasReplicaInResource(entry *irodsfs.Entry, resource string) bool {
 
 func resolveReplicaResourceByIndex(entry *irodsfs.Entry, replicaIndex *int64) (string, error) {
 	if entry == nil {
-		return "", fmt.Errorf("resource or replica_index is required")
+		return "", newInvalidRequestError("resource or replica_index is required")
 	}
 	if replicaIndex == nil {
-		return "", fmt.Errorf("resource or replica_index is required")
+		return "", newInvalidRequestError("resource or replica_index is required")
 	}
 
 	for _, replica := range entry.IRODSReplicas {

@@ -24,6 +24,7 @@ import (
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
 	metadataext "github.com/michael-conway/go-irodsclient-extensions/metadata"
 	s3adminext "github.com/michael-conway/go-irodsclient-extensions/s3admin"
+	usersyncext "github.com/michael-conway/go-irodsclient-extensions/usersync"
 	"github.com/michael-conway/irods-go-rest/internal/auth"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 	"github.com/michael-conway/irods-go-rest/internal/domain"
@@ -133,7 +134,10 @@ func TestOpenAPISpec(t *testing.T) {
 }
 
 func TestOpenAPISpecUsesRequestHost(t *testing.T) {
-	handler := testHandler(t)
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.PublicURL = ""
+		cfg.TrustForwardedHeaders = false
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
 	req.Host = "rest.example.org:18082"
@@ -151,8 +155,35 @@ func TestOpenAPISpecUsesRequestHost(t *testing.T) {
 	}
 }
 
-func TestOpenAPISpecUsesForwardedHostAndProto(t *testing.T) {
-	handler := testHandler(t)
+func TestOpenAPISpecIgnoresForwardedHostAndProtoByDefault(t *testing.T) {
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.PublicURL = ""
+		cfg.TrustForwardedHeaders = false
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
+	req.Host = "internal:8080"
+	req.Header.Set("X-Forwarded-Host", "rest.example.org")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "url: http://internal:8080") {
+		t.Fatalf("expected request host when forwarded headers are untrusted, got %q", body)
+	}
+}
+
+func TestOpenAPISpecUsesForwardedHostAndProtoWhenTrusted(t *testing.T) {
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.PublicURL = ""
+		cfg.TrustForwardedHeaders = true
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
 	req.Host = "internal:8080"
@@ -168,7 +199,31 @@ func TestOpenAPISpecUsesForwardedHostAndProto(t *testing.T) {
 
 	body := rec.Body.String()
 	if !strings.Contains(body, "url: https://rest.example.org") {
-		t.Fatalf("expected forwarded host and proto in openapi server url, got %q", body)
+		t.Fatalf("expected trusted forwarded host and proto in openapi server url, got %q", body)
+	}
+}
+
+func TestOpenAPISpecUsesConfiguredPublicURLOverRequestHeaders(t *testing.T) {
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.PublicURL = "https://api.example.org"
+		cfg.TrustForwardedHeaders = true
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
+	req.Host = "internal:8080"
+	req.Header.Set("X-Forwarded-Host", "rest.example.org")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "url: https://api.example.org") {
+		t.Fatalf("expected configured public url to take precedence, got %q", body)
 	}
 }
 
@@ -194,7 +249,9 @@ func TestSwaggerUI(t *testing.T) {
 }
 
 func TestWebLoginRedirect(t *testing.T) {
-	handler := testHandler(t)
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.WebEnabled = true
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/web/login", nil)
 	rec := httptest.NewRecorder()
@@ -207,7 +264,9 @@ func TestWebLoginRedirect(t *testing.T) {
 }
 
 func TestWebHomeDisplaysBearerToken(t *testing.T) {
-	handler := testHandler(t)
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.WebEnabled = true
+	})
 
 	session, err := handler.webSession.Create(auth.Principal{
 		Subject:  "user-123",
@@ -239,7 +298,9 @@ func TestWebHomeDisplaysBearerToken(t *testing.T) {
 }
 
 func TestWebCallbackCreatesSession(t *testing.T) {
-	handler := testHandler(t)
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.WebEnabled = true
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/web/callback?code=code123&state=state123", nil)
 	req.AddCookie(&http.Cookie{Name: authStateCookieName, Value: "state123"})
@@ -253,7 +314,9 @@ func TestWebCallbackCreatesSession(t *testing.T) {
 }
 
 func TestWebCallbackSurfacesOAuthError(t *testing.T) {
-	handler := testHandler(t)
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.WebEnabled = true
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/web/callback?error=access_denied&error_description=user+canceled&state=state123", nil)
 	rec := httptest.NewRecorder()
@@ -266,6 +329,21 @@ func TestWebCallbackSurfacesOAuthError(t *testing.T) {
 
 	if got := rec.Body.String(); got == "" || !containsAll(got, `"code":"auth_failed"`, `access_denied: user canceled`) {
 		t.Fatalf("unexpected response body: %q", got)
+	}
+}
+
+func TestWebRoutesDisabledWhenConfigured(t *testing.T) {
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.WebEnabled = false
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/web/login", nil)
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
 	}
 }
 
@@ -415,7 +493,9 @@ func TestAPIAcceptsValidBearerToken(t *testing.T) {
 }
 
 func TestGetServerInfo(t *testing.T) {
-	handler := testHandler(t)
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.IrodsHost = "irods.local"
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/server", nil)
 	req.Header.Set("Authorization", "Bearer token123")
@@ -658,7 +738,7 @@ func TestDeletePathRejectsNonEmptyCollectionWithoutForce(t *testing.T) {
 		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	if body := rec.Body.String(); !containsAll(body, `"code":"conflict"`, `force=true`) {
+	if body := rec.Body.String(); !containsAll(body, `"code":"conflict"`, `"message":"request conflicts with current resource state"`) {
 		t.Fatalf("unexpected conflict response body: %q", body)
 	}
 }
@@ -2690,8 +2770,8 @@ func TestExtS3BucketsLifecycle(t *testing.T) {
 	if nonAdminRefreshRec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 refreshing bucket mapping as non-admin, got %d: %s", nonAdminRefreshRec.Code, nonAdminRefreshRec.Body.String())
 	}
-	if body := nonAdminRefreshRec.Body.String(); !strings.Contains(body, "insufficient privilege") {
-		t.Fatalf("expected insufficient privilege response, got %s", body)
+	if body := nonAdminRefreshRec.Body.String(); !containsAll(body, `"code":"permission_denied"`, `"message":"permission denied"`) {
+		t.Fatalf("expected permission denied response, got %s", body)
 	}
 
 	refreshReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/buckets/refresh-mapping", nil)
@@ -2725,7 +2805,9 @@ func TestExtS3BucketsLifecycle(t *testing.T) {
 }
 
 func TestExtS3BucketsValidationAndConfiguration(t *testing.T) {
-	unsupportedHandler := testHandler(t)
+	unsupportedHandler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.S3ApiSupported = false
+	})
 
 	unsupportedReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/buckets", nil)
 	unsupportedReq.Header.Set("Authorization", "Bearer token123")
@@ -2737,6 +2819,7 @@ func TestExtS3BucketsValidationAndConfiguration(t *testing.T) {
 
 	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
 		cfg.S3ApiSupported = true
+		cfg.S3BucketMappingFile = ""
 	})
 
 	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/buckets", strings.NewReader(`{"bucket_name":"","irods_path":"relative/path"}`))
@@ -2783,7 +2866,7 @@ func TestExtS3UserSecretsLifecycle(t *testing.T) {
 	})
 
 	initialSecret := "Aa1Bb~2Cc3.-Dd4Ee5Ff6Gg7Hh8Ii9_Jj0Kk1Ll2"
-	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"test1","secret_key":"`+initialSecret+`"}`))
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"alice","secret_key":"`+initialSecret+`"}`))
 	createReq.Header.Set("Authorization", "Bearer token123")
 	createReq.Header.Set("Content-Type", "application/json")
 	createRec := httptest.NewRecorder()
@@ -2791,24 +2874,24 @@ func TestExtS3UserSecretsLifecycle(t *testing.T) {
 	if createRec.Code != http.StatusCreated {
 		t.Fatalf("expected 201 creating S3 user secret, got %d: %s", createRec.Code, createRec.Body.String())
 	}
-	if body := createRec.Body.String(); !containsAll(body, `"user_name":"test1"`, `"secret_key":"`+initialSecret+`"`, `"irods_path":"/tempZone/home/test1/.irodsext/s3admin/irods-s3-api-secret.txt"`) {
+	if body := createRec.Body.String(); !containsAll(body, `"user_name":"alice"`, `"secret_key":"`+initialSecret+`"`, `"irods_path":"/tempZone/home/alice/.irodsext/s3admin/irods-s3-api-secret.txt"`) {
 		t.Fatalf("unexpected create user secret body: %q", body)
 	}
-	assertS3UserMappingFile(t, userMappingPath, "test1", initialSecret)
+	assertS3UserMappingFile(t, userMappingPath, "alice", initialSecret)
 
-	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets/test1", nil)
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets/alice", nil)
 	getReq.Header.Set("Authorization", "Bearer token123")
 	getRec := httptest.NewRecorder()
 	handler.Routes().ServeHTTP(getRec, getReq)
 	if getRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 getting S3 user secret, got %d: %s", getRec.Code, getRec.Body.String())
 	}
-	if body := getRec.Body.String(); !containsAll(body, `"user_name":"test1"`, `"secret_key":"`+initialSecret+`"`, `"self":{"href":"/api/v1/ext/s3/user-secrets/test1","method":"GET"}`) {
+	if body := getRec.Body.String(); !containsAll(body, `"user_name":"alice"`, `"secret_key":"`+initialSecret+`"`, `"self":{"href":"/api/v1/ext/s3/user-secrets/alice","method":"GET"}`) {
 		t.Fatalf("unexpected get user secret body: %q", body)
 	}
 
 	updatedSecret := strings.Repeat("Z", s3adminext.S3UserSecretKeyLength)
-	updateReq := httptest.NewRequest(http.MethodPut, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"test1","secret_key":"`+updatedSecret+`"}`))
+	updateReq := httptest.NewRequest(http.MethodPut, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"alice","secret_key":"`+updatedSecret+`"}`))
 	updateReq.Header.Set("Authorization", "Bearer token123")
 	updateReq.Header.Set("Content-Type", "application/json")
 	updateRec := httptest.NewRecorder()
@@ -2816,9 +2899,9 @@ func TestExtS3UserSecretsLifecycle(t *testing.T) {
 	if updateRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 updating S3 user secret, got %d: %s", updateRec.Code, updateRec.Body.String())
 	}
-	assertS3UserMappingFile(t, userMappingPath, "test1", updatedSecret)
+	assertS3UserMappingFile(t, userMappingPath, "alice", updatedSecret)
 
-	generateReq := httptest.NewRequest(http.MethodPut, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"test1","auto_generate":true}`))
+	generateReq := httptest.NewRequest(http.MethodPut, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"alice","auto_generate":true}`))
 	generateReq.Header.Set("Authorization", "Bearer token123")
 	generateReq.Header.Set("Content-Type", "application/json")
 	generateRec := httptest.NewRecorder()
@@ -2826,9 +2909,60 @@ func TestExtS3UserSecretsLifecycle(t *testing.T) {
 	if generateRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 generating S3 user secret, got %d: %s", generateRec.Code, generateRec.Body.String())
 	}
-	generatedSecret := readS3UserMappingFile(t, userMappingPath)["test1"].SecretKey
+	generatedSecret := readS3UserMappingFile(t, userMappingPath)["alice"].SecretKey
 	if generatedSecret == "" || generatedSecret == updatedSecret {
 		t.Fatalf("expected generated secret to replace previous mapping, got %q", generatedSecret)
+	}
+
+	nonAdminCrossGetReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets/test1", nil)
+	nonAdminCrossGetReq.Header.Set("Authorization", "Bearer token123")
+	nonAdminCrossGetRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(nonAdminCrossGetRec, nonAdminCrossGetReq)
+	if nonAdminCrossGetRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 getting other user's secret as non-admin, got %d: %s", nonAdminCrossGetRec.Code, nonAdminCrossGetRec.Body.String())
+	}
+
+	nonAdminCrossCreateReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"test1","secret_key":"`+initialSecret+`"}`))
+	nonAdminCrossCreateReq.Header.Set("Authorization", "Bearer token123")
+	nonAdminCrossCreateReq.Header.Set("Content-Type", "application/json")
+	nonAdminCrossCreateRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(nonAdminCrossCreateRec, nonAdminCrossCreateReq)
+	if nonAdminCrossCreateRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 creating other user's secret as non-admin, got %d: %s", nonAdminCrossCreateRec.Code, nonAdminCrossCreateRec.Body.String())
+	}
+
+	nonAdminCrossUpdateReq := httptest.NewRequest(http.MethodPut, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"test1","secret_key":"`+updatedSecret+`"}`))
+	nonAdminCrossUpdateReq.Header.Set("Authorization", "Bearer token123")
+	nonAdminCrossUpdateReq.Header.Set("Content-Type", "application/json")
+	nonAdminCrossUpdateRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(nonAdminCrossUpdateRec, nonAdminCrossUpdateReq)
+	if nonAdminCrossUpdateRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 updating other user's secret as non-admin, got %d: %s", nonAdminCrossUpdateRec.Code, nonAdminCrossUpdateRec.Body.String())
+	}
+
+	nonAdminCrossDeleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/ext/s3/user-secrets/test1", nil)
+	nonAdminCrossDeleteReq.Header.Set("Authorization", "Bearer token123")
+	nonAdminCrossDeleteRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(nonAdminCrossDeleteRec, nonAdminCrossDeleteReq)
+	if nonAdminCrossDeleteRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 deleting other user's secret as non-admin, got %d: %s", nonAdminCrossDeleteRec.Code, nonAdminCrossDeleteRec.Body.String())
+	}
+
+	adminCrossCreateReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"test1","secret_key":"`+initialSecret+`"}`))
+	adminCrossCreateReq.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("otheradmin:secret")))
+	adminCrossCreateReq.Header.Set("Content-Type", "application/json")
+	adminCrossCreateRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(adminCrossCreateRec, adminCrossCreateReq)
+	if adminCrossCreateRec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 creating other user's secret as rodsadmin, got %d: %s", adminCrossCreateRec.Code, adminCrossCreateRec.Body.String())
+	}
+
+	adminCrossDeleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/ext/s3/user-secrets/test1", nil)
+	adminCrossDeleteReq.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("otheradmin:secret")))
+	adminCrossDeleteRec := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(adminCrossDeleteRec, adminCrossDeleteReq)
+	if adminCrossDeleteRec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 deleting other user's secret as rodsadmin, got %d: %s", adminCrossDeleteRec.Code, adminCrossDeleteRec.Body.String())
 	}
 
 	nonAdminListReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets", nil)
@@ -2846,7 +2980,7 @@ func TestExtS3UserSecretsLifecycle(t *testing.T) {
 	if adminListRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 listing user secrets as rodsadmin, got %d: %s", adminListRec.Code, adminListRec.Body.String())
 	}
-	if body := adminListRec.Body.String(); !containsAll(body, `"user_secrets":`, `"user_name":"test1"`, `"secret_key":"`+generatedSecret+`"`, `"count":1`) {
+	if body := adminListRec.Body.String(); !containsAll(body, `"user_secrets":`, `"user_name":"alice"`, `"secret_key":"`+generatedSecret+`"`, `"count":1`) {
 		t.Fatalf("unexpected user secret list body: %s", body)
 	}
 
@@ -2861,8 +2995,8 @@ func TestExtS3UserSecretsLifecycle(t *testing.T) {
 	if nonAdminRefreshRec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 refreshing user mapping as non-admin, got %d: %s", nonAdminRefreshRec.Code, nonAdminRefreshRec.Body.String())
 	}
-	if body := nonAdminRefreshRec.Body.String(); !strings.Contains(body, "insufficient privilege") {
-		t.Fatalf("expected insufficient privilege response, got %s", body)
+	if body := nonAdminRefreshRec.Body.String(); !containsAll(body, `"code":"permission_denied"`, `"message":"permission denied"`) {
+		t.Fatalf("expected permission denied response, got %s", body)
 	}
 
 	refreshReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/user-secrets/refresh-mapping", nil)
@@ -2872,26 +3006,26 @@ func TestExtS3UserSecretsLifecycle(t *testing.T) {
 	if refreshRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 refreshing S3 user mapping, got %d: %s", refreshRec.Code, refreshRec.Body.String())
 	}
-	if body := refreshRec.Body.String(); !containsAll(body, `"user_mapping":`, `"user_name":"test1"`, `"count":1`) {
+	if body := refreshRec.Body.String(); !containsAll(body, `"user_mapping":`, `"user_name":"alice"`, `"count":1`) {
 		t.Fatalf("unexpected user mapping refresh body: %s", body)
 	}
-	assertS3UserMappingFile(t, userMappingPath, "test1", generatedSecret)
+	assertS3UserMappingFile(t, userMappingPath, "alice", generatedSecret)
 	if mapping := readS3UserMappingFile(t, userMappingPath); mapping["stale"].SecretKey != "" {
 		t.Fatalf("expected stale user mapping to be removed after refresh, got %+v", mapping)
 	}
 
-	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/ext/s3/user-secrets/test1", nil)
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/ext/s3/user-secrets/alice", nil)
 	deleteReq.Header.Set("Authorization", "Bearer token123")
 	deleteRec := httptest.NewRecorder()
 	handler.Routes().ServeHTTP(deleteRec, deleteReq)
 	if deleteRec.Code != http.StatusNoContent {
 		t.Fatalf("expected 204 deleting S3 user secret, got %d: %s", deleteRec.Code, deleteRec.Body.String())
 	}
-	if mapping := readS3UserMappingFile(t, userMappingPath); mapping["test1"].SecretKey != "" {
+	if mapping := readS3UserMappingFile(t, userMappingPath); mapping["alice"].SecretKey != "" {
 		t.Fatalf("expected deleted user secret to be removed from mapping, got %+v", mapping)
 	}
 
-	getAfterDeleteReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets/test1", nil)
+	getAfterDeleteReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets/alice", nil)
 	getAfterDeleteReq.Header.Set("Authorization", "Bearer token123")
 	getAfterDeleteRec := httptest.NewRecorder()
 	handler.Routes().ServeHTTP(getAfterDeleteRec, getAfterDeleteReq)
@@ -2901,7 +3035,9 @@ func TestExtS3UserSecretsLifecycle(t *testing.T) {
 }
 
 func TestExtS3UserSecretsValidationAndConfiguration(t *testing.T) {
-	unsupportedHandler := testHandler(t)
+	unsupportedHandler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.S3ApiSupported = false
+	})
 
 	unsupportedReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets/test1", nil)
 	unsupportedReq.Header.Set("Authorization", "Bearer token123")
@@ -2913,6 +3049,7 @@ func TestExtS3UserSecretsValidationAndConfiguration(t *testing.T) {
 
 	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
 		cfg.S3ApiSupported = true
+		cfg.S3UserMappingFile = ""
 	})
 
 	invalidReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"","secret_key":""}`))
@@ -3025,6 +3162,8 @@ func (stubAuthService) VerifyToken(_ context.Context, accessToken string) (auth.
 		Subject:  "user-123",
 		Username: "alice",
 		Scope:    []string{"openid", "profile"},
+		ClientID: "irods-go-rest",
+		Audience: []string{"irods-go-rest"},
 		Active:   true,
 	}, nil
 }
@@ -3089,6 +3228,7 @@ type testCatalogFileSystem struct {
 	serverVersion      *irodstypes.IRODSVersion
 	usersByKey         map[string]*irodstypes.IRODSUser
 	groupMembers       map[string][]string
+	metadataByUser     map[string][]*irodstypes.IRODSMeta
 	lastTrimMinCopies  int
 	lastTrimMinAgeMins int
 }
@@ -3337,6 +3477,7 @@ func newTestCatalogFileSystem() *testCatalogFileSystem {
 		groupMembers: map[string][]string{
 			userKey("research-team", "tempZone"): {"alice"},
 		},
+		metadataByUser: map[string][]*irodstypes.IRODSMeta{},
 	}
 }
 
@@ -4121,6 +4262,35 @@ func (f *testCatalogFileSystem) ListGroupMembers(zoneName string, groupName stri
 	return members, nil
 }
 
+func (f *testCatalogFileSystem) ListUserMetadata(username string, zoneName string) ([]*irodstypes.IRODSMeta, error) {
+	if _, ok := f.usersByKey[userKey(username, zoneName)]; !ok {
+		return nil, irodstypes.NewUserNotFoundError(username)
+	}
+
+	metadata := f.metadataByUser[userKey(username, zoneName)]
+	result := make([]*irodstypes.IRODSMeta, 0, len(metadata))
+	for _, meta := range metadata {
+		if meta == nil {
+			continue
+		}
+		copy := *meta
+		result = append(result, &copy)
+	}
+	return result, nil
+}
+
+func (f *testCatalogFileSystem) AddUserMetadata(username string, zoneName string, attribute string, value string, unit string) error {
+	if _, ok := f.usersByKey[userKey(username, zoneName)]; !ok {
+		return irodstypes.NewUserNotFoundError(username)
+	}
+	if f.hasUserMetadata(username, zoneName, attribute, value, unit) {
+		return errors.New("already exists")
+	}
+
+	f.addUserMetadata(username, zoneName, attribute, value, unit)
+	return nil
+}
+
 func (f *testCatalogFileSystem) CreateUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error) {
 	key := userKey(username, zoneName)
 	if existing, ok := f.usersByKey[key]; ok {
@@ -4135,6 +4305,10 @@ func (f *testCatalogFileSystem) CreateUser(username string, zoneName string, use
 	}
 	f.usersByKey[key] = user
 	return user, nil
+}
+
+func (f *testCatalogFileSystem) CreateUserGroup(groupName string, zoneName string) (*irodstypes.IRODSUser, error) {
+	return f.CreateUser(groupName, zoneName, irodstypes.IRODSUserRodsGroup)
 }
 
 func (f *testCatalogFileSystem) ChangeUserPassword(username string, zoneName string, _ string) error {
@@ -4160,6 +4334,7 @@ func (f *testCatalogFileSystem) RemoveUser(username string, zoneName string, _ i
 	}
 	delete(f.usersByKey, key)
 	delete(f.groupMembers, key)
+	delete(f.metadataByUser, key)
 	for groupKey, members := range f.groupMembers {
 		filtered := members[:0]
 		for _, member := range members {
@@ -4171,6 +4346,10 @@ func (f *testCatalogFileSystem) RemoveUser(username string, zoneName string, _ i
 		f.groupMembers[groupKey] = filtered
 	}
 	return nil
+}
+
+func (f *testCatalogFileSystem) RemoveUserGroup(groupName string, zoneName string) error {
+	return f.RemoveUser(groupName, zoneName, irodstypes.IRODSUserRodsGroup)
 }
 
 func (f *testCatalogFileSystem) AddGroupMember(groupName string, username string, zoneName string) error {
@@ -4214,6 +4393,28 @@ func (f *testCatalogFileSystem) RemoveGroupMember(groupName string, username str
 	}
 	f.groupMembers[key] = filtered
 	return nil
+}
+
+func (f *testCatalogFileSystem) addUserMetadata(username string, zoneName string, attribute string, value string, unit string) {
+	key := userKey(username, zoneName)
+	f.metadataByUser[key] = append(f.metadataByUser[key], &irodstypes.IRODSMeta{
+		AVUID: int64(len(f.metadataByUser[key]) + 1),
+		Name:  attribute,
+		Value: value,
+		Units: unit,
+	})
+}
+
+func (f *testCatalogFileSystem) hasUserMetadata(username string, zoneName string, attribute string, value string, unit string) bool {
+	for _, meta := range f.metadataByUser[userKey(username, zoneName)] {
+		if meta == nil {
+			continue
+		}
+		if meta.Name == attribute && meta.Value == value && meta.Units == unit {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *testCatalogFileSystem) Release() {}
@@ -4590,6 +4791,39 @@ func TestPutUserUpdatesUserAsRodsAdmin(t *testing.T) {
 	}
 }
 
+func TestPutUserReconcileCreatesMissingUserAsRodsAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/user/charlie?reconcile=true", strings.NewReader(`{"type":"rodsuser"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("rods:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"name":"charlie"`, `"type":"rodsuser"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestPutUserReconcileMissingWithoutTypeReturnsNotFound(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/user/charlie?reconcile=true", strings.NewReader(`{"password":"secret"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("rods:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
 func TestPostUserRequiresAdminOrGroupAdmin(t *testing.T) {
 	handler := testHandler(t)
 
@@ -4620,6 +4854,54 @@ func TestPostUserCreatesUserAsGroupAdmin(t *testing.T) {
 	}
 	if body := rec.Body.String(); !containsAll(body, `"name":"charlie"`, `"type":"rodsuser"`) {
 		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestPostUserDuplicateStrictConflicts(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/user", strings.NewReader(`{"name":"alice","type":"rodsuser"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", rec.Code)
+	}
+}
+
+func TestPostUserReconcileExistingAsGroupAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/user?reconcile=true", strings.NewReader(`{"name":"alice","type":"rodsuser"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"name":"alice"`, `"type":"rodsuser"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestPostUserReconcileExistingTypeMismatchConflicts(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/user?reconcile=true", strings.NewReader(`{"name":"alice","type":"rodsadmin"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", rec.Code)
 	}
 }
 
@@ -4662,6 +4944,38 @@ func TestDeleteUserRemovesUserAsGroupAdmin(t *testing.T) {
 
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d", rec.Code)
+	}
+}
+
+func TestDeleteUserReconcileMissingAsGroupAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/user/missing-user?reconcile=true", nil)
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rec.Code)
+	}
+}
+
+func TestUserMutationRejectsInvalidReconcileFlag(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/user?reconcile=sometimes", strings.NewReader(`{"name":"charlie","type":"rodsuser"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"code":"invalid_request"`, `"message":"reconcile must be true or false"`) {
+		t.Fatalf("unexpected response body: %q", body)
 	}
 }
 
@@ -4749,6 +5063,24 @@ func TestPostUserGroupRequiresAdminOrGroupAdmin(t *testing.T) {
 	}
 }
 
+func TestPostUserGroupRejectsMissingName(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/usergroup", strings.NewReader(`{"name":" "}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"code":"invalid_request"`, `"message":"user group create validation failed"`, `"fields":{"name":"name is required"}`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
 func TestPostUserGroupCreatesAsGroupAdmin(t *testing.T) {
 	handler := testHandler(t)
 
@@ -4767,10 +5099,57 @@ func TestPostUserGroupCreatesAsGroupAdmin(t *testing.T) {
 	}
 }
 
+func TestPostUserGroupDuplicateStrictConflicts(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/usergroup", strings.NewReader(`{"name":"research-team"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", rec.Code)
+	}
+}
+
+func TestPostUserGroupReconcileExistingAsGroupAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/usergroup?reconcile=true", strings.NewReader(`{"name":"research-team"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"name":"research-team"`, `"type":"rodsgroup"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
 func TestDeleteUserGroupRemovesAsGroupAdmin(t *testing.T) {
 	handler := testHandler(t)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/usergroup/research-team", nil)
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rec.Code)
+	}
+}
+
+func TestDeleteUserGroupReconcileMissingAsGroupAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/usergroup/missing-team?reconcile=true", nil)
 	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
 	rec := httptest.NewRecorder()
 
@@ -4816,6 +5195,24 @@ func TestPostUserGroupMemberAddsUserAsGroupAdmin(t *testing.T) {
 	}
 }
 
+func TestPostUserGroupMemberReconcileExistingAsGroupAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/usergroup/research-team/member?reconcile=true", strings.NewReader(`{"user_name":"alice"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"name":"research-team"`, `"name":"alice"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
 func TestPostUserGroupMemberRequiresAdminOrGroupAdmin(t *testing.T) {
 	handler := testHandler(t)
 
@@ -4830,6 +5227,24 @@ func TestPostUserGroupMemberRequiresAdminOrGroupAdmin(t *testing.T) {
 		t.Fatalf("expected 403, got %d", rec.Code)
 	}
 	if body := rec.Body.String(); !containsAll(body, `"code":"permission_denied"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestPostUserGroupMemberRejectsMissingUserName(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/usergroup/research-team/member", strings.NewReader(`{"user_name":" "}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"code":"invalid_request"`, `"message":"user group member validation failed"`, `"fields":{"user_name":"user_name is required"}`) {
 		t.Fatalf("unexpected response body: %q", body)
 	}
 }
@@ -4851,6 +5266,24 @@ func TestDeleteUserGroupMemberRemovesUserAsGroupAdmin(t *testing.T) {
 	}
 }
 
+func TestDeleteUserGroupMemberReconcileMissingAsGroupAdmin(t *testing.T) {
+	handler, filesystem := testHandlerWithConfig(t, nil)
+	filesystem.addUserMetadata("research-team", "tempZone", usersyncext.AVUAttributeManaged, usersyncext.AVUValueTrue, "")
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/usergroup/research-team/member/bob?reconcile=true", nil)
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"name":"research-team"`, `"name":"alice"`) || strings.Contains(body, `"name":"bob"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
 func TestDeleteUserGroupMemberRequiresAdminOrGroupAdmin(t *testing.T) {
 	handler := testHandler(t)
 
@@ -4865,5 +5298,99 @@ func TestDeleteUserGroupMemberRequiresAdminOrGroupAdmin(t *testing.T) {
 	}
 	if body := rec.Body.String(); !containsAll(body, `"code":"permission_denied"`) {
 		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestUserGroupMutationRejectsInvalidReconcileFlag(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/usergroup?reconcile=sometimes", strings.NewReader(`{"name":"science"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !containsAll(body, `"code":"invalid_request"`, `"message":"reconcile must be true or false"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestUserGroupHandlersRejectMissingPathParameters(t *testing.T) {
+	handler := testHandler(t)
+
+	tests := []struct {
+		name       string
+		method     string
+		target     string
+		body       string
+		pathValues map[string]string
+		handle     func(http.ResponseWriter, *http.Request)
+		want       string
+	}{
+		{
+			name:   "get group missing group_name",
+			method: http.MethodGet,
+			target: "/api/v1/usergroup/",
+			handle: handler.getUserGroup,
+			want:   `"message":"group_name path parameter is required"`,
+		},
+		{
+			name:   "delete group missing group_name",
+			method: http.MethodDelete,
+			target: "/api/v1/usergroup/",
+			handle: handler.deleteUserGroup,
+			want:   `"message":"group_name path parameter is required"`,
+		},
+		{
+			name:   "post member missing group_name",
+			method: http.MethodPost,
+			target: "/api/v1/usergroup//member",
+			body:   `{"user_name":"alice"}`,
+			handle: handler.postUserGroupMember,
+			want:   `"message":"group_name path parameter is required"`,
+		},
+		{
+			name:   "delete member missing group_name",
+			method: http.MethodDelete,
+			target: "/api/v1/usergroup//member/alice",
+			handle: handler.deleteUserGroupMember,
+			want:   `"message":"group_name path parameter is required"`,
+		},
+		{
+			name:   "delete member missing user_name",
+			method: http.MethodDelete,
+			target: "/api/v1/usergroup/research-team/member/",
+			pathValues: map[string]string{
+				"group_name": "research-team",
+			},
+			handle: handler.deleteUserGroupMember,
+			want:   `"message":"user_name path parameter is required"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.target, strings.NewReader(tt.body))
+			if tt.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			for key, value := range tt.pathValues {
+				req.SetPathValue(key, value)
+			}
+			rec := httptest.NewRecorder()
+
+			tt.handle(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d", rec.Code)
+			}
+			if body := rec.Body.String(); !containsAll(body, `"code":"invalid_request"`, tt.want) {
+				t.Fatalf("unexpected response body: %q", body)
+			}
+		})
 	}
 }

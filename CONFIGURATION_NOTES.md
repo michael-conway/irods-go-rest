@@ -1,74 +1,70 @@
 # Configuration Notes
 
-Use this file as the quick reference for `irods-go-rest` configuration.
+This is the runtime configuration reference for `irods-go-rest`.
 
-## Config sources
+## Sources And Precedence
 
-The service reads configuration in this order:
-
-1. `rest-config.yaml`
-2. `GOREST_*` environment variable overrides
-3. Secret files for sensitive values
-
-To use one exact config file, set:
+The service reads `rest-config.yaml` by default. To use one exact file, set:
 
 ```bash
 IRODS_REST_CONFIG_FILE=/path/to/rest-config.yaml
 ```
 
-## Main runtime settings
+Search paths without `IRODS_REST_CONFIG_FILE`:
 
-These are the settings you will usually care about:
+1. paths passed by the caller
+2. `/etc/irods-ext/`
+3. `$HOME/.irods-go-rest`
+4. current working directory
+
+Environment variables override config-file values. Secret-file settings are used only when the corresponding explicit secret value is empty.
+
+## Common Runtime Settings
 
 ```bash
 GOREST_PUBLIC_URL=http://localhost:8080
 IRODS_REST_ADDR=:8080
-GOREST_CORS_ALLOWED_ORIGINS=http://localhost:8081,http://127.0.0.1:8081,http://localhost:5173,http://127.0.0.1:5173
+GOREST_WEB_ENABLED=false
+GOREST_TRUST_FORWARDED_HEADERS=false
+GOREST_CORS_ALLOWED_ORIGINS=http://localhost:8081,http://localhost:5173
 GOREST_REST_LOG_LEVEL=info
+```
 
+`GOREST_PUBLIC_URL` is the externally reachable service URL used for redirects and generated links. `IRODS_REST_ADDR` is the HTTP bind address; use `:8080` in containers.
+
+Keep `GOREST_TRUST_FORWARDED_HEADERS=false` unless REST is behind a trusted proxy that controls `X-Forwarded-*` headers. In untrusted environments, prefer explicit `GOREST_PUBLIC_URL`.
+
+HTTP hardening defaults are applied when unset or non-positive:
+
+```bash
+GOREST_HTTP_READ_TIMEOUT_SECONDS=30
+GOREST_HTTP_READ_HEADER_TIMEOUT_SECONDS=5
+GOREST_HTTP_WRITE_TIMEOUT_SECONDS=30
+GOREST_HTTP_IDLE_TIMEOUT_SECONDS=120
+GOREST_HTTP_MAX_HEADER_BYTES=1048576
+```
+
+## iRODS Connection
+
+```bash
 GOREST_IRODS_HOST=irods-provider
 GOREST_IRODS_PORT=1247
 GOREST_IRODS_ZONE=tempZone
 GOREST_IRODS_ADMIN_USER=rods
+GOREST_IRODS_ADMIN_PASSWORD=rods
 GOREST_IRODS_ADMIN_LOGIN_TYPE=native
 GOREST_IRODS_AUTH_SCHEME=native
-GOREST_IRODS_DEFAULT_RESOURCE=demoResc
+GOREST_IRODS_DEFAULT_RESOURCE=providerResc
 GOREST_IRODS_NEGOTIATION_POLICY=CS_NEG_DONT_CARE
-GOREST_RESOURCE_AFFINITY=demoResc,edgeResc
-GOREST_S3_BUCKET_MAPPING_FILE=/config/irods-s3-bucket-mapping.json
-GOREST_REPLICA_TRIM_MIN_COPIES=1
-GOREST_REPLICA_TRIM_MIN_AGE_MINUTES=0
-
-GOREST_OIDC_URL=https://localhost:8443
-GOREST_OIDC_REALM=drs
-GOREST_OIDC_CLIENT_ID=irods-go-rest
-GOREST_OIDC_SCOPE="openid profile email"
-GOREST_OIDC_INSECURE_SKIP_VERIFY=false
 ```
 
-`PublicURL` is the externally reachable URL used for redirects and generated
-links. `IRODS_REST_ADDR` is the socket address the HTTP server binds to. In
-containers, use `IRODS_REST_ADDR=:8080` so Docker port publishing can reach the
-service.
+`IrodsAdminLoginType` controls the admin/proxy account used by bearer-token and ticket-backed requests. `IrodsAuthScheme` controls direct user credentials, including Basic auth requests.
 
-`GOREST_CORS_ALLOWED_ORIGINS` is optional and accepts a comma-separated list of
-browser origins allowed to call the API from a separate frontend origin. This is
-needed when Starbase is served from a different host or port than
-`irods-go-rest`, for example `http://localhost:8081` for the containerized
-Starbase frontend or `http://localhost:5173` for the Vite dev server.
-
-If your local Keycloak uses a self-signed certificate, you can temporarily use:
-
-```bash
-GOREST_OIDC_INSECURE_SKIP_VERIFY=true
-```
-
-Use that only for local development.
+PAM auth requires SSL in go-irodsclient. If the iRODS server returns `CS_NEG_REFUSE`, use native auth for that connection path or enable SSL negotiation on the iRODS server.
 
 ## iRODS SSL
 
-For SSL-configured iRODS servers, set the negotiation policy to require SSL and
-provide the optional SSL settings needed by that zone:
+For SSL-configured zones:
 
 ```yaml
 IrodsNegotiationPolicy: CS_NEG_REQUIRE
@@ -84,7 +80,7 @@ IrodsSSLConfig:
   ServerName: irods.example.org
 ```
 
-Environment variable equivalents:
+Environment equivalents:
 
 ```bash
 GOREST_IRODS_NEGOTIATION_POLICY=CS_NEG_REQUIRE
@@ -99,105 +95,116 @@ GOREST_IRODS_SSL_DH_PARAMS_FILE=
 GOREST_IRODS_SSL_SERVER_NAME=irods.example.org
 ```
 
-`VerifyServer` accepts `hostname`, `cert`, or `none`. Empty encryption settings
-default to the go-irodsclient defaults.
+`VerifyServer` accepts `hostname`, `cert`, or `none`. Empty encryption settings fall back to go-irodsclient defaults.
 
-`IrodsAdminLoginType` controls the admin/proxy account used by bearer-token and
-ticket-backed requests. `IrodsAuthScheme` controls direct user credentials, such
-as Basic auth requests. PAM auth requires SSL in go-irodsclient; if the iRODS
-server returns `CS_NEG_REFUSE`, use native auth for that connection path or
-enable SSL negotiation on the iRODS server.
-
-## Resource affinity
-
-`ResourceAffinity` is optional and represents iRODS resources that are
-considered proximate to this service instance.
-
-`S3ApiSupported` gates `/api/v1/ext/s3/*` administration routes. When it is
-false, those endpoints return a not-supported response.
-
-`S3BucketMappingFile` must be the absolute path to the iRODS S3 API local-file
-bucket mapping JSON. The REST service rewrites this file after successful bucket
-AVU mutations so the S3 API can reload the mapping.
-
-`S3UserMappingFile` must be the absolute path to the iRODS S3 API local-file user
-mapping JSON. The REST service rewrites this file after successful S3 user secret
-updates and when the user mapping refresh endpoint rebuilds the file from
-`iRODS:S3:Secret` AVUs.
-
-Supported forms:
-
-```yaml
-ResourceAffinity:
-  - demoResc
-  - edgeResc
-```
-
-or environment override:
+## OIDC And Browser Login
 
 ```bash
-GOREST_RESOURCE_AFFINITY=demoResc,edgeResc
+GOREST_OIDC_URL=https://keycloak:8443
+GOREST_OIDC_AUTH_URL=https://localhost:8443
+GOREST_OIDC_REALM=drs
+GOREST_OIDC_CLIENT_ID=irods-go-rest
+GOREST_OIDC_CLIENT_SECRET=secret
+GOREST_OIDC_SCOPE="openid profile email"
+GOREST_OIDC_INSECURE_SKIP_VERIFY=false
 ```
 
-## Replica trim defaults
+`GOREST_OIDC_URL` is used by REST for backend token exchange and validation. `GOREST_OIDC_AUTH_URL` controls the browser redirect target for `/web/login`; if unset, REST uses `GOREST_OIDC_URL`.
 
-`ReplicaTrimMinCopies` and `ReplicaTrimMinAgeMinutes` are optional runtime defaults
-used by `PATCH /api/v1/path/replicas` and `DELETE /api/v1/path/replicas` when
-`min_copies` / `min_age_minutes` are not supplied in the request body.
+`GOREST_WEB_ENABLED` controls `/web/*` routes. Keep it disabled for deployments that do not need REST-hosted browser login. When enabled, web sessions are in-memory, bounded, and expiring:
 
-```yaml
-ReplicaTrimMinCopies: 1
-ReplicaTrimMinAgeMinutes: 0
-```
+- session expiry follows token `expires_in` when present
+- fallback session TTL is `15m`
+- maximum sessions: `1024`, with oldest-session eviction
 
-or environment override:
+For self-signed local Keycloak certificates, use `GOREST_OIDC_INSECURE_SKIP_VERIFY=true` only in development.
+
+## Resource And Replica Settings
 
 ```bash
+GOREST_RESOURCE_AFFINITY=providerResc,resourceResc
 GOREST_REPLICA_TRIM_MIN_COPIES=1
 GOREST_REPLICA_TRIM_MIN_AGE_MINUTES=0
 ```
 
+`ResourceAffinity` is optional and advertises iRODS resources proximate to this REST instance. YAML form:
+
+```yaml
+ResourceAffinity:
+  - providerResc
+  - resourceResc
+```
+
+Replica trim defaults are used by `PATCH /api/v1/path/replicas` and `DELETE /api/v1/path/replicas` when the request body does not supply `min_copies` or `min_age_minutes`.
+
+## S3 Admin Extension
+
+```bash
+GOREST_S3_API_SUPPORTED=true
+GOREST_S3_BUCKET_MAPPING_FILE=/shared-s3-config/irods-s3-bucket-mapping.json
+GOREST_S3_USER_MAPPING_FILE=/shared-s3-config/irods-s3-user-mapping.json
+```
+
+`S3ApiSupported=false` makes `/api/v1/ext/s3/*` return `501 not_supported`.
+
+`S3BucketMappingFile` must be an absolute path to the iRODS S3 API bucket mapping JSON. REST rewrites it after successful bucket AVU mutations and refresh operations.
+
+`S3UserMappingFile` must be an absolute path to the iRODS S3 API user mapping JSON. REST rewrites it after S3 user secret updates and user mapping refresh operations.
+
+S3 user-secret authorization:
+
+- listing all secrets and refreshing the user mapping require rodsadmin
+- per-user get/create/update/delete is self-only by default
+- rodsadmin may operate on any user
+
 ## Secrets
 
-Prefer secret files over inline secrets.
-
-Supported file-backed secret settings:
+Prefer secret files over inline secrets in container deployments:
 
 ```yaml
 IrodsAdminPasswordFile: /run/secrets/irods_admin_password
 OidcClientSecretFile: /run/secrets/oidc_client_secret
 ```
 
-Environment variable equivalents:
+Environment equivalents:
 
 ```bash
 GOREST_IRODS_ADMIN_PASSWORD_FILE=/run/secrets/irods_admin_password
 GOREST_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc_client_secret
 ```
 
-Secret precedence is:
+Secret resolution order:
 
-1. explicit value
+1. explicit value, such as `IrodsAdminPassword` or `GOREST_IRODS_ADMIN_PASSWORD`
 2. secret file
-3. empty
+3. empty value
 
-## Recommended pattern
+## Test Settings
 
-For local development:
+Integration and E2E tests share `GOREST_E2E_CONFIG_FILE`.
 
-- keep normal settings in `rest-config.yaml`
-- use `GOREST_*` for quick overrides
+Useful test-only keys:
 
-For containers:
+```yaml
+IrodsPrimaryTestUser: test1
+IrodsPrimaryTestPassword: test
+IrodsSecondaryTestUser: test2
+IrodsSecondaryTestPassword: test
+TestResource1: providerResc
+TestResource2: resourceResc
+TestBearerToken: ""
+```
 
-- mount the config file
-- mount secrets separately
-- point `IRODS_REST_CONFIG_FILE` at the mounted config file
+Use [e2e/rest-config.e2e.sample.yaml](./e2e/rest-config.e2e.sample.yaml) with `irods-grid-stack` as the starting point for host-run live tests.
 
-Example:
+## Container Pattern
+
+Mount config and secrets separately:
 
 ```bash
 IRODS_REST_CONFIG_FILE=/config/rest-config.yaml
 GOREST_IRODS_ADMIN_PASSWORD_FILE=/run/secrets/irods_admin_password
 GOREST_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc_client_secret
 ```
+
+For `irods-grid-stack`, prefer setting REST environment through that stack's `.env` and mounted config files rather than editing this repository's sample config for deployment-specific values.

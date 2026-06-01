@@ -12,13 +12,17 @@ type UserGroupListOptions struct {
 	Prefix string
 }
 
+type UserGroupMutationOptions struct {
+	Reconcile bool
+}
+
 type UserGroupService interface {
 	ListUserGroups(ctx context.Context, options UserGroupListOptions) ([]domain.UserGroup, error)
 	GetUserGroup(ctx context.Context, groupName string, zone string) (domain.UserGroup, error)
-	CreateUserGroup(ctx context.Context, groupName string, zone string) (domain.UserGroup, error)
-	DeleteUserGroup(ctx context.Context, groupName string, zone string) error
-	AddUserToGroup(ctx context.Context, groupName string, username string, zone string) (domain.UserGroup, error)
-	RemoveUserFromGroup(ctx context.Context, groupName string, username string, zone string) (domain.UserGroup, error)
+	CreateUserGroup(ctx context.Context, groupName string, zone string, options UserGroupMutationOptions) (domain.UserGroup, error)
+	DeleteUserGroup(ctx context.Context, groupName string, zone string, options UserGroupMutationOptions) error
+	AddUserToGroup(ctx context.Context, groupName string, username string, zone string, options UserGroupMutationOptions) (domain.UserGroup, error)
+	RemoveUserFromGroup(ctx context.Context, groupName string, username string, zone string, options UserGroupMutationOptions) (domain.UserGroup, error)
 }
 
 type userGroupService struct {
@@ -50,38 +54,46 @@ func (s *userGroupService) GetUserGroup(ctx context.Context, groupName string, z
 	return s.userGroups.GetUserGroup(ctx, irodsRequestContext(requestContext), groupName, zone)
 }
 
-func (s *userGroupService) CreateUserGroup(ctx context.Context, groupName string, zone string) (domain.UserGroup, error) {
+func (s *userGroupService) CreateUserGroup(ctx context.Context, groupName string, zone string, options UserGroupMutationOptions) (domain.UserGroup, error) {
 	requestContext, err := RequestContextFromContext(ctx)
 	if err != nil {
 		return domain.UserGroup{}, err
 	}
 
-	return s.userGroups.CreateUserGroup(ctx, irodsRequestContext(requestContext), groupName, zone)
+	return s.userGroups.CreateUserGroup(ctx, irodsRequestContext(requestContext), groupName, zone, irods.UserGroupMutationOptions{
+		Reconcile: options.Reconcile,
+	})
 }
 
-func (s *userGroupService) DeleteUserGroup(ctx context.Context, groupName string, zone string) error {
+func (s *userGroupService) DeleteUserGroup(ctx context.Context, groupName string, zone string, options UserGroupMutationOptions) error {
 	requestContext, err := RequestContextFromContext(ctx)
 	if err != nil {
 		return err
 	}
 
-	return s.userGroups.DeleteUserGroup(ctx, irodsRequestContext(requestContext), groupName, zone)
+	return s.userGroups.DeleteUserGroup(ctx, irodsRequestContext(requestContext), groupName, zone, irods.UserGroupMutationOptions{
+		Reconcile: options.Reconcile,
+	})
 }
 
-func (s *userGroupService) AddUserToGroup(ctx context.Context, groupName string, username string, zone string) (domain.UserGroup, error) {
+func (s *userGroupService) AddUserToGroup(ctx context.Context, groupName string, username string, zone string, options UserGroupMutationOptions) (domain.UserGroup, error) {
 	requestContext, err := RequestContextFromContext(ctx)
 	if err != nil {
 		return domain.UserGroup{}, err
 	}
 
-	return s.userGroups.AddUserToGroup(ctx, irodsRequestContext(requestContext), groupName, username, zone)
+	return s.userGroups.AddUserToGroup(ctx, irodsRequestContext(requestContext), groupName, username, zone, irods.UserGroupMutationOptions{
+		Reconcile: options.Reconcile,
+	})
 }
 
-func (s *userGroupService) RemoveUserFromGroup(ctx context.Context, groupName string, username string, zone string) (domain.UserGroup, error) {
+func (s *userGroupService) RemoveUserFromGroup(ctx context.Context, groupName string, username string, zone string, options UserGroupMutationOptions) (domain.UserGroup, error) {
 	requestContext, err := RequestContextFromContext(ctx)
 	if err != nil {
 		return domain.UserGroup{}, err
 	}
 
-	return s.userGroups.RemoveUserFromGroup(ctx, irodsRequestContext(requestContext), groupName, username, zone)
+	return s.userGroups.RemoveUserFromGroup(ctx, irodsRequestContext(requestContext), groupName, username, zone, irods.UserGroupMutationOptions{
+		Reconcile: options.Reconcile,
+	})
 }

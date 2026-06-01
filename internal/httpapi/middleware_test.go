@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/michael-conway/irods-go-rest/internal/requestctx"
 )
 
 func TestRequestLoggerEmitsStructuredFields(t *testing.T) {
@@ -82,7 +84,93 @@ func TestRequestLoggerCapturesAuthFailureMetadata(t *testing.T) {
 	}
 }
 
+func TestRequestLoggerPropagatesRequestAuditMetadata(t *testing.T) {
+	handler := &Handler{verifier: stubAuthService{}}
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/v1/path", handler.requireBearer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		metadata, ok := requestctx.MetadataFromContext(r.Context())
+		if !ok {
+			t.Fatal("expected request metadata in context")
+		}
+		if metadata.RequestID != "req-123" || metadata.Source != "irods-keycloak-admin" || metadata.Actor != "sync-apply" || metadata.IdempotencyKey != "idem-123" {
+			t.Fatalf("unexpected request metadata: %+v", metadata)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set(requestIDHeader, "req-123")
+	req.Header.Set(requestSourceHeader, "irods-keycloak-admin")
+	req.Header.Set(requestActorHeader, "sync-apply")
+	req.Header.Set(idempotencyKeyHeader, "idem-123")
+
+	record, recorder := captureRequestLogRecordAndRecorder(t, requestLogger(mux), req)
+
+	if got := recorder.Header().Get(requestIDHeader); got != "req-123" {
+		t.Fatalf("expected response request id req-123, got %q", got)
+	}
+	if got := stringField(record, "request_id"); got != "req-123" {
+		t.Fatalf("expected request_id req-123, got %q", got)
+	}
+	if got := stringField(record, "request_source"); got != "irods-keycloak-admin" {
+		t.Fatalf("expected request_source irods-keycloak-admin, got %q", got)
+	}
+	if got := stringField(record, "request_actor"); got != "sync-apply" {
+		t.Fatalf("expected request_actor sync-apply, got %q", got)
+	}
+	if got := stringField(record, "idempotency_key"); got != "idem-123" {
+		t.Fatalf("expected idempotency_key idem-123, got %q", got)
+	}
+	if got := stringField(record, "auth_subject"); got != "user-123" {
+		t.Fatalf("expected auth_subject user-123, got %q", got)
+	}
+	if got := stringField(record, "auth_client_id"); got != "irods-go-rest" {
+		t.Fatalf("expected auth_client_id irods-go-rest, got %q", got)
+	}
+	if got := stringField(record, "auth_scope"); got != "openid profile" {
+		t.Fatalf("expected auth_scope openid profile, got %q", got)
+	}
+	if got := stringField(record, "auth_audience"); got != "irods-go-rest" {
+		t.Fatalf("expected auth_audience irods-go-rest, got %q", got)
+	}
+}
+
+func TestRequestLoggerGeneratesRequestIDWhenAbsent(t *testing.T) {
+	handler := &Handler{verifier: stubAuthService{}}
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/v1/path", handler.requireBearer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		metadata, ok := requestctx.MetadataFromContext(r.Context())
+		if !ok {
+			t.Fatal("expected request metadata in context")
+		}
+		if strings.TrimSpace(metadata.RequestID) == "" {
+			t.Fatal("expected generated request id in context")
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/path", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+
+	record, recorder := captureRequestLogRecordAndRecorder(t, requestLogger(mux), req)
+
+	responseRequestID := recorder.Header().Get(requestIDHeader)
+	if strings.TrimSpace(responseRequestID) == "" {
+		t.Fatal("expected generated response request id")
+	}
+	if got := stringField(record, "request_id"); got != responseRequestID {
+		t.Fatalf("expected log request_id %q, got %q", responseRequestID, got)
+	}
+}
+
 func captureRequestLogRecord(t *testing.T, handler http.Handler, req *http.Request) map[string]any {
+	t.Helper()
+	record, _ := captureRequestLogRecordAndRecorder(t, handler, req)
+	return record
+}
+
+func captureRequestLogRecordAndRecorder(t *testing.T, handler http.Handler, req *http.Request) (map[string]any, *httptest.ResponseRecorder) {
 	t.Helper()
 
 	previous := slog.Default()
@@ -104,7 +192,7 @@ func captureRequestLogRecord(t *testing.T, handler http.Handler, req *http.Reque
 	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &record); err != nil {
 		t.Fatalf("decode request log json: %v", err)
 	}
-	return record
+	return record, recorder
 }
 
 func stringField(record map[string]any, key string) string {
