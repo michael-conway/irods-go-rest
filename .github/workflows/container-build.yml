@@ -5,6 +5,9 @@ on:
     branches:
       - main
       - develop
+  release:
+    types:
+      - published
 
 jobs:
   docker:
@@ -35,6 +38,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
+            type=raw,value=${{ github.event.release.tag_name }},enable=${{ github.event_name == 'release' }}
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value={{branch}}
             type=sha

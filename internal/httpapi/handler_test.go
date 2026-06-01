@@ -332,8 +332,10 @@ func TestWebCallbackSurfacesOAuthError(t *testing.T) {
 	}
 }
 
-func TestWebRoutesDisabledByDefault(t *testing.T) {
-	handler := testHandler(t)
+func TestWebRoutesDisabledWhenConfigured(t *testing.T) {
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.WebEnabled = false
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/web/login", nil)
 	rec := httptest.NewRecorder()
@@ -491,7 +493,9 @@ func TestAPIAcceptsValidBearerToken(t *testing.T) {
 }
 
 func TestGetServerInfo(t *testing.T) {
-	handler := testHandler(t)
+	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.IrodsHost = "irods.local"
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/server", nil)
 	req.Header.Set("Authorization", "Bearer token123")
@@ -2801,7 +2805,9 @@ func TestExtS3BucketsLifecycle(t *testing.T) {
 }
 
 func TestExtS3BucketsValidationAndConfiguration(t *testing.T) {
-	unsupportedHandler := testHandler(t)
+	unsupportedHandler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.S3ApiSupported = false
+	})
 
 	unsupportedReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/buckets", nil)
 	unsupportedReq.Header.Set("Authorization", "Bearer token123")
@@ -2813,6 +2819,7 @@ func TestExtS3BucketsValidationAndConfiguration(t *testing.T) {
 
 	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
 		cfg.S3ApiSupported = true
+		cfg.S3BucketMappingFile = ""
 	})
 
 	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/buckets", strings.NewReader(`{"bucket_name":"","irods_path":"relative/path"}`))
@@ -3028,7 +3035,9 @@ func TestExtS3UserSecretsLifecycle(t *testing.T) {
 }
 
 func TestExtS3UserSecretsValidationAndConfiguration(t *testing.T) {
-	unsupportedHandler := testHandler(t)
+	unsupportedHandler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
+		cfg.S3ApiSupported = false
+	})
 
 	unsupportedReq := httptest.NewRequest(http.MethodGet, "/api/v1/ext/s3/user-secrets/test1", nil)
 	unsupportedReq.Header.Set("Authorization", "Bearer token123")
@@ -3040,6 +3049,7 @@ func TestExtS3UserSecretsValidationAndConfiguration(t *testing.T) {
 
 	handler, _ := testHandlerWithConfig(t, func(cfg *config.RestConfig) {
 		cfg.S3ApiSupported = true
+		cfg.S3UserMappingFile = ""
 	})
 
 	invalidReq := httptest.NewRequest(http.MethodPost, "/api/v1/ext/s3/user-secrets", strings.NewReader(`{"user_name":"","secret_key":""}`))
