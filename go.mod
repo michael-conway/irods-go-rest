@@ -3,9 +3,9 @@ module github.com/michael-conway/irods-go-rest
 go 1.25.0
 
 require (
-	github.com/cyverse/go-irodsclient v0.20.0
+	github.com/cyverse/go-irodsclient v0.20.1-0.20260605235210-f3125ea03517
 	github.com/go-viper/mapstructure/v2 v2.5.0
-	github.com/michael-conway/go-irodsclient-extensions v0.0.0-20260610120927-d32025ae31a8
+	github.com/michael-conway/go-irodsclient-extensions v0.0.0-20260610123335-df88b0867332
 	github.com/rs/xid v1.6.0
 )
 
