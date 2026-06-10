@@ -1,11 +1,11 @@
 module github.com/michael-conway/irods-go-rest
 
-go 1.25
+go 1.25.0
 
 require (
-	github.com/cyverse/go-irodsclient v0.19.10
-	github.com/go-viper/mapstructure/v2 v2.4.0
-	github.com/michael-conway/go-irodsclient-extensions v0.0.0-20260601182914-cef793261f6a
+	github.com/cyverse/go-irodsclient v0.20.0
+	github.com/go-viper/mapstructure/v2 v2.5.0
+	github.com/michael-conway/go-irodsclient-extensions v0.0.0-20260610120927-d32025ae31a8
 	github.com/rs/xid v1.6.0
 )
 
@@ -13,13 +13,12 @@ require (
 	github.com/danwakefield/fnmatch v0.0.0-20160403171240-cbb64ac3d964 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/evanphx/json-patch v4.12.0+incompatible // indirect
-	github.com/fsnotify/fsnotify v1.9.0 // indirect
-	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/fsnotify/fsnotify v1.10.1 // indirect
+	github.com/mattn/go-colorable v0.1.15 // indirect
+	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
-	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
-	github.com/sagikazarmark/locafero v0.11.0 // indirect
-	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
+	github.com/pelletier/go-toml/v2 v2.3.1 // indirect
+	github.com/sagikazarmark/locafero v0.12.0 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
@@ -41,10 +40,9 @@ require (
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rogpeppe/go-internal v1.13.1 // indirect
-	github.com/rs/zerolog v1.35.0
+	github.com/rs/zerolog v1.35.1
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spf13/viper v1.21.0
-	golang.org/x/sys v0.37.0 // indirect
-	golang.org/x/text v0.30.0 // indirect
+	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/text v0.38.0 // indirect
 )
-
