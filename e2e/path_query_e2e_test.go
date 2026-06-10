@@ -122,6 +122,79 @@ func TestPathQueryAVUE2E(t *testing.T) {
 	assertPathQueryE2EPathAbsent(t, childrenEntries, fixture.alphaFile)
 }
 
+func TestPathQueryMatchedAVUUpdateLinkE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	client := newE2EHTTPClient()
+
+	filesystem := newE2EIRODSFilesystem(t)
+	t.Cleanup(filesystem.Release)
+	fixture := createPathQueryE2EFixture(t, filesystem)
+
+	includeMatchedAVUs := true
+	query := pathQueryE2ERequest{
+		IRODSPath:          fixture.root,
+		SearchScope:        "descendants",
+		Kinds:              []string{"data_object"},
+		Conditions:         pathQueryE2EAVUConditions(fixture.attrName, "frog-file-alpha", "habitat:pond"),
+		IncludeMatchedAVUs: &includeMatchedAVUs,
+		Limit:              10,
+	}
+	result := postPathQueryE2E(t, client, baseURL, query)
+	assertPathQueryE2EPathsExactly(t, result.Paths, []string{fixture.alphaFile})
+	matched := requirePathQueryE2EMatchedAVU(t, result.MatchedAVUs, fixture.alphaFile, fixture.attrName, "frog-file-alpha", "habitat:pond")
+	assertPathQueryE2EAVUHATEOAS(t, matched)
+
+	replacement := map[string]string{
+		"attrib": fixture.attrName,
+		"value":  "frog-file-alpha-updated",
+		"unit":   "habitat:pond",
+	}
+	body, err := json.Marshal(replacement)
+	if err != nil {
+		t.Fatalf("marshal AVU update request: %v", err)
+	}
+
+	req := newE2ERequest(t, http.MethodPut, e2eHrefURL(baseURL, matched.Links.Update.Href), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	setBasicAuth(req)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("perform matched AVU update link request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read AVU update response: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from matched AVU update link, got %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+	}
+
+	var updated struct {
+		AVU pathAVUE2E `json:"avu"`
+	}
+	if err := json.Unmarshal(responseBody, &updated); err != nil {
+		t.Fatalf("decode AVU update response: %v", err)
+	}
+	if strings.TrimSpace(updated.AVU.ID) == "" {
+		t.Fatal("expected updated AVU id to be populated")
+	}
+	if updated.AVU.Attrib != fixture.attrName || updated.AVU.Value != "frog-file-alpha-updated" || updated.AVU.Unit != "habitat:pond" {
+		t.Fatalf("unexpected updated AVU %+v", updated.AVU)
+	}
+
+	oldResult := postPathQueryE2E(t, client, baseURL, query)
+	assertPathQueryE2EPathsExactly(t, oldResult.Paths, nil)
+
+	updatedQuery := query
+	updatedQuery.Conditions = pathQueryE2EAVUConditions(fixture.attrName, "frog-file-alpha-updated", "habitat:pond")
+	updatedResult := postPathQueryE2E(t, client, baseURL, updatedQuery)
+	assertPathQueryE2EPathsExactly(t, updatedResult.Paths, []string{fixture.alphaFile})
+	assertPathQueryE2EMatchedAVUPresent(t, updatedResult.MatchedAVUs, fixture.alphaFile, fixture.attrName, "frog-file-alpha-updated", "habitat:pond")
+}
+
 type pathQueryE2EFixture struct {
 	root      string
 	alpha     string
@@ -199,9 +272,16 @@ type pathQueryE2EReplica struct {
 }
 
 type pathQueryE2EAVU struct {
-	Attrib string `json:"attrib"`
-	Value  string `json:"value"`
-	Unit   string `json:"unit"`
+	ID     string               `json:"id"`
+	Attrib string               `json:"attrib"`
+	Value  string               `json:"value"`
+	Unit   string               `json:"unit"`
+	Links  pathQueryE2EAVULinks `json:"links"`
+}
+
+type pathQueryE2EAVULinks struct {
+	Update actionLinkE2E `json:"update"`
+	Delete actionLinkE2E `json:"delete"`
 }
 
 type pathQueryE2EPage struct {
@@ -389,12 +469,43 @@ func assertPathQueryE2EPathAbsent(t *testing.T, entries []pathQueryE2EPath, unex
 func assertPathQueryE2EMatchedAVUPresent(t *testing.T, matched map[string][]pathQueryE2EAVU, irodsPath string, attrib string, value string, unit string) {
 	t.Helper()
 
+	requirePathQueryE2EMatchedAVU(t, matched, irodsPath, attrib, value, unit)
+}
+
+func requirePathQueryE2EMatchedAVU(t *testing.T, matched map[string][]pathQueryE2EAVU, irodsPath string, attrib string, value string, unit string) pathQueryE2EAVU {
+	t.Helper()
+
 	for _, avu := range matched[irodsPath] {
 		if avu.Attrib == attrib && avu.Value == value && avu.Unit == unit {
-			return
+			return avu
 		}
 	}
 	t.Fatalf("expected matched AVU %s=%s[%s] for %q, got %+v", attrib, value, unit, irodsPath, matched[irodsPath])
+	return pathQueryE2EAVU{}
+}
+
+func assertPathQueryE2EAVUHATEOAS(t *testing.T, avu pathQueryE2EAVU) {
+	t.Helper()
+
+	if strings.TrimSpace(avu.ID) == "" {
+		t.Fatalf("expected matched AVU id to be populated: %+v", avu)
+	}
+	if avu.Links.Update.Method != http.MethodPut || strings.TrimSpace(avu.Links.Update.Href) == "" {
+		t.Fatalf("expected matched AVU update link to be populated: %+v", avu.Links.Update)
+	}
+	if !strings.Contains(avu.Links.Update.Href, "/api/v1/path/avu/"+avu.ID) {
+		t.Fatalf("expected matched AVU update link to contain id %q, got %q", avu.ID, avu.Links.Update.Href)
+	}
+	if avu.Links.Delete.Method != http.MethodDelete || strings.TrimSpace(avu.Links.Delete.Href) == "" {
+		t.Fatalf("expected matched AVU delete link to be populated: %+v", avu.Links.Delete)
+	}
+}
+
+func e2eHrefURL(baseURL string, href string) string {
+	if strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") {
+		return href
+	}
+	return strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(href, "/")
 }
 
 func assertPathQueryE2EOmitsReplicas(t *testing.T, entries []pathQueryE2EPath, dataObjectPath string) {

@@ -1905,7 +1905,7 @@ paths:
           required: true
           schema:
             type: string
-          description: AVU identifier returned by the AVU listing endpoint.
+          description: AVU identifier returned by the AVU listing endpoint or by matched_avus in a path query response.
         - in: query
           name: irods_path
           required: true
@@ -1917,7 +1917,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/PathAVUCreateRequest"
+              $ref: "#/components/schemas/PathAVUUpdateRequest"
       responses:
         "200":
           description: AVU updated for the requested path
@@ -1962,7 +1962,7 @@ paths:
           required: true
           schema:
             type: string
-          description: AVU identifier returned by the AVU listing endpoint.
+          description: AVU identifier returned by the AVU listing endpoint or by matched_avus in a path query response.
         - in: query
           name: irods_path
           required: true
@@ -4221,7 +4221,7 @@ components:
             $ref: "#/components/schemas/PathEntry"
         matched_avus:
           type: object
-          description: Optional matched AVUs keyed by canonical iRODS path.
+          description: Optional matched AVUs keyed by canonical iRODS path. When requested with include_matched_avus=true, each AVU includes its iRODS AVU id and update/delete HATEOAS links when the id is available.
           additionalProperties:
             type: array
             items:
@@ -4547,8 +4547,27 @@ components:
       properties:
         attrib:
           type: string
+          description: AVU attribute name; must contain at least one non-whitespace character.
+          pattern: "\\S"
         value:
           type: string
+          description: AVU value; must contain at least one non-whitespace character.
+          pattern: "\\S"
+        unit:
+          type: string
+    PathAVUUpdateRequest:
+      type: object
+      description: Replacement AVU tuple for the AVU selected by the avu_id path parameter. The service resolves the current AVU by ID and performs the required iRODS old-to-new AVU replacement internally; clients do not need to send the old AVU tuple.
+      required: [attrib, value]
+      properties:
+        attrib:
+          type: string
+          description: Replacement AVU attribute name; must contain at least one non-whitespace character.
+          pattern: "\\S"
+        value:
+          type: string
+          description: Replacement AVU value; must contain at least one non-whitespace character.
+          pattern: "\\S"
         unit:
           type: string
     PathChecksum:

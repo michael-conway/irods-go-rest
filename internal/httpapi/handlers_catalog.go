@@ -315,7 +315,7 @@ func (h *Handler) postPathQuery(w http.ResponseWriter, r *http.Request) {
 		IRODSPath:    queryScopeRoot(result.Query),
 		PathSegments: buildPathSegments(queryScopeRoot(result.Query)),
 		Paths:        paths,
-		MatchedAVUs:  result.MatchedAVUs,
+		MatchedAVUs:  matchedAVUResponseMap(r, result.MatchedAVUs),
 		Page:         pathQueryPage(result.Page),
 		Query:        pathQuerySummary(result.Query),
 	}
@@ -1699,6 +1699,24 @@ func avuMetadataResponseList(r *http.Request, irodsPath string, metadata []domai
 func avuMetadataResponse(r *http.Request, irodsPath string, avu domain.AVUMetadata) domain.AVUMetadata {
 	avu.Links = avuLinksForEntry(irodsPath, avu.ID)
 	return avu
+}
+
+func matchedAVUResponseMap(r *http.Request, matched map[string][]domain.AVUMetadata) map[string][]domain.AVUMetadata {
+	if len(matched) == 0 {
+		return nil
+	}
+
+	result := make(map[string][]domain.AVUMetadata, len(matched))
+	for irodsPath, avus := range matched {
+		mapped := avuMetadataResponseList(r, irodsPath, avus)
+		if len(mapped) > 0 {
+			result[irodsPath] = mapped
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func pathACLResponse(_ *http.Request, acl domain.PathACL) domain.PathACL {

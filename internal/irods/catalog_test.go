@@ -1824,6 +1824,7 @@ func metadataQueryConditionsMatchForCatalogTest(entry *irodsfs.Entry, metadataLi
 		}
 		if metadataQueryAVUMatchesForCatalogTest(avu, avuConditions) {
 			matchedAVUs = append(matchedAVUs, metadataext.AVUStat{
+				ID:         avu.AVUID,
 				Name:       avu.Name,
 				Value:      avu.Value,
 				Units:      avu.Units,
@@ -1919,6 +1920,27 @@ func (f *catalogTestFileSystem) AddMetadata(irodsPath string, attName string, at
 		ModifyTime: now,
 	})
 	return nil
+}
+
+func (f *catalogTestFileSystem) ReplaceMetadataByID(irodsPath string, avuID int64, target metadataext.AVUStat) (metadataext.AVUStat, error) {
+	if _, ok := f.entriesByPath[irodsPath]; !ok {
+		return metadataext.AVUStat{}, irodstypes.NewFileNotFoundError(irodsPath)
+	}
+
+	for _, meta := range f.metadataByPath[irodsPath] {
+		if meta == nil {
+			continue
+		}
+		if meta.AVUID == avuID {
+			meta.Name = target.Name
+			meta.Value = target.Value
+			meta.Units = target.Units
+			meta.ModifyTime = time.Unix(1_700_000_002, 0)
+			return metadataext.AVUStat{ID: meta.AVUID, Name: meta.Name, Value: meta.Value, Units: meta.Units, CreateTime: meta.CreateTime, ModifyTime: meta.ModifyTime}, nil
+		}
+	}
+
+	return metadataext.AVUStat{}, irodstypes.NewFileNotFoundError(irodsPath)
 }
 
 func (f *catalogTestFileSystem) DeleteMetadata(irodsPath string, avuID int64) error {
