@@ -43,8 +43,8 @@ github.com/mattn/go-colorable v0.1.15 h1:+u9SLTRGnXv73cEsnsmoZBom+dMU88B2M0aDcWy
 github.com/mattn/go-colorable v0.1.15/go.mod h1:6LmQG8QLFO4G5z1gPvYEzlUgJ2wF+stgPZH1UqBm1s8=
 github.com/mattn/go-isatty v0.0.22 h1:j8l17JJ9i6VGPUFUYoTUKPSgKe/83EYU2zBC7YNKMw4=
 github.com/mattn/go-isatty v0.0.22/go.mod h1:ZXfXG4SQHsB/w3ZeOYbR0PrPwLy+n6xiMrJlRFqopa4=
-github.com/michael-conway/go-irodsclient-extensions v0.0.0-20260610123335-df88b0867332 h1:P0sOGSvmUaKFEIC6sezHD1HlIbpbQnaMrn8jZnHDy90=
-github.com/michael-conway/go-irodsclient-extensions v0.0.0-20260610123335-df88b0867332/go.mod h1:KD5nHcUKrUNkfvJEMJPGlZCPytS+026o9zyuU+ea49M=
+github.com/michael-conway/go-irodsclient-extensions v0.0.0-20260612113622-39cc67887d06 h1:Z9k2PRoMZ86WCMhRQnRNdObvwqfwRtgudIwEe2yLNF8=
+github.com/michael-conway/go-irodsclient-extensions v0.0.0-20260612113622-39cc67887d06/go.mod h1:KD5nHcUKrUNkfvJEMJPGlZCPytS+026o9zyuU+ea49M=
 github.com/mitchellh/go-homedir v1.1.0 h1:lukF9ziXFxDFPkA1vsr5zpc1XuPDn/wFntq5mG+4E0Y=
 github.com/mitchellh/go-homedir v1.1.0/go.mod h1:SfyaCUpYCn1Vlf4IUYiD9fPX4A5wJrkLzIz1N1q0pr0=
 github.com/patrickmn/go-cache v2.1.0+incompatible h1:HRMgzkcYKYpi3C8ajMPV8OFXaaRUnok+kx1WdO15EQc=
