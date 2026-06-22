@@ -221,6 +221,7 @@ type CatalogFileSystem interface {
 	ListMetadata(irodsPath string) ([]*irodstypes.IRODSMeta, error)
 	SearchByMeta(metaName string, metaValue string) ([]s3adminext.Entry, error)
 	AddMetadata(irodsPath string, attName string, attValue string, attUnits string) error
+	ReplaceMetadataByID(irodsPath string, avuID int64, target metadataext.AVUStat) (metadataext.AVUStat, error)
 	DeleteMetadata(irodsPath string, avuID int64) error
 	ListACLs(irodsPath string) ([]*irodstypes.IRODSAccess, error)
 	GetDirACLInheritance(path string) (*irodstypes.IRODSAccessInheritance, error)
@@ -1213,25 +1214,16 @@ func (s *catalogService) UpdatePathMetadata(_ context.Context, requestContext *R
 		return domain.AVUMetadata{}, normalizePathAccessError("stat path", absolutePath, err)
 	}
 
+	target := metadataext.AVUStat{Name: attrib, Value: value, Units: unit}
+	if _, err := filesystem.ReplaceMetadataByID(absolutePath, avuIDInt, target); err != nil {
+		logIRODSError("catalog UpdatePathMetadata replace failed", err, "path", absolutePath, "avu_id", avuID, "attrib", attrib, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
+		if errors.Is(err, metadataext.ErrAVUNotFound) {
+			return domain.AVUMetadata{}, fmt.Errorf("%w: avu %q on path %q", ErrNotFound, avuID, absolutePath)
+		}
+		return domain.AVUMetadata{}, normalizePathAccessError("replace metadata", absolutePath, err)
+	}
+
 	metadata, err := filesystem.ListMetadata(absolutePath)
-	if err != nil {
-		logIRODSError("catalog UpdatePathMetadata list metadata failed", err, "path", absolutePath, "avu_id", avuID, "attrib", attrib, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
-		return domain.AVUMetadata{}, normalizePathAccessError("list metadata", absolutePath, err)
-	}
-	if _, ok := findAVUMetadataByID(metadata, avuID); !ok {
-		return domain.AVUMetadata{}, fmt.Errorf("%w: avu %q on path %q", ErrNotFound, avuID, absolutePath)
-	}
-
-	if err := filesystem.DeleteMetadata(absolutePath, avuIDInt); err != nil {
-		logIRODSError("catalog UpdatePathMetadata delete existing failed", err, "path", absolutePath, "avu_id", avuID, "attrib", attrib, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
-		return domain.AVUMetadata{}, normalizePathAccessError("delete metadata", absolutePath, err)
-	}
-	if err := filesystem.AddMetadata(absolutePath, attrib, value, unit); err != nil {
-		logIRODSError("catalog UpdatePathMetadata add replacement failed", err, "path", absolutePath, "avu_id", avuID, "attrib", attrib, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
-		return domain.AVUMetadata{}, normalizePathAccessError("add metadata", absolutePath, err)
-	}
-
-	metadata, err = filesystem.ListMetadata(absolutePath)
 	if err != nil {
 		logIRODSError("catalog UpdatePathMetadata list metadata after update failed", err, "path", absolutePath, "avu_id", avuID, "attrib", attrib, "auth_scheme", safeAuthScheme(requestContext), "username", safeUsername(requestContext))
 		return domain.AVUMetadata{}, normalizePathAccessError("list metadata", absolutePath, err)
@@ -2421,6 +2413,14 @@ func (a *catalogFileSystemAdapter) AddMetadata(irodsPath string, attName string,
 	return a.filesystem.AddMetadata(irodsPath, attName, attValue, attUnits)
 }
 
+func (a *catalogFileSystemAdapter) ReplaceMetadataByID(irodsPath string, avuID int64, target metadataext.AVUStat) (metadataext.AVUStat, error) {
+	service, err := metadataext.NewMutationService(metadatairodsfs.NewAdapter(a.filesystem))
+	if err != nil {
+		return metadataext.AVUStat{}, err
+	}
+	return service.ReplacePathAVUByID(irodsPath, metadataext.AVUUpdateByID{ID: avuID, To: target})
+}
+
 func (a *catalogFileSystemAdapter) DeleteMetadata(irodsPath string, avuID int64) error {
 	return a.filesystem.DeleteMetadata(irodsPath, avuID)
 }
@@ -3465,8 +3465,16 @@ func mapMatchedAVUs(matched map[string][]metadataext.AVUStat) map[string][]domai
 	return result
 }
 
+func avuIDString(id int64) string {
+	if id <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d", id)
+}
+
 func avuMetadataFromStat(avu metadataext.AVUStat) domain.AVUMetadata {
 	return domain.AVUMetadata{
+		ID:        avuIDString(avu.ID),
 		Attrib:    strings.TrimSpace(avu.Name),
 		Value:     strings.TrimSpace(avu.Value),
 		Unit:      strings.TrimSpace(avu.Units),

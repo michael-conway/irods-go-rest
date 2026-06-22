@@ -1,0 +1,17 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="irods rest e2e" type="GoTestRunConfiguration" factoryName="Go Test">
+    <module name="irods-go-rest" />
+    <working_directory value="$PROJECT_DIR$/../irods-go-rest/e2e" />
+    <useCustomBuildTags value="true" />
+    <envs>
+      <env name="GOREST_E2E_CONFIG_FILE" value="$PROJECT_DIR$/../../temp/irods-ext/rest-config.e2e.yaml" />
+    </envs>
+    <root_directory value="$PROJECT_DIR$/../irods-go-rest" />
+    <kind value="DIRECTORY" />
+    <package value="github.com/michael-conway/irods-go-rest/e2e" />
+    <directory value="$PROJECT_DIR$/../irods-go-rest/e2e" />
+    <filePath value="$PROJECT_DIR$" />
+    <framework value="gotest" />
+    <method v="2" />
+  </configuration>
+</component>

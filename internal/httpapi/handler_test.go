@@ -1050,6 +1050,16 @@ func TestPostPathQueryAVUConditionsReturnPagedUnifiedPaths(t *testing.T) {
 	if len(firstPage.MatchedAVUs[firstPage.Paths[0].Path]) != 1 {
 		t.Fatalf("expected matched AVU details for first path, got %+v", firstPage.MatchedAVUs)
 	}
+	matchedAVU := firstPage.MatchedAVUs[firstPage.Paths[0].Path][0]
+	if matchedAVU.ID != "700" {
+		t.Fatalf("expected matched AVU id 700, got %+v", matchedAVU)
+	}
+	if matchedAVU.Links == nil || matchedAVU.Links.Update == nil || matchedAVU.Links.Delete == nil {
+		t.Fatalf("expected matched AVU HATEOAS update/delete links, got %+v", matchedAVU)
+	}
+	if matchedAVU.Links.Update.Href != "/api/v1/path/avu/700?irods_path=%2FtempZone%2Fhome%2Ftest1%2Fproject" || matchedAVU.Links.Update.Method != http.MethodPut {
+		t.Fatalf("unexpected matched AVU update link: %+v", matchedAVU.Links.Update)
+	}
 	if firstPage.Query.SearchScope != "children" || firstPage.Query.Scope.Root != "/tempZone/home/test1" || firstPage.Query.Scope.Mode != "children" {
 		t.Fatalf("expected query summary to include scope mode and root, got %+v", firstPage.Query)
 	}
@@ -3990,6 +4000,7 @@ func metadataQueryConditionsMatchForTest(entry *irodsfs.Entry, metadataList []*i
 		}
 		if metadataQueryAVUMatchesForTest(avu, avuConditions) {
 			matchedAVUs = append(matchedAVUs, metadataext.AVUStat{
+				ID:         avu.AVUID,
 				Name:       avu.Name,
 				Value:      avu.Value,
 				Units:      avu.Units,
@@ -4082,6 +4093,27 @@ func (f *testCatalogFileSystem) AddMetadata(irodsPath string, attName string, at
 		ModifyTime: now,
 	})
 	return nil
+}
+
+func (f *testCatalogFileSystem) ReplaceMetadataByID(irodsPath string, avuID int64, target metadataext.AVUStat) (metadataext.AVUStat, error) {
+	if _, ok := f.entriesByPath[irodsPath]; !ok {
+		return metadataext.AVUStat{}, errors.New("not found")
+	}
+
+	for _, meta := range f.metadataByPath[irodsPath] {
+		if meta == nil {
+			continue
+		}
+		if meta.AVUID == avuID {
+			meta.Name = target.Name
+			meta.Value = target.Value
+			meta.Units = target.Units
+			meta.ModifyTime = time.Unix(1_700_000_002, 0)
+			return metadataext.AVUStat{ID: meta.AVUID, Name: meta.Name, Value: meta.Value, Units: meta.Units, CreateTime: meta.CreateTime, ModifyTime: meta.ModifyTime}, nil
+		}
+	}
+
+	return metadataext.AVUStat{}, errors.New("not found")
 }
 
 func (f *testCatalogFileSystem) DeleteMetadata(irodsPath string, avuID int64) error {
