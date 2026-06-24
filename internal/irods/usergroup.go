@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	irodsfs "github.com/cyverse/go-irodsclient/fs"
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
 	usersyncext "github.com/michael-conway/go-irodsclient-extensions/usersync"
 	"github.com/michael-conway/irods-go-rest/internal/config"
@@ -26,6 +25,10 @@ type UserGroupMutationOptions struct {
 type UserGroupService interface {
 	ListUserGroups(ctx context.Context, requestContext *RequestContext, options UserGroupListOptions) ([]domain.UserGroup, error)
 	GetUserGroup(ctx context.Context, requestContext *RequestContext, groupName string, zone string) (domain.UserGroup, error)
+	GetUserGroupMetadata(ctx context.Context, requestContext *RequestContext, groupName string, zone string) ([]domain.AVUMetadata, error)
+	AddUserGroupMetadata(ctx context.Context, requestContext *RequestContext, groupName string, zone string, attrib string, value string, unit string) (domain.AVUMetadata, error)
+	UpdateUserGroupMetadata(ctx context.Context, requestContext *RequestContext, groupName string, zone string, avuID string, attrib string, value string, unit string) (domain.AVUMetadata, error)
+	DeleteUserGroupMetadata(ctx context.Context, requestContext *RequestContext, groupName string, zone string, avuID string) error
 	CreateUserGroup(ctx context.Context, requestContext *RequestContext, groupName string, zone string, options UserGroupMutationOptions) (domain.UserGroup, error)
 	DeleteUserGroup(ctx context.Context, requestContext *RequestContext, groupName string, zone string, options UserGroupMutationOptions) error
 	AddUserToGroup(ctx context.Context, requestContext *RequestContext, groupName string, username string, zone string, options UserGroupMutationOptions) (domain.UserGroup, error)
@@ -38,13 +41,7 @@ type userGroupService struct {
 }
 
 func NewUserGroupService(cfg config.RestConfig) UserGroupService {
-	return NewUserGroupServiceWithFactory(cfg, func(account *irodstypes.IRODSAccount, applicationName string) (CatalogFileSystem, error) {
-		filesystem, err := irodsfs.NewFileSystemWithDefault(account, applicationName)
-		if err != nil {
-			return nil, err
-		}
-		return &catalogFileSystemAdapter{filesystem: filesystem}, nil
-	})
+	return NewUserGroupServiceWithFactory(cfg, defaultCatalogFileSystemFactory())
 }
 
 func NewUserGroupServiceWithFactory(cfg config.RestConfig, factory CatalogFileSystemFactory) UserGroupService {
@@ -113,6 +110,60 @@ func (s *userGroupService) GetUserGroup(_ context.Context, requestContext *Reque
 	}
 
 	return s.groupWithMembers(filesystem, group)
+}
+
+func (s *userGroupService) GetUserGroupMetadata(_ context.Context, requestContext *RequestContext, groupName string, zone string) ([]domain.AVUMetadata, error) {
+	return listPrincipalMetadata(
+		requestContext,
+		groupName,
+		zone,
+		"irods-go-rest-get-user-group-metadata",
+		s.groupMetadataFilesystem,
+		normalizeUserGroupError,
+	)
+}
+
+func (s *userGroupService) AddUserGroupMetadata(_ context.Context, requestContext *RequestContext, groupName string, zone string, attrib string, value string, unit string) (domain.AVUMetadata, error) {
+	return addPrincipalMetadata(
+		requestContext,
+		groupName,
+		zone,
+		attrib,
+		value,
+		unit,
+		"irods-go-rest-add-user-group-metadata",
+		s.groupMetadataFilesystem,
+		normalizeUserGroupError,
+	)
+}
+
+func (s *userGroupService) UpdateUserGroupMetadata(_ context.Context, requestContext *RequestContext, groupName string, zone string, avuID string, attrib string, value string, unit string) (domain.AVUMetadata, error) {
+	return updatePrincipalMetadata(
+		requestContext,
+		groupName,
+		zone,
+		avuID,
+		attrib,
+		value,
+		unit,
+		"irods-go-rest-update-user-group-metadata",
+		s.groupMetadataFilesystem,
+		normalizeUserGroupError,
+		"group",
+	)
+}
+
+func (s *userGroupService) DeleteUserGroupMetadata(_ context.Context, requestContext *RequestContext, groupName string, zone string, avuID string) error {
+	return deletePrincipalMetadata(
+		requestContext,
+		groupName,
+		zone,
+		avuID,
+		"irods-go-rest-delete-user-group-metadata",
+		s.groupMetadataFilesystem,
+		normalizeUserGroupError,
+		"group",
+	)
 }
 
 func (s *userGroupService) CreateUserGroup(ctx context.Context, requestContext *RequestContext, groupName string, zone string, options UserGroupMutationOptions) (domain.UserGroup, error) {
@@ -352,6 +403,26 @@ func (s *userGroupService) filesystemForRequest(requestContext *RequestContext, 
 		createFileSystem: s.createFileSystem,
 	}
 	return catalog.filesystemForRequest(requestContext, applicationName)
+}
+
+func (s *userGroupService) groupMetadataFilesystem(requestContext *RequestContext, groupName string, zone string, applicationName string) (CatalogFileSystem, string, string, error) {
+	groupName = strings.TrimSpace(groupName)
+	zone = s.userZone(zone)
+	if groupName == "" {
+		return nil, "", "", fmt.Errorf("%w: group %q", ErrNotFound, groupName)
+	}
+
+	filesystem, err := s.filesystemForRequest(requestContext, applicationName)
+	if err != nil {
+		return nil, "", "", err
+	}
+
+	if _, err := s.getGroup(filesystem, groupName, zone); err != nil {
+		filesystem.Release()
+		return nil, "", "", err
+	}
+
+	return filesystem, groupName, zone, nil
 }
 
 func (s *userGroupService) requireManageUserGroupsPermission(filesystem CatalogFileSystem, requestContext *RequestContext) error {

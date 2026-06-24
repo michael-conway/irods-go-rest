@@ -19,6 +19,10 @@ type UserGroupMutationOptions struct {
 type UserGroupService interface {
 	ListUserGroups(ctx context.Context, options UserGroupListOptions) ([]domain.UserGroup, error)
 	GetUserGroup(ctx context.Context, groupName string, zone string) (domain.UserGroup, error)
+	GetUserGroupMetadata(ctx context.Context, groupName string, zone string) ([]domain.AVUMetadata, error)
+	AddUserGroupMetadata(ctx context.Context, groupName string, zone string, attrib string, value string, unit string) (domain.AVUMetadata, error)
+	UpdateUserGroupMetadata(ctx context.Context, groupName string, zone string, avuID string, attrib string, value string, unit string) (domain.AVUMetadata, error)
+	DeleteUserGroupMetadata(ctx context.Context, groupName string, zone string, avuID string) error
 	CreateUserGroup(ctx context.Context, groupName string, zone string, options UserGroupMutationOptions) (domain.UserGroup, error)
 	DeleteUserGroup(ctx context.Context, groupName string, zone string, options UserGroupMutationOptions) error
 	AddUserToGroup(ctx context.Context, groupName string, username string, zone string, options UserGroupMutationOptions) (domain.UserGroup, error)
@@ -52,6 +56,42 @@ func (s *userGroupService) GetUserGroup(ctx context.Context, groupName string, z
 	}
 
 	return s.userGroups.GetUserGroup(ctx, irodsRequestContext(requestContext), groupName, zone)
+}
+
+func (s *userGroupService) GetUserGroupMetadata(ctx context.Context, groupName string, zone string) ([]domain.AVUMetadata, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.userGroups.GetUserGroupMetadata(ctx, irodsRequestContext(requestContext), groupName, zone)
+}
+
+func (s *userGroupService) AddUserGroupMetadata(ctx context.Context, groupName string, zone string, attrib string, value string, unit string) (domain.AVUMetadata, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return domain.AVUMetadata{}, err
+	}
+
+	return s.userGroups.AddUserGroupMetadata(ctx, irodsRequestContext(requestContext), groupName, zone, attrib, value, unit)
+}
+
+func (s *userGroupService) UpdateUserGroupMetadata(ctx context.Context, groupName string, zone string, avuID string, attrib string, value string, unit string) (domain.AVUMetadata, error) {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return domain.AVUMetadata{}, err
+	}
+
+	return s.userGroups.UpdateUserGroupMetadata(ctx, irodsRequestContext(requestContext), groupName, zone, avuID, attrib, value, unit)
+}
+
+func (s *userGroupService) DeleteUserGroupMetadata(ctx context.Context, groupName string, zone string, avuID string) error {
+	requestContext, err := RequestContextFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	return s.userGroups.DeleteUserGroupMetadata(ctx, irodsRequestContext(requestContext), groupName, zone, avuID)
 }
 
 func (s *userGroupService) CreateUserGroup(ctx context.Context, groupName string, zone string, options UserGroupMutationOptions) (domain.UserGroup, error) {

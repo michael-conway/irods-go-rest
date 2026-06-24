@@ -84,6 +84,64 @@ Durable sync ownership state must be iRODS-native AVUs:
 - `iRODS:USER_SYNCH:LAST_SYNC_AT`
 - `iRODS:USER_SYNCH:LAST_PLAN_ID`
 
+### Starbase Users And Groups Administration
+
+`starbase` is adding a top-level `Users & Groups` function backed by the
+generic user and usergroup APIs. Preserve the current generic route family as
+the first contract for this UI:
+
+- `GET /api/v1/user`
+- `POST /api/v1/user`
+- `GET /api/v1/user/{user_name}`
+- `PUT /api/v1/user/{user_name}`
+- `DELETE /api/v1/user/{user_name}`
+- `GET /api/v1/user/{user_name}/avu`
+- `POST /api/v1/user/{user_name}/avu`
+- `PUT /api/v1/user/{user_name}/avu/{avu_id}`
+- `DELETE /api/v1/user/{user_name}/avu/{avu_id}`
+- `GET /api/v1/usergroup`
+- `POST /api/v1/usergroup`
+- `GET /api/v1/usergroup/{group_name}`
+- `DELETE /api/v1/usergroup/{group_name}`
+- `GET /api/v1/usergroup/{group_name}/avu`
+- `POST /api/v1/usergroup/{group_name}/avu`
+- `PUT /api/v1/usergroup/{group_name}/avu/{avu_id}`
+- `DELETE /api/v1/usergroup/{group_name}/avu/{avu_id}`
+- `POST /api/v1/usergroup/{group_name}/member`
+- `DELETE /api/v1/usergroup/{group_name}/member/{user_name}`
+
+Frontend requirements to watch:
+
+- Basic read-only tables can use the existing list endpoints.
+- User autocomplete and group autocomplete should keep using prefix filters on
+  the generic list routes.
+- User/group core updates are intentionally narrow. Use principal AVU routes
+  for editable user/group annotations instead of adding generic group update
+  routes without a concrete catalog field requirement.
+- Starbase must not perform broad client-side joins, catalog-wide filtering, or
+  repeated per-row group detail fetches for list-scale views.
+- If the UI needs group member counts, users with membership summaries, groups
+  containing a given user, or principal search across users and groups, add a
+  documented REST route here instead of pushing that logic into the browser.
+
+Likely efficient API candidates:
+
+- a GenQuery-backed group summary route that returns group rows with member
+  counts for list views
+- a GenQuery-backed user membership summary route that returns each user with
+  zero or more group names
+- a GenQuery-backed reverse membership route for groups containing one selected
+  user
+- a principal search route only if a combined user/group search is demonstrably
+  better than the existing separate `/api/v1/user` and `/api/v1/usergroup`
+  prefix searches
+
+Any new route must be added to `api/openapi.yaml`, mapped through
+`internal/httpapi/`, shaped in `internal/domain/`, and implemented in the
+service/catalog layers with the same auth and error semantics as the existing
+generic user and usergroup endpoints. Prefer explicit request parameters and
+response fields over exposing raw GenQuery syntax to clients.
+
 ## Request Context And Visibility
 
 Carry audit context through logs and service calls using:
@@ -139,18 +197,6 @@ Workflow:
 5. Run `GOWORK=off go mod tidy` and tests in each dependent repository.
 
 ## Release Checklist
-
-For `1.0.0-alpha`:
-
-1. Confirm `go.mod` points to released dependency versions, especially `go-irodsclient-extensions`.
-2. Run `GOWORK=off go test ./...`.
-3. Run integration and E2E tests against `irods-grid-stack` when the grid is available.
-4. Review [README.md](./README.md), [CONFIGURATION_NOTES.md](./CONFIGURATION_NOTES.md), and [api/openapi.yaml](./api/openapi.yaml) for release alignment.
-5. Create a GitHub release tagged `1.0.0-alpha`.
-6. Confirm the container workflow publishes `ghcr.io/michael-conway/irods-go-rest:1.0.0-alpha`.
-7. Update downstream stack defaults or deployment manifests that should consume the released image.
-
-If this repository is consumed as a Go module, prefer Go semantic version tags with a leading `v` such as `v1.0.0-alpha`. Container release tags may use `1.0.0-alpha` to match deployment naming.
 
 ## Known Client Gaps
 

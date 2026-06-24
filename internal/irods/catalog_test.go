@@ -16,6 +16,7 @@ import (
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
 	metadataext "github.com/michael-conway/go-irodsclient-extensions/metadata"
 	s3adminext "github.com/michael-conway/go-irodsclient-extensions/s3admin"
+	usersandgroupsext "github.com/michael-conway/go-irodsclient-extensions/usersandgroups"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 )
 
@@ -774,6 +775,47 @@ func TestCatalogUpdatePathMetadataReplacesAVU(t *testing.T) {
 	if len(metadata) != 1 || metadata[0].Value != "updated" {
 		t.Fatalf("expected updated metadata row, got %+v", metadata)
 	}
+}
+
+func TestReplaceUserMetadataByIDRollsBackAddedAVUWhenDeleteOldFails(t *testing.T) {
+	filesystem := newCatalogTestFileSystem()
+	filesystem.addUserMetadata("alice", "tempZone", "role", "before", "test")
+
+	failing := &failingUserMetadataDeleteFileSystem{
+		catalogTestFileSystem: filesystem,
+		failAVUID:             1,
+	}
+	_, err := replaceUserMetadataByID(failing, "alice", "tempZone", 1, metadataext.AVUStat{
+		Name:  "role",
+		Value: "after",
+		Units: "test",
+	})
+	if err == nil {
+		t.Fatal("expected replace to fail when deleting old AVU fails")
+	}
+
+	metadata, err := filesystem.ListUserMetadata("alice", "tempZone")
+	if err != nil {
+		t.Fatalf("list user metadata: %v", err)
+	}
+	if len(metadata) != 1 {
+		t.Fatalf("expected rollback to leave one AVU, got %d: %+v", len(metadata), metadata)
+	}
+	if metadata[0].AVUID != 1 || metadata[0].Name != "role" || metadata[0].Value != "before" || metadata[0].Units != "test" {
+		t.Fatalf("expected original AVU after rollback, got %+v", metadata[0])
+	}
+}
+
+type failingUserMetadataDeleteFileSystem struct {
+	*catalogTestFileSystem
+	failAVUID int64
+}
+
+func (f *failingUserMetadataDeleteFileSystem) DeleteUserMetadata(username string, zoneName string, avuID int64) error {
+	if avuID == f.failAVUID {
+		return errors.New("forced delete failure")
+	}
+	return f.catalogTestFileSystem.DeleteUserMetadata(username, zoneName, avuID)
 }
 
 func TestCatalogGetPathChecksumReturnsTypedChecksum(t *testing.T) {
@@ -2152,6 +2194,49 @@ func (f *catalogTestFileSystem) AddUserMetadata(username string, zoneName string
 	return nil
 }
 
+func (f *catalogTestFileSystem) ReplaceUserMetadataByID(username string, zoneName string, avuID int64, target metadataext.AVUStat) (metadataext.AVUStat, error) {
+	if _, ok := f.usersByKey[catalogUserKey(username, zoneName)]; !ok {
+		return metadataext.AVUStat{}, irodstypes.NewUserNotFoundError(username)
+	}
+
+	key := catalogUserKey(username, zoneName)
+	metadata := f.metadataByUser[key]
+	for i, meta := range metadata {
+		if meta != nil && meta.AVUID == avuID {
+			meta.Name = target.Name
+			meta.Value = target.Value
+			meta.Units = target.Units
+			meta.ModifyTime = time.Now().UTC()
+			f.metadataByUser[key][i] = meta
+			return metadataext.AVUStat{ID: meta.AVUID, Name: meta.Name, Value: meta.Value, Units: meta.Units, CreateTime: meta.CreateTime, ModifyTime: meta.ModifyTime}, nil
+		}
+	}
+	return metadataext.AVUStat{}, metadataext.ErrAVUNotFound
+}
+
+func (f *catalogTestFileSystem) DeleteUserMetadata(username string, zoneName string, avuID int64) error {
+	if _, ok := f.usersByKey[catalogUserKey(username, zoneName)]; !ok {
+		return irodstypes.NewUserNotFoundError(username)
+	}
+
+	key := catalogUserKey(username, zoneName)
+	metadata := f.metadataByUser[key]
+	filtered := make([]*irodstypes.IRODSMeta, 0, len(metadata))
+	deleted := false
+	for _, meta := range metadata {
+		if meta != nil && meta.AVUID == avuID {
+			deleted = true
+			continue
+		}
+		filtered = append(filtered, meta)
+	}
+	if !deleted {
+		return metadataext.ErrAVUNotFound
+	}
+	f.metadataByUser[key] = filtered
+	return nil
+}
+
 func (f *catalogTestFileSystem) CreateUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error) {
 	key := catalogUserKey(username, zoneName)
 	if existing, ok := f.usersByKey[key]; ok {
@@ -2280,6 +2365,10 @@ func (f *catalogTestFileSystem) RemoveGroupMember(groupName string, username str
 
 func (f *catalogTestFileSystem) Release() {
 	f.released = true
+}
+
+func (f *catalogTestFileSystem) UsersAndGroupsCatalog() usersandgroupsext.Catalog {
+	return nil
 }
 
 func (f *catalogTestFileSystem) GetTicket(ticketName string) (*irodstypes.IRODSTicket, error) {

@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	irodsfs "github.com/cyverse/go-irodsclient/fs"
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
 	usersyncext "github.com/michael-conway/go-irodsclient-extensions/usersync"
 	"github.com/michael-conway/irods-go-rest/internal/config"
@@ -41,6 +40,10 @@ type UserMutationOptions struct {
 type UserService interface {
 	ListUsers(ctx context.Context, requestContext *RequestContext, options UserListOptions) ([]domain.User, error)
 	GetUser(ctx context.Context, requestContext *RequestContext, username string, zone string) (domain.User, error)
+	GetUserMetadata(ctx context.Context, requestContext *RequestContext, username string, zone string) ([]domain.AVUMetadata, error)
+	AddUserMetadata(ctx context.Context, requestContext *RequestContext, username string, zone string, attrib string, value string, unit string) (domain.AVUMetadata, error)
+	UpdateUserMetadata(ctx context.Context, requestContext *RequestContext, username string, zone string, avuID string, attrib string, value string, unit string) (domain.AVUMetadata, error)
+	DeleteUserMetadata(ctx context.Context, requestContext *RequestContext, username string, zone string, avuID string) error
 	CreateUser(ctx context.Context, requestContext *RequestContext, username string, options UserCreateOptions, mutation UserMutationOptions) (domain.User, error)
 	UpdateUser(ctx context.Context, requestContext *RequestContext, username string, options UserUpdateOptions, mutation UserMutationOptions) (domain.User, error)
 	DeleteUser(ctx context.Context, requestContext *RequestContext, username string, zone string, mutation UserMutationOptions) error
@@ -52,13 +55,7 @@ type userService struct {
 }
 
 func NewUserService(cfg config.RestConfig) UserService {
-	return NewUserServiceWithFactory(cfg, func(account *irodstypes.IRODSAccount, applicationName string) (CatalogFileSystem, error) {
-		filesystem, err := irodsfs.NewFileSystemWithDefault(account, applicationName)
-		if err != nil {
-			return nil, err
-		}
-		return &catalogFileSystemAdapter{filesystem: filesystem}, nil
-	})
+	return NewUserServiceWithFactory(cfg, defaultCatalogFileSystemFactory())
 }
 
 func NewUserServiceWithFactory(cfg config.RestConfig, factory CatalogFileSystemFactory) UserService {
@@ -138,6 +135,60 @@ func (s *userService) GetUser(_ context.Context, requestContext *RequestContext,
 		return domain.User{}, fmt.Errorf("%w: user %q", ErrNotFound, username)
 	}
 	return mapped, nil
+}
+
+func (s *userService) GetUserMetadata(_ context.Context, requestContext *RequestContext, username string, zone string) ([]domain.AVUMetadata, error) {
+	return listPrincipalMetadata(
+		requestContext,
+		username,
+		zone,
+		"irods-go-rest-get-user-metadata",
+		s.userMetadataFilesystem,
+		normalizeUserError,
+	)
+}
+
+func (s *userService) AddUserMetadata(_ context.Context, requestContext *RequestContext, username string, zone string, attrib string, value string, unit string) (domain.AVUMetadata, error) {
+	return addPrincipalMetadata(
+		requestContext,
+		username,
+		zone,
+		attrib,
+		value,
+		unit,
+		"irods-go-rest-add-user-metadata",
+		s.userMetadataFilesystem,
+		normalizeUserError,
+	)
+}
+
+func (s *userService) UpdateUserMetadata(_ context.Context, requestContext *RequestContext, username string, zone string, avuID string, attrib string, value string, unit string) (domain.AVUMetadata, error) {
+	return updatePrincipalMetadata(
+		requestContext,
+		username,
+		zone,
+		avuID,
+		attrib,
+		value,
+		unit,
+		"irods-go-rest-update-user-metadata",
+		s.userMetadataFilesystem,
+		normalizeUserError,
+		"user",
+	)
+}
+
+func (s *userService) DeleteUserMetadata(_ context.Context, requestContext *RequestContext, username string, zone string, avuID string) error {
+	return deletePrincipalMetadata(
+		requestContext,
+		username,
+		zone,
+		avuID,
+		"irods-go-rest-delete-user-metadata",
+		s.userMetadataFilesystem,
+		normalizeUserError,
+		"user",
+	)
 }
 
 func (s *userService) CreateUser(ctx context.Context, requestContext *RequestContext, username string, options UserCreateOptions, mutation UserMutationOptions) (domain.User, error) {
@@ -338,6 +389,31 @@ func (s *userService) filesystemForRequest(requestContext *RequestContext, appli
 		createFileSystem: s.createFileSystem,
 	}
 	return catalog.filesystemForRequest(requestContext, applicationName)
+}
+
+func (s *userService) userMetadataFilesystem(requestContext *RequestContext, username string, zone string, applicationName string) (CatalogFileSystem, string, string, error) {
+	username = strings.TrimSpace(username)
+	zone = s.userZone(zone)
+	if username == "" {
+		return nil, "", "", fmt.Errorf("%w: user %q", ErrNotFound, username)
+	}
+
+	filesystem, err := s.filesystemForRequest(requestContext, applicationName)
+	if err != nil {
+		return nil, "", "", err
+	}
+
+	user, err := filesystem.GetUser(username, zone, "")
+	if err != nil {
+		filesystem.Release()
+		return nil, "", "", normalizeUserError("get user", username, zone, err)
+	}
+	if user == nil || user.Type == irodstypes.IRODSUserRodsGroup {
+		filesystem.Release()
+		return nil, "", "", fmt.Errorf("%w: user %q", ErrNotFound, username)
+	}
+
+	return filesystem, username, zone, nil
 }
 
 func (s *userService) requireRodsAdmin(filesystem CatalogFileSystem, requestContext *RequestContext) error {

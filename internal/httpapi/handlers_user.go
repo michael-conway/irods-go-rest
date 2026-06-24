@@ -307,6 +307,14 @@ func userLinks(user domain.User) *domain.UserLinks {
 			Href:   href,
 			Method: http.MethodDelete,
 		},
+		AVUs: &domain.ActionLink{
+			Href:   principalAVUCollectionHref("/api/v1/user", user.Name, user.Zone),
+			Method: http.MethodGet,
+		},
+		CreateAVU: &domain.ActionLink{
+			Href:   principalAVUCollectionHref("/api/v1/user", user.Name, user.Zone),
+			Method: http.MethodPost,
+		},
 	}
 }
 
