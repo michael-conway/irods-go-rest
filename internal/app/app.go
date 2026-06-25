@@ -50,13 +50,14 @@ func New(cfg config.RestConfig) *App {
 	resources := restservice.NewResourceService(irods.NewResourceService(cfg))
 	users := restservice.NewUserService(irods.NewUserService(cfg))
 	userGroups := restservice.NewUserGroupService(irods.NewUserGroupService(cfg))
+	userAdmin := restservice.NewUsersAndGroupsService(irods.NewUsersAndGroupsService(cfg))
 	tickets := restservice.NewTicketService(irods.NewTicketService(cfg))
 	authService := auth.NewKeycloakService(cfg)
 	var sessionStore *auth.SessionStore
 	if cfg.WebEnabled {
 		sessionStore = auth.NewSessionStore()
 	}
-	handler := httpapi.NewHandler(cfg, paths, s3Admin, serverInfo, resources, users, userGroups, tickets, authService, authService, sessionStore)
+	handler := httpapi.NewHandler(cfg, paths, s3Admin, serverInfo, resources, users, userGroups, userAdmin, tickets, authService, authService, sessionStore)
 
 	return &App{
 		server: &http.Server{

@@ -35,6 +35,16 @@ func TestUserGroupCreateRequiresAdminOrGroupAdmin(t *testing.T) {
 	}
 }
 
+func TestUserGroupCreateRejectsLeakedProxyAdminPrincipal(t *testing.T) {
+	filesystem := &adminLeakingCatalogFileSystem{catalogTestFileSystem: newCatalogTestFileSystem()}
+	service := newTestUserGroupServiceWithCatalogFileSystem(t, filesystem)
+
+	_, err := service.CreateUserGroup(context.Background(), bearerRequestContext(), "science-team", "tempZone", UserGroupMutationOptions{})
+	if !errors.Is(err, ErrPermissionDenied) {
+		t.Fatalf("expected permission denied, got %v", err)
+	}
+}
+
 func TestUserGroupReconcileDoesNotBypassPermissionChecks(t *testing.T) {
 	service := newTestUserGroupService(t, newCatalogTestFileSystem())
 	requestContext := bearerRequestContext()
@@ -181,8 +191,9 @@ func TestUserGroupReconcileOperationsAreRepeatable(t *testing.T) {
 		}
 	}
 
+	deleteRequestContext := rodsAdminRequestContext()
 	for i := 0; i < 2; i++ {
-		if err := service.DeleteUserGroup(context.Background(), requestContext, "science-team", "tempZone", UserGroupMutationOptions{Reconcile: true}); err != nil {
+		if err := service.DeleteUserGroup(context.Background(), deleteRequestContext, "science-team", "tempZone", UserGroupMutationOptions{Reconcile: true}); err != nil {
 			t.Fatalf("DeleteUserGroup reconcile attempt %d returned error: %v", i+1, err)
 		}
 	}
@@ -251,14 +262,23 @@ func TestUserGroupMutationsRejectMissingNames(t *testing.T) {
 func TestUserGroupDeleteReconcileMissingGroup(t *testing.T) {
 	service := newTestUserGroupService(t, newCatalogTestFileSystem())
 
-	strictErr := service.DeleteUserGroup(context.Background(), groupAdminRequestContext(), "missing-team", "tempZone", UserGroupMutationOptions{})
+	strictErr := service.DeleteUserGroup(context.Background(), rodsAdminRequestContext(), "missing-team", "tempZone", UserGroupMutationOptions{})
 	if !errors.Is(strictErr, ErrNotFound) {
 		t.Fatalf("expected strict delete not found, got %v", strictErr)
 	}
 
-	err := service.DeleteUserGroup(context.Background(), groupAdminRequestContext(), "missing-team", "tempZone", UserGroupMutationOptions{Reconcile: true})
+	err := service.DeleteUserGroup(context.Background(), rodsAdminRequestContext(), "missing-team", "tempZone", UserGroupMutationOptions{Reconcile: true})
 	if err != nil {
 		t.Fatalf("DeleteUserGroup reconcile returned error: %v", err)
+	}
+}
+
+func TestUserGroupDeleteRejectsGroupAdmin(t *testing.T) {
+	service := newTestUserGroupService(t, newCatalogTestFileSystem())
+
+	err := service.DeleteUserGroup(context.Background(), groupAdminRequestContext(), "research-team", "tempZone", UserGroupMutationOptions{})
+	if !errors.Is(err, ErrPermissionDenied) {
+		t.Fatalf("expected permission denied, got %v", err)
 	}
 }
 
@@ -333,7 +353,11 @@ func TestNormalizeUserGroupErrorMapsUserNotInGroupToNotFound(t *testing.T) {
 
 func newTestUserGroupService(t *testing.T, filesystem *catalogTestFileSystem) UserGroupService {
 	t.Helper()
+	return newTestUserGroupServiceWithCatalogFileSystem(t, filesystem)
+}
 
+func newTestUserGroupServiceWithCatalogFileSystem(t *testing.T, filesystem CatalogFileSystem) UserGroupService {
+	t.Helper()
 	cfg := config.RestConfig{
 		IrodsZone:            "tempZone",
 		IrodsHost:            "irods.local",

@@ -24,6 +24,7 @@ import (
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
 	metadataext "github.com/michael-conway/go-irodsclient-extensions/metadata"
 	s3adminext "github.com/michael-conway/go-irodsclient-extensions/s3admin"
+	usersandgroupsext "github.com/michael-conway/go-irodsclient-extensions/usersandgroups"
 	usersyncext "github.com/michael-conway/go-irodsclient-extensions/usersync"
 	"github.com/michael-conway/irods-go-rest/internal/auth"
 	"github.com/michael-conway/irods-go-rest/internal/config"
@@ -390,6 +391,25 @@ func TestMutatingEndpointsRequireAuthentication(t *testing.T) {
 			target: "/api/v1/user/bob",
 		},
 		{
+			name:        "create user avu",
+			method:      http.MethodPost,
+			target:      "/api/v1/user/bob/avu",
+			body:        `{"attrib":"department","value":"science"}`,
+			contentType: "application/json",
+		},
+		{
+			name:        "update user avu",
+			method:      http.MethodPut,
+			target:      "/api/v1/user/bob/avu/1",
+			body:        `{"attrib":"department","value":"science"}`,
+			contentType: "application/json",
+		},
+		{
+			name:   "delete user avu",
+			method: http.MethodDelete,
+			target: "/api/v1/user/bob/avu/1",
+		},
+		{
 			name:        "create usergroup",
 			method:      http.MethodPost,
 			target:      "/api/v1/usergroup",
@@ -400,6 +420,25 @@ func TestMutatingEndpointsRequireAuthentication(t *testing.T) {
 			name:   "delete usergroup",
 			method: http.MethodDelete,
 			target: "/api/v1/usergroup/research-team",
+		},
+		{
+			name:        "create usergroup avu",
+			method:      http.MethodPost,
+			target:      "/api/v1/usergroup/research-team/avu",
+			body:        `{"attrib":"purpose","value":"analysis"}`,
+			contentType: "application/json",
+		},
+		{
+			name:        "update usergroup avu",
+			method:      http.MethodPut,
+			target:      "/api/v1/usergroup/research-team/avu/1",
+			body:        `{"attrib":"purpose","value":"analysis"}`,
+			contentType: "application/json",
+		},
+		{
+			name:   "delete usergroup avu",
+			method: http.MethodDelete,
+			target: "/api/v1/usergroup/research-team/avu/1",
 		},
 		{
 			name:        "add usergroup member",
@@ -1864,6 +1903,126 @@ func TestDeletePathAVURemovesAVU(t *testing.T) {
 	}
 }
 
+func TestUserAVULifecycle(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/user/alice/avu?zone=tempZone", strings.NewReader(`{"attrib":"department","value":"science","unit":"starbase"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"user_name":"alice"`,
+		`"zone":"tempZone"`,
+		`"attrib":"department"`,
+		`"value":"science"`,
+		`"unit":"starbase"`,
+		`"update":{"href":"/api/v1/user/alice/avu/1?zone=tempZone","method":"PUT"}`,
+		`"delete":{"href":"/api/v1/user/alice/avu/1?zone=tempZone","method":"DELETE"}`,
+	) {
+		t.Fatalf("unexpected user AVU create response body: %q", body)
+	}
+
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/user/alice/avu/1?zone=tempZone", strings.NewReader(`{"attrib":"department","value":"operations","unit":"starbase"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !containsAll(body, `"attrib":"department"`, `"value":"operations"`, `"unit":"starbase"`) {
+		t.Fatalf("unexpected user AVU update response body: %q", body)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/user/alice/avu/1?zone=tempZone", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec = httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/user/alice/avu?zone=tempZone", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec = httptest.NewRecorder()
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !containsAll(
+		body,
+		`"links":{"create":{"href":"/api/v1/user/alice/avu?zone=tempZone","method":"POST"}`,
+		`"self":{"href":"/api/v1/user/alice/avu?zone=tempZone","method":"GET"}`,
+	) {
+		t.Fatalf("unexpected user AVU list links: %q", body)
+	}
+	if strings.Contains(body, `"attrib":"department"`) {
+		t.Fatalf("expected user AVU to be removed, got %q", body)
+	}
+}
+
+func TestUserGroupAVUsCanBeCreatedAndListed(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/usergroup/research-team/avu?zone=tempZone", strings.NewReader(`{"attrib":"purpose","value":"analysis","unit":"starbase"}`))
+	req.Header.Set("Authorization", "Bearer token123")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"group_name":"research-team"`,
+		`"attrib":"purpose"`,
+		`"value":"analysis"`,
+		`"update":{"href":"/api/v1/usergroup/research-team/avu/1?zone=tempZone","method":"PUT"}`,
+		`"delete":{"href":"/api/v1/usergroup/research-team/avu/1?zone=tempZone","method":"DELETE"}`,
+	) {
+		t.Fatalf("unexpected group AVU create response body: %q", body)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/usergroup/research-team/avu?zone=tempZone&attrib=purpose", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec = httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !containsAll(
+		body,
+		`"group_name":"research-team"`,
+		`"count":1`,
+		`"total":1`,
+		`"attrib":"purpose"`,
+		`"value":"analysis"`,
+		`"links":{"create":{"href":"/api/v1/usergroup/research-team/avu?zone=tempZone","method":"POST"}`,
+		`"self":{"href":"/api/v1/usergroup/research-team/avu?zone=tempZone","method":"GET"}`,
+		`"update":{"href":"/api/v1/usergroup/research-team/avu/1?zone=tempZone","method":"PUT"}`,
+		`"delete":{"href":"/api/v1/usergroup/research-team/avu/1?zone=tempZone","method":"DELETE"}`,
+	) {
+		t.Fatalf("unexpected group AVU list response body: %q", body)
+	}
+}
+
 func TestGetPathChecksumReturnsTypedChecksum(t *testing.T) {
 	handler := testHandler(t)
 
@@ -3219,6 +3378,7 @@ func testHandlerWithConfig(t *testing.T, mutate func(*config.RestConfig)) (*Hand
 		restservice.NewResourceService(irods.NewResourceServiceWithFactory(*cfg, factory)),
 		restservice.NewUserService(irods.NewUserServiceWithFactory(*cfg, factory)),
 		restservice.NewUserGroupService(irods.NewUserGroupServiceWithFactory(*cfg, factory)),
+		restservice.NewUsersAndGroupsService(irods.NewUsersAndGroupsServiceWithFactory(*cfg, factory)),
 		restservice.NewTicketService(irods.NewTicketServiceWithFactory(*cfg, factory)),
 		stubAuthService{},
 		stubAuthService{},
@@ -4323,6 +4483,47 @@ func (f *testCatalogFileSystem) AddUserMetadata(username string, zoneName string
 	return nil
 }
 
+func (f *testCatalogFileSystem) ReplaceUserMetadataByID(username string, zoneName string, avuID int64, target metadataext.AVUStat) (metadataext.AVUStat, error) {
+	if _, ok := f.usersByKey[userKey(username, zoneName)]; !ok {
+		return metadataext.AVUStat{}, irodstypes.NewUserNotFoundError(username)
+	}
+
+	metadata := f.metadataByUser[userKey(username, zoneName)]
+	for i, meta := range metadata {
+		if meta != nil && meta.AVUID == avuID {
+			meta.Name = target.Name
+			meta.Value = target.Value
+			meta.Units = target.Units
+			meta.ModifyTime = time.Now().UTC()
+			f.metadataByUser[userKey(username, zoneName)][i] = meta
+			return metadataext.AVUStat{ID: meta.AVUID, Name: meta.Name, Value: meta.Value, Units: meta.Units, CreateTime: meta.CreateTime, ModifyTime: meta.ModifyTime}, nil
+		}
+	}
+	return metadataext.AVUStat{}, metadataext.ErrAVUNotFound
+}
+
+func (f *testCatalogFileSystem) DeleteUserMetadata(username string, zoneName string, avuID int64) error {
+	if _, ok := f.usersByKey[userKey(username, zoneName)]; !ok {
+		return irodstypes.NewUserNotFoundError(username)
+	}
+
+	metadata := f.metadataByUser[userKey(username, zoneName)]
+	filtered := make([]*irodstypes.IRODSMeta, 0, len(metadata))
+	deleted := false
+	for _, meta := range metadata {
+		if meta != nil && meta.AVUID == avuID {
+			deleted = true
+			continue
+		}
+		filtered = append(filtered, meta)
+	}
+	if !deleted {
+		return metadataext.ErrAVUNotFound
+	}
+	f.metadataByUser[userKey(username, zoneName)] = filtered
+	return nil
+}
+
 func (f *testCatalogFileSystem) CreateUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error) {
 	key := userKey(username, zoneName)
 	if existing, ok := f.usersByKey[key]; ok {
@@ -4450,6 +4651,184 @@ func (f *testCatalogFileSystem) hasUserMetadata(username string, zoneName string
 }
 
 func (f *testCatalogFileSystem) Release() {}
+
+func (f *testCatalogFileSystem) UsersAndGroupsCatalog() usersandgroupsext.Catalog {
+	return testUsersAndGroupsCatalog{filesystem: f}
+}
+
+type testUsersAndGroupsCatalog struct {
+	filesystem *testCatalogFileSystem
+}
+
+func (c testUsersAndGroupsCatalog) ListGroupSummaries(_ context.Context, options usersandgroupsext.GroupSummaryOptions) ([]usersandgroupsext.GroupSummary, error) {
+	groups := make([]usersandgroupsext.GroupSummary, 0)
+	for _, user := range c.filesystem.usersByKey {
+		if user == nil || user.Zone != options.Zone || user.Type != irodstypes.IRODSUserRodsGroup {
+			continue
+		}
+		if strings.TrimSpace(options.Prefix) != "" && !strings.HasPrefix(user.Name, options.Prefix) {
+			continue
+		}
+		groups = append(groups, usersandgroupsext.GroupSummary{
+			ID:          user.ID,
+			Name:        user.Name,
+			Zone:        user.Zone,
+			Type:        user.Type,
+			MemberCount: len(c.filesystem.groupMembers[userKey(user.Name, user.Zone)]),
+		})
+	}
+	sort.SliceStable(groups, func(i, j int) bool {
+		return groups[i].Name < groups[j].Name
+	})
+	if options.Limit > 0 && len(groups) > options.Limit {
+		groups = groups[:options.Limit]
+	}
+	return groups, nil
+}
+
+func (c testUsersAndGroupsCatalog) ListUserMembershipSummaries(_ context.Context, options usersandgroupsext.UserMembershipSummaryOptions) ([]usersandgroupsext.UserMembershipSummary, error) {
+	users := make([]usersandgroupsext.UserMembershipSummary, 0)
+	for _, user := range c.filesystem.usersByKey {
+		if user == nil || user.Zone != options.Zone || user.Type == irodstypes.IRODSUserRodsGroup {
+			continue
+		}
+		if options.Type != "" && user.Type != options.Type {
+			continue
+		}
+		if strings.TrimSpace(options.Prefix) != "" && !strings.HasPrefix(user.Name, options.Prefix) {
+			continue
+		}
+		users = append(users, usersandgroupsext.UserMembershipSummary{
+			ID:     user.ID,
+			Name:   user.Name,
+			Zone:   user.Zone,
+			Type:   user.Type,
+			Groups: c.groupsForUser(user.Name, user.Zone),
+		})
+	}
+	sort.SliceStable(users, func(i, j int) bool {
+		return users[i].Name < users[j].Name
+	})
+	if options.Limit > 0 && len(users) > options.Limit {
+		users = users[:options.Limit]
+	}
+	return users, nil
+}
+
+func (c testUsersAndGroupsCatalog) ListGroupsForUser(_ context.Context, options usersandgroupsext.GroupsForUserOptions) ([]usersandgroupsext.GroupRef, error) {
+	groups := c.groupsForUser(options.UserName, options.Zone)
+	if options.Limit > 0 && len(groups) > options.Limit {
+		groups = groups[:options.Limit]
+	}
+	return groups, nil
+}
+
+func (c testUsersAndGroupsCatalog) SearchPrincipals(_ context.Context, options usersandgroupsext.PrincipalSearchOptions) ([]usersandgroupsext.PrincipalSearchResult, error) {
+	results := make([]usersandgroupsext.PrincipalSearchResult, 0)
+	includeUsers := len(options.Kinds) == 0
+	includeGroups := len(options.Kinds) == 0
+	for _, kind := range options.Kinds {
+		includeUsers = includeUsers || kind == usersandgroupsext.PrincipalKindUser
+		includeGroups = includeGroups || kind == usersandgroupsext.PrincipalKindGroup
+	}
+
+	for _, user := range c.filesystem.usersByKey {
+		if user == nil || user.Zone != options.Zone || !strings.HasPrefix(user.Name, options.Query) {
+			continue
+		}
+		if user.Type == irodstypes.IRODSUserRodsGroup {
+			if !includeGroups {
+				continue
+			}
+			results = append(results, usersandgroupsext.PrincipalSearchResult{
+				ID:   user.ID,
+				Name: user.Name,
+				Zone: user.Zone,
+				Type: user.Type,
+				Kind: usersandgroupsext.PrincipalKindGroup,
+			})
+			continue
+		}
+		if includeUsers {
+			results = append(results, usersandgroupsext.PrincipalSearchResult{
+				ID:   user.ID,
+				Name: user.Name,
+				Zone: user.Zone,
+				Type: user.Type,
+				Kind: usersandgroupsext.PrincipalKindUser,
+			})
+		}
+	}
+	sort.SliceStable(results, func(i, j int) bool {
+		return results[i].Name < results[j].Name
+	})
+	if options.Limit > 0 && len(results) > options.Limit {
+		results = results[:options.Limit]
+	}
+	return results, nil
+}
+
+func (c testUsersAndGroupsCatalog) CreateRodsUserWithPassword(_ context.Context, request usersandgroupsext.CreateRodsUserWithPasswordRequest) (usersandgroupsext.User, error) {
+	user, err := c.filesystem.CreateUser(request.Name, request.Zone, irodstypes.IRODSUserRodsUser)
+	if err != nil {
+		return usersandgroupsext.User{}, err
+	}
+	if err := c.filesystem.ChangeUserPassword(request.Name, request.Zone, request.Password); err != nil {
+		return usersandgroupsext.User{}, err
+	}
+	return usersandgroupsext.User{
+		ID:   user.ID,
+		Name: user.Name,
+		Zone: user.Zone,
+		Type: user.Type,
+	}, nil
+}
+
+func (c testUsersAndGroupsCatalog) CreateGroup(_ context.Context, request usersandgroupsext.GroupRequest) (usersandgroupsext.GroupRef, error) {
+	group, err := c.filesystem.CreateUserGroup(request.Name, request.Zone)
+	if err != nil {
+		return usersandgroupsext.GroupRef{}, err
+	}
+	return usersandgroupsext.GroupRef{
+		ID:   group.ID,
+		Name: group.Name,
+		Zone: group.Zone,
+		Type: group.Type,
+	}, nil
+}
+
+func (c testUsersAndGroupsCatalog) AddGroupMember(_ context.Context, request usersandgroupsext.GroupMemberRequest) error {
+	return c.filesystem.AddGroupMember(request.GroupName, request.UserName, request.Zone)
+}
+
+func (c testUsersAndGroupsCatalog) RemoveGroupMember(_ context.Context, request usersandgroupsext.GroupMemberRequest) error {
+	return c.filesystem.RemoveGroupMember(request.GroupName, request.UserName, request.Zone)
+}
+
+func (c testUsersAndGroupsCatalog) groupsForUser(username string, zone string) []usersandgroupsext.GroupRef {
+	groups := make([]usersandgroupsext.GroupRef, 0)
+	for key, members := range c.filesystem.groupMembers {
+		group, ok := c.filesystem.usersByKey[key]
+		if !ok || group == nil || group.Zone != zone {
+			continue
+		}
+		for _, member := range members {
+			if member != username {
+				continue
+			}
+			groups = append(groups, usersandgroupsext.GroupRef{
+				ID:   group.ID,
+				Name: group.Name,
+				Zone: group.Zone,
+				Type: group.Type,
+			})
+		}
+	}
+	sort.SliceStable(groups, func(i, j int) bool {
+		return groups[i].Name < groups[j].Name
+	})
+	return groups
+}
 
 func (f *testCatalogFileSystem) GetTicket(ticketName string) (*irodstypes.IRODSTicket, error) {
 	ticket, ok := f.ticketsByName[ticketName]
@@ -4743,7 +5122,11 @@ func TestGetUsersReturnsPrefixMatches(t *testing.T) {
 		`"create":{"href":"/api/v1/user?zone=tempZone","method":"POST"}`,
 		`"self":{"href":"/api/v1/user/alice?zone=tempZone","method":"GET"}`,
 		`"update":{"href":"/api/v1/user/alice?zone=tempZone","method":"PUT"}`,
+		`"update_type":{"href":"/api/v1/user/alice/type?zone=tempZone","method":"PUT"}`,
+		`"update_password":{"href":"/api/v1/user/alice/password?zone=tempZone","method":"PUT"}`,
 		`"delete":{"href":"/api/v1/user/alice?zone=tempZone","method":"DELETE"}`,
+		`"avus":{"href":"/api/v1/user/alice/avu?zone=tempZone","method":"GET"}`,
+		`"create_avu":{"href":"/api/v1/user/alice/avu?zone=tempZone","method":"POST"}`,
 	) {
 		t.Fatalf("unexpected response body: %q", body)
 	}
@@ -4785,8 +5168,49 @@ func TestGetUserReturnsUserDetails(t *testing.T) {
 		`"zone":"tempZone"`,
 		`"type":"rodsuser"`,
 		`"self":{"href":"/api/v1/user/alice?zone=tempZone","method":"GET"}`,
+		`"update_type":{"href":"/api/v1/user/alice/type?zone=tempZone","method":"PUT"}`,
+		`"update_password":{"href":"/api/v1/user/alice/password?zone=tempZone","method":"PUT"}`,
 	) {
 		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestGetUserMembershipSummaryIncludesGroupAdminsByDefault(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/user/membership-summary?zone=tempZone&limit=100", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !containsAll(body, `"name":"alice"`, `"type":"rodsuser"`, `"name":"groupadmin"`, `"type":"groupadmin"`) {
+		t.Fatalf("expected default membership summary to include rodsuser and groupadmin users, got %q", body)
+	}
+}
+
+func TestGetUserMembershipSummaryTypeFilterNarrowsUsers(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/user/membership-summary?zone=tempZone&type=rodsuser&limit=100", nil)
+	req.Header.Set("Authorization", "Bearer token123")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !containsAll(body, `"name":"alice"`, `"type":"rodsuser"`) {
+		t.Fatalf("expected rodsuser membership summary, got %q", body)
+	}
+	if strings.Contains(body, `"name":"groupadmin"`) {
+		t.Fatalf("expected rodsuser filter to exclude groupadmin, got %q", body)
 	}
 }
 
@@ -4805,6 +5229,66 @@ func TestPutUserRequiresRodsAdmin(t *testing.T) {
 	}
 }
 
+func TestPutUserRejectsGroupAdminTypeChange(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/user/groupadmin", strings.NewReader(`{"type":"rodsuser"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPutUserRejectsGroupAdminTypeChangeWithReconcileFlag(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/user/groupadmin?reconcile=true", strings.NewReader(`{"type":"rodsuser"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPutUserRejectsGroupAdminTypeChangeWithReconcileFalse(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/user/groupadmin?reconcile=false", strings.NewReader(`{"type":"rodsuser"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPutUserRejectsGroupAdminSelfPromotionToRodsAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/user/groupadmin", strings.NewReader(`{"type":"rodsadmin"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestPutUserUpdatesUserAsRodsAdmin(t *testing.T) {
 	handler := testHandler(t)
 
@@ -4819,6 +5303,150 @@ func TestPutUserUpdatesUserAsRodsAdmin(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 	if body := rec.Body.String(); !containsAll(body, `"name":"bob"`, `"type":"rodsadmin"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestPutUserUpdatesUserToGroupAdminAsRodsAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/user/bob", strings.NewReader(`{"type":"groupadmin"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("rods:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !containsAll(body, `"name":"bob"`, `"type":"groupadmin"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestPutUserTypeUpdatesUserAsRodsAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/user/bob/type", strings.NewReader(`{"type":"groupadmin"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("rods:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !containsAll(body, `"name":"bob"`, `"type":"groupadmin"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestPutUserTypeRejectsMissingType(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/user/bob/type", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("rods:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !containsAll(body, `"message":"user type update validation failed"`, `"type":"type is required"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestPutUserTypeRejectsPasswordField(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/user/bob/type", strings.NewReader(`{"type":"groupadmin","password":"new-secret"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("rods:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !containsAll(body, `"message":"request body must be valid JSON with only supported fields"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestPutUserPasswordUpdatesUserAsRodsAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/user/bob/password", strings.NewReader(`{"password":"new-secret"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("rods:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !containsAll(body, `"name":"bob"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestPutUserPasswordRejectsMissingPassword(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/user/bob/password", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("rods:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !containsAll(body, `"message":"user password update validation failed"`, `"password":"password is required"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestPutUserPasswordRejectsTypeField(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/user/bob/password", strings.NewReader(`{"password":"new-secret","type":"groupadmin"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("rods:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !containsAll(body, `"message":"request body must be valid JSON with only supported fields"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestPutUserRejectsMixedTypeAndPassword(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/user/bob", strings.NewReader(`{"type":"rodsadmin","password":"new-secret"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("rods:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !containsAll(body, `"message":"user update validation failed"`, `"request":"type and password updates must use separate routes"`) {
 		t.Fatalf("unexpected response body: %q", body)
 	}
 }
@@ -4856,7 +5484,7 @@ func TestPutUserReconcileMissingWithoutTypeReturnsNotFound(t *testing.T) {
 	}
 }
 
-func TestPostUserRequiresAdminOrGroupAdmin(t *testing.T) {
+func TestPostUserRequiresRodsAdminOrGroupAdmin(t *testing.T) {
 	handler := testHandler(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/user", strings.NewReader(`{"name":"charlie","type":"rodsuser"}`))
@@ -4871,10 +5499,10 @@ func TestPostUserRequiresAdminOrGroupAdmin(t *testing.T) {
 	}
 }
 
-func TestPostUserCreatesUserAsGroupAdmin(t *testing.T) {
+func TestPostUserCreatesRodsUserAsGroupAdmin(t *testing.T) {
 	handler := testHandler(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/user", strings.NewReader(`{"name":"charlie","type":"rodsuser"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/user", strings.NewReader(`{"name":"charlie","type":"rodsuser","password":"initial-pass"}`))
 	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -4882,10 +5510,58 @@ func TestPostUserCreatesUserAsGroupAdmin(t *testing.T) {
 	handler.Routes().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d", rec.Code)
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
 	}
 	if body := rec.Body.String(); !containsAll(body, `"name":"charlie"`, `"type":"rodsuser"`) {
 		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestPostUserCreatesRodsUserAsGroupAdminWithReconcileFalse(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/user?reconcile=false", strings.NewReader(`{"name":"charlie","type":"rodsuser","password":"initial-pass"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !containsAll(body, `"name":"charlie"`, `"type":"rodsuser"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestPostUserRejectsProtectedTypeAsGroupAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/user", strings.NewReader(`{"name":"charlie","type":"groupadmin"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPostUserReconcileRejectsGroupAdmin(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/user?reconcile=true", strings.NewReader(`{"name":"charlie","type":"rodsuser"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -4893,7 +5569,7 @@ func TestPostUserDuplicateStrictConflicts(t *testing.T) {
 	handler := testHandler(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/user", strings.NewReader(`{"name":"alice","type":"rodsuser"}`))
-	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("rods:secret")))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -4904,11 +5580,11 @@ func TestPostUserDuplicateStrictConflicts(t *testing.T) {
 	}
 }
 
-func TestPostUserReconcileExistingAsGroupAdmin(t *testing.T) {
+func TestPostUserReconcileExistingAsRodsAdmin(t *testing.T) {
 	handler := testHandler(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/user?reconcile=true", strings.NewReader(`{"name":"alice","type":"rodsuser"}`))
-	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("rods:secret")))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -4926,7 +5602,7 @@ func TestPostUserReconcileExistingTypeMismatchConflicts(t *testing.T) {
 	handler := testHandler(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/user?reconcile=true", strings.NewReader(`{"name":"alice","type":"rodsadmin"}`))
-	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("rods:secret")))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -4965,7 +5641,7 @@ func TestDeleteUserRemovesUserAsRodsAdmin(t *testing.T) {
 	}
 }
 
-func TestDeleteUserRemovesUserAsGroupAdmin(t *testing.T) {
+func TestDeleteUserRejectsGroupAdmin(t *testing.T) {
 	handler := testHandler(t)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/user/bob", nil)
@@ -4974,16 +5650,16 @@ func TestDeleteUserRemovesUserAsGroupAdmin(t *testing.T) {
 
 	handler.Routes().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("expected 204, got %d", rec.Code)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestDeleteUserReconcileMissingAsGroupAdmin(t *testing.T) {
+func TestDeleteUserReconcileMissingAsRodsAdmin(t *testing.T) {
 	handler := testHandler(t)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/user/missing-user?reconcile=true", nil)
-	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("rods:secret")))
 	rec := httptest.NewRecorder()
 
 	handler.Routes().ServeHTTP(rec, req)
@@ -5034,6 +5710,8 @@ func TestGetUserGroupsReturnsPrefixMatches(t *testing.T) {
 		`"self":{"href":"/api/v1/usergroup/research-team?zone=tempZone","method":"GET"}`,
 		`"delete":{"href":"/api/v1/usergroup/research-team?zone=tempZone","method":"DELETE"}`,
 		`"add_member":{"href":"/api/v1/usergroup/research-team/member?zone=tempZone","method":"POST"}`,
+		`"avus":{"href":"/api/v1/usergroup/research-team/avu?zone=tempZone","method":"GET"}`,
+		`"create_avu":{"href":"/api/v1/usergroup/research-team/avu?zone=tempZone","method":"POST"}`,
 	) {
 		t.Fatalf("unexpected response body: %q", body)
 	}
@@ -5075,6 +5753,8 @@ func TestGetUserGroupReturnsMembersAndLinks(t *testing.T) {
 		`"self":{"href":"/api/v1/user/alice?zone=tempZone","method":"GET"}`,
 		`"remove_from_group":{"href":"/api/v1/usergroup/research-team/member/alice?zone=tempZone","method":"DELETE"}`,
 		`"add_member":{"href":"/api/v1/usergroup/research-team/member?zone=tempZone","method":"POST"}`,
+		`"avus":{"href":"/api/v1/usergroup/research-team/avu?zone=tempZone","method":"GET"}`,
+		`"create_avu":{"href":"/api/v1/usergroup/research-team/avu?zone=tempZone","method":"POST"}`,
 	) {
 		t.Fatalf("unexpected response body: %q", body)
 	}
@@ -5164,7 +5844,7 @@ func TestPostUserGroupReconcileExistingAsGroupAdmin(t *testing.T) {
 	}
 }
 
-func TestDeleteUserGroupRemovesAsGroupAdmin(t *testing.T) {
+func TestDeleteUserGroupRejectsGroupAdmin(t *testing.T) {
 	handler := testHandler(t)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/usergroup/research-team", nil)
@@ -5173,16 +5853,16 @@ func TestDeleteUserGroupRemovesAsGroupAdmin(t *testing.T) {
 
 	handler.Routes().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("expected 204, got %d", rec.Code)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestDeleteUserGroupReconcileMissingAsGroupAdmin(t *testing.T) {
+func TestDeleteUserGroupReconcileMissingAsRodsAdmin(t *testing.T) {
 	handler := testHandler(t)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/usergroup/missing-team?reconcile=true", nil)
-	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("rods:secret")))
 	rec := httptest.NewRecorder()
 
 	handler.Routes().ServeHTTP(rec, req)

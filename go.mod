@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/cyverse/go-irodsclient v0.20.1-0.20260605235210-f3125ea03517
 	github.com/go-viper/mapstructure/v2 v2.5.0
-	github.com/michael-conway/go-irodsclient-extensions v0.0.0-20260612113622-39cc67887d06
+	github.com/michael-conway/go-irodsclient-extensions v0.0.0-20260625132823-a8d8221e0b62
 	github.com/rs/xid v1.6.0
 )
 

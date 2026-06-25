@@ -251,6 +251,14 @@ func userGroupLinks(group domain.UserGroup) *domain.UserGroupLinks {
 			Href:   userGroupMemberBaseHref(groupName, group.Zone),
 			Method: http.MethodPost,
 		},
+		AVUs: &domain.ActionLink{
+			Href:   principalAVUCollectionHref("/api/v1/usergroup", groupName, group.Zone),
+			Method: http.MethodGet,
+		},
+		CreateAVU: &domain.ActionLink{
+			Href:   principalAVUCollectionHref("/api/v1/usergroup", groupName, group.Zone),
+			Method: http.MethodPost,
+		},
 	}
 }
 

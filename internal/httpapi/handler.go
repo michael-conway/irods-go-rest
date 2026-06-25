@@ -39,13 +39,14 @@ type Handler struct {
 	resources  restservice.ResourceService
 	users      restservice.UserService
 	userGroups restservice.UserGroupService
+	userAdmin  restservice.UsersAndGroupsService
 	tickets    restservice.TicketService
 	authFlow   auth.AuthFlowService
 	verifier   auth.TokenVerifier
 	webSession *auth.SessionStore
 }
 
-func NewHandler(cfg config.RestConfig, paths restservice.PathService, s3Admin restservice.S3AdminService, serverInfo restservice.ServerInfoService, resources restservice.ResourceService, users restservice.UserService, userGroups restservice.UserGroupService, tickets restservice.TicketService, authFlow auth.AuthFlowService, verifier auth.TokenVerifier, webSession *auth.SessionStore) *Handler {
+func NewHandler(cfg config.RestConfig, paths restservice.PathService, s3Admin restservice.S3AdminService, serverInfo restservice.ServerInfoService, resources restservice.ResourceService, users restservice.UserService, userGroups restservice.UserGroupService, userAdmin restservice.UsersAndGroupsService, tickets restservice.TicketService, authFlow auth.AuthFlowService, verifier auth.TokenVerifier, webSession *auth.SessionStore) *Handler {
 	return &Handler{
 		cfg:        cfg,
 		paths:      paths,
@@ -54,6 +55,7 @@ func NewHandler(cfg config.RestConfig, paths restservice.PathService, s3Admin re
 		resources:  resources,
 		users:      users,
 		userGroups: userGroups,
+		userAdmin:  userAdmin,
 		tickets:    tickets,
 		authFlow:   authFlow,
 		verifier:   verifier,
@@ -99,16 +101,31 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("GET /api/v1/resource", h.requireBearer(http.HandlerFunc(h.getResources)))
 	mux.Handle("GET /api/v1/resource/{resource_id}", h.requireBearer(http.HandlerFunc(h.getResource)))
 	mux.Handle("GET /api/v1/user", h.requireBearer(http.HandlerFunc(h.getUsers)))
+	mux.Handle("GET /api/v1/user/me", h.requireBearer(http.HandlerFunc(h.getCurrentUserMembership)))
+	mux.Handle("GET /api/v1/user/membership-summary", h.requireBearer(http.HandlerFunc(h.getUserMembershipSummaries)))
 	mux.Handle("POST /api/v1/user", h.requireBearer(http.HandlerFunc(h.postUser)))
 	mux.Handle("GET /api/v1/user/{user_name}", h.requireBearer(http.HandlerFunc(h.getUser)))
+	mux.Handle("GET /api/v1/user/{user_name}/avu", h.requireBearer(http.HandlerFunc(h.getUserAVUs)))
+	mux.Handle("POST /api/v1/user/{user_name}/avu", h.requireBearer(http.HandlerFunc(h.postUserAVU)))
+	mux.Handle("PUT /api/v1/user/{user_name}/avu/{avu_id}", h.requireBearer(http.HandlerFunc(h.putUserAVU)))
+	mux.Handle("DELETE /api/v1/user/{user_name}/avu/{avu_id}", h.requireBearer(http.HandlerFunc(h.deleteUserAVU)))
+	mux.Handle("GET /api/v1/user/{user_name}/usergroup", h.requireBearer(http.HandlerFunc(h.getUserGroupsForUser)))
+	mux.Handle("PUT /api/v1/user/{user_name}/type", h.requireBearer(http.HandlerFunc(h.putUserType)))
+	mux.Handle("PUT /api/v1/user/{user_name}/password", h.requireBearer(http.HandlerFunc(h.putUserPassword)))
 	mux.Handle("PUT /api/v1/user/{user_name}", h.requireBearer(http.HandlerFunc(h.putUser)))
 	mux.Handle("DELETE /api/v1/user/{user_name}", h.requireBearer(http.HandlerFunc(h.deleteUser)))
 	mux.Handle("GET /api/v1/usergroup", h.requireBearer(http.HandlerFunc(h.getUserGroups)))
+	mux.Handle("GET /api/v1/usergroup/summary", h.requireBearer(http.HandlerFunc(h.getUserGroupSummaries)))
 	mux.Handle("POST /api/v1/usergroup", h.requireBearer(http.HandlerFunc(h.postUserGroup)))
 	mux.Handle("GET /api/v1/usergroup/{group_name}", h.requireBearer(http.HandlerFunc(h.getUserGroup)))
+	mux.Handle("GET /api/v1/usergroup/{group_name}/avu", h.requireBearer(http.HandlerFunc(h.getUserGroupAVUs)))
+	mux.Handle("POST /api/v1/usergroup/{group_name}/avu", h.requireBearer(http.HandlerFunc(h.postUserGroupAVU)))
+	mux.Handle("PUT /api/v1/usergroup/{group_name}/avu/{avu_id}", h.requireBearer(http.HandlerFunc(h.putUserGroupAVU)))
+	mux.Handle("DELETE /api/v1/usergroup/{group_name}/avu/{avu_id}", h.requireBearer(http.HandlerFunc(h.deleteUserGroupAVU)))
 	mux.Handle("DELETE /api/v1/usergroup/{group_name}", h.requireBearer(http.HandlerFunc(h.deleteUserGroup)))
 	mux.Handle("POST /api/v1/usergroup/{group_name}/member", h.requireBearer(http.HandlerFunc(h.postUserGroupMember)))
 	mux.Handle("DELETE /api/v1/usergroup/{group_name}/member/{user_name}", h.requireBearer(http.HandlerFunc(h.deleteUserGroupMember)))
+	mux.Handle("GET /api/v1/principal", h.requireBearer(http.HandlerFunc(h.getPrincipals)))
 	mux.Handle("HEAD /api/v1/path/contents", h.requireDownloadBearer(http.HandlerFunc(h.headPathContents)))
 	mux.Handle("GET /api/v1/path/contents", h.requireDownloadBearer(http.HandlerFunc(h.getPathContents)))
 	mux.Handle("POST /api/v1/path/contents", h.requireBearer(http.HandlerFunc(h.postPathContents)))
@@ -130,7 +147,6 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("GET /api/v1/ext/s3/buckets", h.requireBearer(http.HandlerFunc(h.getExtS3Buckets)))
 	mux.Handle("POST /api/v1/ext/s3/buckets", h.requireBearer(http.HandlerFunc(h.postExtS3Bucket)))
 	mux.Handle("PUT /api/v1/ext/s3/buckets", h.requireBearer(http.HandlerFunc(h.putExtS3Bucket)))
-	// TODO: Temporary S3 mapping reconciliation endpoint. Remove after bucket mapping is managed by the dedicated S3 admin service flow.
 	mux.Handle("POST /api/v1/ext/s3/buckets/refresh-mapping", h.requireBearer(http.HandlerFunc(h.postExtS3BucketMappingRefresh)))
 	mux.Handle("GET /api/v1/ext/s3/buckets/by-path", h.requireBearer(http.HandlerFunc(h.getExtS3BucketByPath)))
 	mux.Handle("GET /api/v1/ext/s3/buckets/{bucket_id}", h.requireBearer(http.HandlerFunc(h.getExtS3Bucket)))

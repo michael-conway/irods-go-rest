@@ -413,25 +413,16 @@ func (s *catalogService) adminFilesystem(applicationName string) (CatalogFileSys
 }
 
 func (s *catalogService) requireS3RodsAdminUser(filesystem CatalogFileSystem, requestContext *RequestContext, operation string) error {
-	username := strings.TrimSpace(safeUsername(requestContext))
-	if username == "" {
-		return fmt.Errorf("%w: insufficient privilege: %s requires an iRODS user with rodsadmin type", ErrPermissionDenied, operation)
-	}
-
 	zone := strings.TrimSpace(s.cfg.IrodsZone)
 	if zone == "" {
 		return fmt.Errorf("%w: IrodsZone is required", ErrS3AdminNotConfigured)
 	}
 
-	user, err := filesystem.GetUser(username, zone, "")
+	_, err := authenticatedPrincipalType(filesystem, requestContext, zone, operation, irodstypes.IRODSUserRodsAdmin)
 	if err != nil {
 		return fmt.Errorf("%w: insufficient privilege: %s requires an iRODS user with rodsadmin type", ErrPermissionDenied, operation)
 	}
-	if user == nil || user.Type != irodstypes.IRODSUserRodsAdmin {
-		return fmt.Errorf("%w: insufficient privilege: %s requires an iRODS user with rodsadmin type", ErrPermissionDenied, operation)
-	}
-
-	return nil
+	return err
 }
 
 func (s *catalogService) requireS3UserSecretSelfOrAdmin(filesystem CatalogFileSystem, requestContext *RequestContext, targetUserName string, operation string) error {

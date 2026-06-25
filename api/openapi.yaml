@@ -15,13 +15,13 @@ tags:
       for authenticated administrative callers and may be used by synchronization
       controllers when the documented reconciliation guardrails are followed.
       `/api/v1/usergroup` is the generic REST surface for iRODS group create,
-      delete, and membership management. Keycloak synchronization workflows should
-      call these routes instead of defining Keycloak-specific group operations under
+      delete, and membership management. Synchronization workflows should
+      call these routes instead of defining Synchronization-specific group operations under
       `/api/v1/ext`.
   - name: ext
     description: |
       iRODS-specific extension endpoints under `/api/v1/ext/*`.
-      These are alpha-stage workflow APIs that are outside the core GA4GH/base path model.
+      These are APIs that are outside the core iRODS model.
       Extension operations may be deployment-gated. Unsupported capability mode returns
       `501` (`code=not_supported`), while missing required feature configuration returns
       `503` (`code=not_configured`).
@@ -36,9 +36,6 @@ x-sync-guardrails:
     Service-account callers do not receive a separate REST-side authorization store:
     bearer/basic authentication resolves to an effective iRODS identity and iRODS
     role checks still decide whether catalog mutations may proceed.
-    Keycloak-driven group synchronization should use the generic `/api/v1/usergroup`
-    routes rather than `/api/v1/ext`; `/api/v1/ext` is reserved for opinionated
-    workflow APIs that are not already covered by generic iRODS resources.
   usersync_policy:
     behavior: |
       Reconciliation uses the shared `go-irodsclient-extensions/usersync` policy.
@@ -181,6 +178,76 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/principal:
+    get:
+      operationId: getPrincipals
+      tags: [user]
+      summary: Search iRODS users and groups
+      description: |
+        Searches user and group principals by name prefix for combined selector
+        UIs. Use the separate `/api/v1/user` and `/api/v1/usergroup` prefix
+        searches when a combined result set is not needed.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone to search. Defaults to the configured iRODS zone.
+        - in: query
+          name: query
+          required: true
+          schema:
+            type: string
+            minLength: 3
+          description: Principal name prefix to search.
+        - in: query
+          name: kind
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [user, group]
+          style: form
+          explode: true
+          description: Optional principal kind filter. May be repeated.
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+          description: Maximum result count.
+      responses:
+        "200":
+          description: Matching principals
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrincipalSearchResponse"
+        "400":
+          description: Invalid search option
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while searching principals
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/user:
     get:
       operationId: getUsers
@@ -204,8 +271,8 @@ paths:
           required: false
           schema:
             type: string
-            enum: [rodsuser, rodsadmin]
-          description: Optional user type filter.
+            enum: [rodsuser, groupadmin, rodsadmin]
+          description: Optional user type filter. When omitted, all non-group user principal types are returned.
         - in: query
           name: prefix
           required: false
@@ -244,10 +311,13 @@ paths:
       summary: Create one iRODS user
       description: |
         Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+        A `groupadmin` may create only `rodsuser` users and may set the initial
+        password at creation time. Only `rodsadmin` may create `groupadmin` or
+        `rodsadmin` users.
         Synchronization clients may use `reconcile=true` to make creation repeatable
-        when the existing principal is already the requested user type. The operation
-        remains a conflict when the existing principal is a group or when the existing
-        user type differs from the requested type.
+        when the existing principal is already the requested user type. Reconcile
+        mode requires `rodsadmin`. The operation remains a conflict when the existing
+        principal is a group or when the existing user type differs from the requested type.
       security:
         - BearerAuth: []
         - BasicAuth: []
@@ -301,7 +371,123 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: Authenticated iRODS user is not rodsadmin or groupadmin
+          description: Authenticated iRODS user cannot create the requested user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/user/me:
+    get:
+      operationId: getCurrentUserMembership
+      tags: [user]
+      summary: Fetch the authenticated iRODS user and groups
+      description: |
+        Returns the effective authenticated iRODS user, group memberships, and
+        computed administration flags for Starbase user/group UI decisions.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+          description: Maximum group count.
+      responses:
+        "200":
+          description: Current iRODS user membership and administration flags
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUserMembershipResponse"
+        "400":
+          description: Invalid current-user option
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while fetching current user membership
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/user/membership-summary:
+    get:
+      operationId: getUserMembershipSummaries
+      tags: [user]
+      summary: List users with group membership summaries
+      description: |
+        Returns user rows with group names for list-scale administration UIs.
+        This avoids broad client-side joins or repeated per-user group lookups.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone to search. Defaults to the configured iRODS zone.
+        - in: query
+          name: type
+          required: false
+          schema:
+            type: string
+            enum: [rodsuser, groupadmin, rodsadmin]
+          description: Optional user type filter. When omitted, all non-group user principal types are returned.
+        - in: query
+          name: prefix
+          required: false
+          schema:
+            type: string
+            minLength: 3
+          description: Optional username prefix filter.
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+          description: Maximum user count.
+      responses:
+        "200":
+          description: Users with membership summaries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserMembershipSummaryCollectionResponse"
+        "400":
+          description: Invalid summary option
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while listing user memberships
           content:
             application/json:
               schema:
@@ -361,9 +547,16 @@ paths:
     put:
       operationId: putUser
       tags: [user]
-      summary: Update one iRODS user
+      summary: Update one iRODS user (compatibility route)
       description: |
-        Requires the authenticated iRODS user to have type `rodsadmin`.
+        Requires the authenticated iRODS user to have type `rodsadmin`. New clients
+        should use `/api/v1/user/{user_name}/type` for user type changes and
+        `/api/v1/user/{user_name}/password` for password changes.
+
+        This compatibility route accepts exactly one of `type` or `password`;
+        requests that include both fields are rejected to avoid ambiguous user
+        administration intent.
+
         Synchronization clients may use `reconcile=true` as a constrained upsert:
         a missing user is created only when the request includes `type`. Password-only
         updates still require the user to exist, and existing non-user principals or
@@ -393,7 +586,7 @@ paths:
           description: |
             Desired-state sync mode. Create the user when missing if the request
             includes a target `type`; password-only updates still return 404 when
-            the user is absent. Reconciliation does not bypass rodsadmin authorization.
+            the user is absent. Reconciliation does not bypass update authorization.
       requestBody:
         required: true
         content:
@@ -420,7 +613,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: Authenticated iRODS user is not rodsadmin
+          description: Authenticated iRODS user is not allowed to perform the requested update
           content:
             application/json:
               schema:
@@ -436,7 +629,7 @@ paths:
       tags: [user]
       summary: Delete one iRODS user
       description: |
-        Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+        Requires the authenticated iRODS user to have type `rodsadmin`.
         Synchronization clients may use `reconcile=true` so deleting an already absent
         user is reported as success. The operation does not delete groups or other
         non-user principals with the same name.
@@ -475,7 +668,450 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: Authenticated iRODS user is not rodsadmin or groupadmin
+          description: Authenticated iRODS user is not rodsadmin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/user/{user_name}/type:
+    put:
+      operationId: putUserType
+      tags: [user]
+      summary: Update one iRODS user's type
+      description: |
+        Changes an existing iRODS user's type. Requires the authenticated iRODS user
+        to have type `rodsadmin`.
+
+        This route is intentionally separate from password update so callers cannot
+        accidentally combine credential and privilege changes in one request.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: user_name
+          required: true
+          schema:
+            type: string
+          description: iRODS username.
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserTypeUpdateRequest"
+      responses:
+        "200":
+          description: User type updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "400":
+          description: Invalid user type update request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Authenticated iRODS user is not allowed to change user type
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/user/{user_name}/password:
+    put:
+      operationId: putUserPassword
+      tags: [user]
+      summary: Update one iRODS user's password
+      description: |
+        Changes an existing iRODS user's password. Requires the authenticated iRODS
+        user to have type `rodsadmin`.
+
+        Group administrators may set an initial password only when creating a
+        `rodsuser`; password reset remains a rodsadmin operation.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: user_name
+          required: true
+          schema:
+            type: string
+          description: iRODS username.
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserPasswordUpdateRequest"
+      responses:
+        "200":
+          description: User password updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "400":
+          description: Invalid password update request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Authenticated iRODS user is not allowed to change user password
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/user/{user_name}/usergroup:
+    get:
+      operationId: getUserGroupsForUser
+      tags: [user]
+      summary: List groups containing one user
+      description: |
+        Returns the iRODS groups containing the selected user. This is the
+        reverse-membership lookup for user detail and administration UIs.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: user_name
+          required: true
+          schema:
+            type: string
+          description: iRODS username.
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone to search. Defaults to the configured iRODS zone.
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+          description: Maximum group count.
+      responses:
+        "200":
+          description: Groups containing the user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserGroupRefCollectionResponse"
+        "400":
+          description: Invalid reverse membership option
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while listing user groups
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/user/{user_name}/avu:
+    get:
+      operationId: getUserAVUs
+      tags: [user]
+      summary: List AVUs for an iRODS user
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: user_name
+          required: true
+          schema:
+            type: string
+          description: iRODS username.
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+        - in: query
+          name: attrib
+          required: false
+          schema:
+            type: string
+          description: Exact AVU attribute name to include in the response.
+        - in: query
+          name: sort
+          required: false
+          schema:
+            type: string
+            enum: [id, attrib, value, unit, created_at, updated_at]
+        - in: query
+          name: order
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+        - in: query
+          name: offset
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: User AVUs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserAVUResponse"
+        "400":
+          description: Invalid AVU list option
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while reading user AVUs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: postUserAVU
+      tags: [user]
+      summary: Add a single AVU to an iRODS user
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: user_name
+          required: true
+          schema:
+            type: string
+          description: iRODS username.
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PathAVUCreateRequest"
+      responses:
+        "201":
+          description: User AVU created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserAVUSingleResponse"
+        "400":
+          description: Invalid AVU request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while creating user AVU
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/user/{user_name}/avu/{avu_id}:
+    put:
+      operationId: putUserAVU
+      tags: [user]
+      summary: Update a single AVU on an iRODS user
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: user_name
+          required: true
+          schema:
+            type: string
+          description: iRODS username.
+        - in: path
+          name: avu_id
+          required: true
+          schema:
+            type: string
+          description: AVU identifier returned by the user AVU listing endpoint.
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PathAVUUpdateRequest"
+      responses:
+        "200":
+          description: User AVU updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserAVUSingleResponse"
+        "400":
+          description: Invalid AVU request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User or AVU not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while updating user AVU
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteUserAVU
+      tags: [user]
+      summary: Delete a single AVU from an iRODS user
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: user_name
+          required: true
+          schema:
+            type: string
+          description: iRODS username.
+        - in: path
+          name: avu_id
+          required: true
+          schema:
+            type: string
+          description: AVU identifier returned by the user AVU listing endpoint.
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+      responses:
+        "204":
+          description: User AVU deleted
+        "400":
+          description: Invalid AVU identifier
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User or AVU not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while deleting user AVU
           content:
             application/json:
               schema:
@@ -541,7 +1177,7 @@ paths:
       tags: [user]
       summary: Create one iRODS group
       description: |
-        Generic REST surface for creating iRODS groups. Keycloak workflows that
+        Generic REST surface for creating iRODS groups. Workflows that
         need to provision iRODS groups should call this route rather than an
         `/api/v1/ext` route.
 
@@ -611,6 +1247,64 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/usergroup/summary:
+    get:
+      operationId: getUserGroupSummaries
+      tags: [user]
+      summary: List iRODS groups with member counts
+      description: |
+        Returns group rows with member counts for list-scale administration UIs.
+        This avoids repeated per-group detail fetches from the browser.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone to search. Defaults to the configured iRODS zone.
+        - in: query
+          name: prefix
+          required: false
+          schema:
+            type: string
+            minLength: 3
+          description: Optional group-name prefix filter.
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+          description: Maximum group count.
+      responses:
+        "200":
+          description: Groups with member counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserGroupSummaryCollectionResponse"
+        "400":
+          description: Invalid group summary option
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while listing group summaries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/usergroup/{group_name}:
     get:
       operationId: getUserGroup
@@ -662,11 +1356,11 @@ paths:
       tags: [user]
       summary: Delete one iRODS group
       description: |
-        Generic REST surface for deleting iRODS groups. Keycloak workflows that
+        Generic REST surface for deleting iRODS groups. Workflows that
         reconcile group removal should call this route rather than an `/api/v1/ext`
         route.
 
-        Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+        Requires the authenticated iRODS user to have type `rodsadmin`.
         Synchronization clients may use `reconcile=true` so deleting an already absent
         group is reported as success. The operation does not delete users or other
         non-group principals with the same name. Reconcile delete of an existing
@@ -706,7 +1400,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: Authenticated iRODS user is not rodsadmin or groupadmin
+          description: Authenticated iRODS user is not rodsadmin
           content:
             application/json:
               schema:
@@ -723,7 +1417,7 @@ paths:
       tags: [user]
       summary: Add one user to an iRODS group
       description: |
-        Generic REST surface for adding iRODS group members. Keycloak workflows that
+        Generic REST surface for adding iRODS group members. Workflows that
         reconcile group membership should call this route rather than an
         `/api/v1/ext` route.
 
@@ -793,13 +1487,271 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/usergroup/{group_name}/avu:
+    get:
+      operationId: getUserGroupAVUs
+      tags: [user]
+      summary: List AVUs for an iRODS group
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: group_name
+          required: true
+          schema:
+            type: string
+          description: iRODS group name.
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+        - in: query
+          name: attrib
+          required: false
+          schema:
+            type: string
+          description: Exact AVU attribute name to include in the response.
+        - in: query
+          name: sort
+          required: false
+          schema:
+            type: string
+            enum: [id, attrib, value, unit, created_at, updated_at]
+        - in: query
+          name: order
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+        - in: query
+          name: offset
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: Group AVUs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserGroupAVUResponse"
+        "400":
+          description: Invalid AVU list option
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Group not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while reading group AVUs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: postUserGroupAVU
+      tags: [user]
+      summary: Add a single AVU to an iRODS group
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: group_name
+          required: true
+          schema:
+            type: string
+          description: iRODS group name.
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PathAVUCreateRequest"
+      responses:
+        "201":
+          description: Group AVU created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserGroupAVUSingleResponse"
+        "400":
+          description: Invalid AVU request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Group not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while creating group AVU
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/usergroup/{group_name}/avu/{avu_id}:
+    put:
+      operationId: putUserGroupAVU
+      tags: [user]
+      summary: Update a single AVU on an iRODS group
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: group_name
+          required: true
+          schema:
+            type: string
+          description: iRODS group name.
+        - in: path
+          name: avu_id
+          required: true
+          schema:
+            type: string
+          description: AVU identifier returned by the group AVU listing endpoint.
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PathAVUUpdateRequest"
+      responses:
+        "200":
+          description: Group AVU updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserGroupAVUSingleResponse"
+        "400":
+          description: Invalid AVU request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Group or AVU not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while updating group AVU
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteUserGroupAVU
+      tags: [user]
+      summary: Delete a single AVU from an iRODS group
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: group_name
+          required: true
+          schema:
+            type: string
+          description: iRODS group name.
+        - in: path
+          name: avu_id
+          required: true
+          schema:
+            type: string
+          description: AVU identifier returned by the group AVU listing endpoint.
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+      responses:
+        "204":
+          description: Group AVU deleted
+        "400":
+          description: Invalid AVU identifier
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Group or AVU not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Access denied while deleting group AVU
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/usergroup/{group_name}/member/{user_name}:
     delete:
       operationId: deleteUserGroupMember
       tags: [user]
       summary: Remove one user from an iRODS group
       description: |
-        Generic REST surface for removing iRODS group members. Keycloak workflows
+        Generic REST surface for removing iRODS group members. Workflows
         that reconcile group membership should call this route rather than an
         `/api/v1/ext` route.
 
@@ -4456,6 +5408,88 @@ components:
             $ref: "#/components/schemas/PathSegmentLink"
         avu:
           $ref: "#/components/schemas/AVUMetadata"
+    UserAVUResponse:
+      type: object
+      required: [user_name, zone, avus]
+      properties:
+        user_name:
+          type: string
+        zone:
+          type: string
+        links:
+          type: object
+          properties:
+            self:
+              $ref: "#/components/schemas/ActionLink"
+            create:
+              $ref: "#/components/schemas/ActionLink"
+        avus:
+          type: array
+          items:
+            $ref: "#/components/schemas/AVUMetadata"
+        count:
+          type: integer
+          description: Number of AVUs returned after filtering and pagination.
+        total:
+          type: integer
+          description: Number of AVUs matching the filter before pagination.
+        offset:
+          type: integer
+          description: Number of matching AVUs skipped before returning results.
+        limit:
+          type: integer
+          description: Requested page size, or 0 when no limit was requested.
+    UserAVUSingleResponse:
+      type: object
+      required: [user_name, zone, avu]
+      properties:
+        user_name:
+          type: string
+        zone:
+          type: string
+        avu:
+          $ref: "#/components/schemas/AVUMetadata"
+    UserGroupAVUResponse:
+      type: object
+      required: [group_name, zone, avus]
+      properties:
+        group_name:
+          type: string
+        zone:
+          type: string
+        links:
+          type: object
+          properties:
+            self:
+              $ref: "#/components/schemas/ActionLink"
+            create:
+              $ref: "#/components/schemas/ActionLink"
+        avus:
+          type: array
+          items:
+            $ref: "#/components/schemas/AVUMetadata"
+        count:
+          type: integer
+          description: Number of AVUs returned after filtering and pagination.
+        total:
+          type: integer
+          description: Number of AVUs matching the filter before pagination.
+        offset:
+          type: integer
+          description: Number of matching AVUs skipped before returning results.
+        limit:
+          type: integer
+          description: Requested page size, or 0 when no limit was requested.
+    UserGroupAVUSingleResponse:
+      type: object
+      required: [group_name, zone, avu]
+      properties:
+        group_name:
+          type: string
+        zone:
+          type: string
+        avu:
+          $ref: "#/components/schemas/AVUMetadata"
     PathChildCreateRequest:
       type: object
       required: [child_name, kind]
@@ -5036,7 +6070,7 @@ components:
           type: string
         type:
           type: string
-          enum: [rodsuser, rodsadmin]
+          enum: [rodsuser, rodsadmin, groupadmin]
         links:
           $ref: "#/components/schemas/UserLinks"
     UserLinks:
@@ -5046,7 +6080,15 @@ components:
           $ref: "#/components/schemas/ActionLink"
         update:
           $ref: "#/components/schemas/ActionLink"
+        update_type:
+          $ref: "#/components/schemas/ActionLink"
+        update_password:
+          $ref: "#/components/schemas/ActionLink"
         delete:
+          $ref: "#/components/schemas/ActionLink"
+        avus:
+          $ref: "#/components/schemas/ActionLink"
+        create_avu:
           $ref: "#/components/schemas/ActionLink"
     UserResponse:
       type: object
@@ -5068,7 +6110,7 @@ components:
           type: string
         type:
           type: string
-          enum: [rodsuser, rodsadmin]
+          enum: [rodsuser, rodsadmin, groupadmin]
         prefix:
           type: string
         links:
@@ -5078,6 +6120,81 @@ components:
               $ref: "#/components/schemas/ActionLink"
             create:
               $ref: "#/components/schemas/ActionLink"
+    UserMembershipSummary:
+      type: object
+      required: [id, name, zone, type, groups]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        zone:
+          type: string
+        type:
+          type: string
+          enum: [rodsuser, rodsadmin, groupadmin]
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserGroupRef"
+    CurrentUserMembership:
+      type: object
+      required:
+        - user
+        - groups
+        - is_rodsadmin
+        - is_groupadmin
+        - can_administer_users_and_groups
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserGroupRef"
+        is_rodsadmin:
+          type: boolean
+        is_groupadmin:
+          type: boolean
+        can_administer_users_and_groups:
+          type: boolean
+    CurrentUserMembershipResponse:
+      type: object
+      required: [current_user, zone]
+      properties:
+        current_user:
+          $ref: "#/components/schemas/CurrentUserMembership"
+        zone:
+          type: string
+        limit:
+          type: integer
+        links:
+          type: object
+          properties:
+            self:
+              $ref: "#/components/schemas/ActionLink"
+            groups:
+              $ref: "#/components/schemas/ActionLink"
+    UserMembershipSummaryCollectionResponse:
+      type: object
+      required: [users, count, zone]
+      properties:
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserMembershipSummary"
+        count:
+          type: integer
+        zone:
+          type: string
+        type:
+          type: string
+          enum: [rodsuser, groupadmin, rodsadmin]
+        prefix:
+          type: string
+        limit:
+          type: integer
     UserCreateRequest:
       type: object
       required: [name, type]
@@ -5087,7 +6204,7 @@ components:
           description: iRODS username to create.
         type:
           type: string
-          enum: [rodsuser, rodsadmin]
+          enum: [rodsuser, groupadmin, rodsadmin]
           description: iRODS user type for the new user.
         password:
           type: string
@@ -5095,12 +6212,32 @@ components:
           description: Optional initial iRODS user password.
     UserUpdateRequest:
       type: object
-      description: At least one of `type` or `password` is required.
+      maxProperties: 1
+      description: |
+        Compatibility update request. Exactly one of `type` or `password` is
+        required. New clients should use UserTypeUpdateRequest or
+        UserPasswordUpdateRequest on the explicit action routes.
       properties:
         type:
           type: string
-          enum: [rodsuser, rodsadmin]
+          enum: [rodsuser, groupadmin, rodsadmin]
           description: New iRODS user type.
+        password:
+          type: string
+          format: password
+          description: New iRODS user password.
+    UserTypeUpdateRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [rodsuser, groupadmin, rodsadmin]
+          description: New iRODS user type.
+    UserPasswordUpdateRequest:
+      type: object
+      required: [password]
+      properties:
         password:
           type: string
           format: password
@@ -5150,6 +6287,10 @@ components:
           $ref: "#/components/schemas/ActionLink"
         add_member:
           $ref: "#/components/schemas/ActionLink"
+        avus:
+          $ref: "#/components/schemas/ActionLink"
+        create_avu:
+          $ref: "#/components/schemas/ActionLink"
     UserGroupMemberLinks:
       type: object
       properties:
@@ -5157,6 +6298,68 @@ components:
           $ref: "#/components/schemas/ActionLink"
         remove_from_group:
           $ref: "#/components/schemas/ActionLink"
+    UserGroupRef:
+      type: object
+      required: [id, name, zone, type]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        zone:
+          type: string
+        type:
+          type: string
+          enum: [rodsgroup]
+    UserGroupRefCollectionResponse:
+      type: object
+      required: [groups, count, user_name, zone]
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserGroupRef"
+        count:
+          type: integer
+        user_name:
+          type: string
+        zone:
+          type: string
+        limit:
+          type: integer
+    UserGroupSummary:
+      type: object
+      required: [id, name, zone, type, member_count]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        zone:
+          type: string
+        type:
+          type: string
+          enum: [rodsgroup]
+        member_count:
+          type: integer
+    UserGroupSummaryCollectionResponse:
+      type: object
+      required: [groups, count, zone]
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserGroupSummary"
+        count:
+          type: integer
+        zone:
+          type: string
+        prefix:
+          type: string
+        limit:
+          type: integer
     UserGroupResponse:
       type: object
       required: [group]
@@ -5198,6 +6401,46 @@ components:
         user_name:
           type: string
           description: iRODS username to add to the group.
+    PrincipalSearchResult:
+      type: object
+      required: [id, name, zone, type, kind, score]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        zone:
+          type: string
+        type:
+          type: string
+          enum: [rodsuser, rodsadmin, groupadmin, rodsgroup]
+        kind:
+          type: string
+          enum: [user, group]
+        score:
+          type: integer
+    PrincipalSearchResponse:
+      type: object
+      required: [principals, count, zone, query]
+      properties:
+        principals:
+          type: array
+          items:
+            $ref: "#/components/schemas/PrincipalSearchResult"
+        count:
+          type: integer
+        zone:
+          type: string
+        query:
+          type: string
+        kinds:
+          type: array
+          items:
+            type: string
+            enum: [user, group]
+        limit:
+          type: integer
     Ticket:
       type: object
       required: [name]

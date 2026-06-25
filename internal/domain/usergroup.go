@@ -21,6 +21,8 @@ type UserGroupLinks struct {
 	Self      *ActionLink `json:"self,omitempty"`
 	Delete    *ActionLink `json:"delete,omitempty"`
 	AddMember *ActionLink `json:"add_member,omitempty"`
+	AVUs      *ActionLink `json:"avus,omitempty"`
+	CreateAVU *ActionLink `json:"create_avu,omitempty"`
 }
 
 type UserGroupMemberLinks struct {

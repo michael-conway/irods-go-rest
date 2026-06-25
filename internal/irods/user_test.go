@@ -27,6 +27,21 @@ func TestUserListMapsAndFiltersUsersByPrefix(t *testing.T) {
 	}
 }
 
+func TestUserListIncludesGroupAdmins(t *testing.T) {
+	service := newTestUserService(t, newCatalogTestFileSystem())
+
+	users, err := service.ListUsers(context.Background(), bearerRequestContext(), UserListOptions{
+		Type: string(irodstypes.IRODSUserGroupAdmin),
+	})
+	if err != nil {
+		t.Fatalf("ListUsers returned error: %v", err)
+	}
+
+	if len(users) != 1 || users[0].Name != "groupadmin" || users[0].Type != string(irodstypes.IRODSUserGroupAdmin) {
+		t.Fatalf("unexpected groupadmin users: %+v", users)
+	}
+}
+
 func TestUserUpdateRequiresRodsAdmin(t *testing.T) {
 	service := newTestUserService(t, newCatalogTestFileSystem())
 
@@ -34,6 +49,30 @@ func TestUserUpdateRequiresRodsAdmin(t *testing.T) {
 		Type:       string(irodstypes.IRODSUserRodsAdmin),
 		ChangeType: true,
 	}, UserMutationOptions{})
+	if !errors.Is(err, ErrPermissionDenied) {
+		t.Fatalf("expected permission denied, got %v", err)
+	}
+}
+
+func TestUserUpdateRejectsGroupAdminTypeChange(t *testing.T) {
+	service := newTestUserService(t, newCatalogTestFileSystem())
+
+	_, err := service.UpdateUser(context.Background(), groupAdminRequestContext(), "groupadmin", UserUpdateOptions{
+		Type:       string(irodstypes.IRODSUserRodsUser),
+		ChangeType: true,
+	}, UserMutationOptions{})
+	if !errors.Is(err, ErrPermissionDenied) {
+		t.Fatalf("expected permission denied, got %v", err)
+	}
+}
+
+func TestUserUpdateReconcileRejectsGroupAdminTypeChange(t *testing.T) {
+	service := newTestUserService(t, newCatalogTestFileSystem())
+
+	_, err := service.UpdateUser(context.Background(), groupAdminRequestContext(), "groupadmin", UserUpdateOptions{
+		Type:       string(irodstypes.IRODSUserRodsUser),
+		ChangeType: true,
+	}, UserMutationOptions{Reconcile: true})
 	if !errors.Is(err, ErrPermissionDenied) {
 		t.Fatalf("expected permission denied, got %v", err)
 	}
@@ -54,7 +93,22 @@ func TestUserUpdateChangesTypeForRodsAdmin(t *testing.T) {
 	}
 }
 
-func TestUserCreateRequiresAdminOrGroupAdmin(t *testing.T) {
+func TestUserUpdateChangesTypeToGroupAdminForRodsAdmin(t *testing.T) {
+	service := newTestUserService(t, newCatalogTestFileSystem())
+
+	updated, err := service.UpdateUser(context.Background(), rodsAdminRequestContext(), "alice", UserUpdateOptions{
+		Type:       string(irodstypes.IRODSUserGroupAdmin),
+		ChangeType: true,
+	}, UserMutationOptions{})
+	if err != nil {
+		t.Fatalf("UpdateUser returned error: %v", err)
+	}
+	if updated.Name != "alice" || updated.Type != string(irodstypes.IRODSUserGroupAdmin) {
+		t.Fatalf("unexpected updated user: %+v", updated)
+	}
+}
+
+func TestUserCreateRequiresRodsAdminOrGroupAdmin(t *testing.T) {
 	service := newTestUserService(t, newCatalogTestFileSystem())
 
 	_, err := service.CreateUser(context.Background(), bearerRequestContext(), "charlie", UserCreateOptions{
@@ -65,11 +119,24 @@ func TestUserCreateRequiresAdminOrGroupAdmin(t *testing.T) {
 	}
 }
 
-func TestUserCreateSucceedsForGroupAdmin(t *testing.T) {
+func TestUserCreateRejectsLeakedProxyAdminPrincipal(t *testing.T) {
+	filesystem := &adminLeakingCatalogFileSystem{catalogTestFileSystem: newCatalogTestFileSystem()}
+	service := newTestUserServiceWithCatalogFileSystem(t, filesystem)
+
+	_, err := service.CreateUser(context.Background(), bearerRequestContext(), "charlie", UserCreateOptions{
+		Type: string(irodstypes.IRODSUserRodsUser),
+	}, UserMutationOptions{})
+	if !errors.Is(err, ErrPermissionDenied) {
+		t.Fatalf("expected permission denied, got %v", err)
+	}
+}
+
+func TestUserCreateAllowsGroupAdminToCreateRodsUser(t *testing.T) {
 	service := newTestUserService(t, newCatalogTestFileSystem())
 
 	created, err := service.CreateUser(context.Background(), groupAdminRequestContext(), "charlie", UserCreateOptions{
-		Type: string(irodstypes.IRODSUserRodsUser),
+		Type:     string(irodstypes.IRODSUserRodsUser),
+		Password: "initial-pass",
 	}, UserMutationOptions{})
 	if err != nil {
 		t.Fatalf("CreateUser returned error: %v", err)
@@ -79,26 +146,50 @@ func TestUserCreateSucceedsForGroupAdmin(t *testing.T) {
 	}
 }
 
-func TestUserDeleteSucceedsForGroupAdmin(t *testing.T) {
+func TestUserCreateRejectsGroupAdminProtectedTypes(t *testing.T) {
+	service := newTestUserService(t, newCatalogTestFileSystem())
+
+	for _, userType := range []irodstypes.IRODSUserType{irodstypes.IRODSUserGroupAdmin, irodstypes.IRODSUserRodsAdmin} {
+		_, err := service.CreateUser(context.Background(), groupAdminRequestContext(), "charlie", UserCreateOptions{
+			Type: string(userType),
+		}, UserMutationOptions{})
+		if !errors.Is(err, ErrPermissionDenied) {
+			t.Fatalf("expected permission denied for %s, got %v", userType, err)
+		}
+	}
+}
+
+func TestUserCreateReconcileRejectsGroupAdmin(t *testing.T) {
+	service := newTestUserService(t, newCatalogTestFileSystem())
+
+	_, err := service.CreateUser(context.Background(), groupAdminRequestContext(), "charlie", UserCreateOptions{
+		Type: string(irodstypes.IRODSUserRodsUser),
+	}, UserMutationOptions{Reconcile: true})
+	if !errors.Is(err, ErrPermissionDenied) {
+		t.Fatalf("expected permission denied, got %v", err)
+	}
+}
+
+func TestUserDeleteRejectsGroupAdmin(t *testing.T) {
 	service := newTestUserService(t, newCatalogTestFileSystem())
 
 	err := service.DeleteUser(context.Background(), groupAdminRequestContext(), "alice", "tempZone", UserMutationOptions{})
-	if err != nil {
-		t.Fatalf("DeleteUser returned error: %v", err)
+	if !errors.Is(err, ErrPermissionDenied) {
+		t.Fatalf("expected permission denied, got %v", err)
 	}
 }
 
 func TestUserCreateReconcileExistingMatchingType(t *testing.T) {
 	service := newTestUserService(t, newCatalogTestFileSystem())
 
-	_, strictErr := service.CreateUser(context.Background(), groupAdminRequestContext(), "alice", UserCreateOptions{
+	_, strictErr := service.CreateUser(context.Background(), rodsAdminRequestContext(), "alice", UserCreateOptions{
 		Type: string(irodstypes.IRODSUserRodsUser),
 	}, UserMutationOptions{})
 	if !errors.Is(strictErr, ErrConflict) {
 		t.Fatalf("expected strict duplicate create conflict, got %v", strictErr)
 	}
 
-	user, err := service.CreateUser(context.Background(), groupAdminRequestContext(), "alice", UserCreateOptions{
+	user, err := service.CreateUser(context.Background(), rodsAdminRequestContext(), "alice", UserCreateOptions{
 		Type: string(irodstypes.IRODSUserRodsUser),
 	}, UserMutationOptions{Reconcile: true})
 	if err != nil {
@@ -112,8 +203,8 @@ func TestUserCreateReconcileExistingMatchingType(t *testing.T) {
 func TestUserCreateReconcileMarksRequestSourceMetadata(t *testing.T) {
 	filesystem := newCatalogTestFileSystem()
 	service := newTestUserService(t, filesystem)
-	requestContext := groupAdminRequestContext()
-	requestContext.RequestSource = "irods-keycloak-admin"
+	requestContext := rodsAdminRequestContext()
+	requestContext.RequestSource = "external-authz-admin"
 
 	_, err := service.CreateUser(context.Background(), requestContext, "charlie", UserCreateOptions{
 		Type: string(irodstypes.IRODSUserRodsUser),
@@ -122,10 +213,10 @@ func TestUserCreateReconcileMarksRequestSourceMetadata(t *testing.T) {
 		t.Fatalf("CreateUser reconcile returned error: %v", err)
 	}
 
-	if !filesystem.hasUserMetadata("charlie", "tempZone", usersyncext.AVUAttributeManaged, usersyncext.AVUValueTrue, "irods-keycloak-admin") {
+	if !filesystem.hasUserMetadata("charlie", "tempZone", usersyncext.AVUAttributeManaged, usersyncext.AVUValueTrue, "external-authz-admin") {
 		t.Fatalf("expected managed source metadata for charlie")
 	}
-	if !filesystem.hasUserMetadata("charlie", "tempZone", usersyncext.AVUAttributeSource, "irods-keycloak-admin", "") {
+	if !filesystem.hasUserMetadata("charlie", "tempZone", usersyncext.AVUAttributeSource, "external-authz-admin", "") {
 		t.Fatalf("expected source metadata for charlie")
 	}
 }
@@ -133,7 +224,7 @@ func TestUserCreateReconcileMarksRequestSourceMetadata(t *testing.T) {
 func TestUserCreateReconcileRejectsTypeMismatch(t *testing.T) {
 	service := newTestUserService(t, newCatalogTestFileSystem())
 
-	_, err := service.CreateUser(context.Background(), groupAdminRequestContext(), "alice", UserCreateOptions{
+	_, err := service.CreateUser(context.Background(), rodsAdminRequestContext(), "alice", UserCreateOptions{
 		Type: string(irodstypes.IRODSUserRodsAdmin),
 	}, UserMutationOptions{Reconcile: true})
 	if !errors.Is(err, ErrConflict) {
@@ -179,12 +270,12 @@ func TestUserUpdateReconcileWithoutTypeDoesNotCreate(t *testing.T) {
 func TestUserDeleteReconcileMissingUser(t *testing.T) {
 	service := newTestUserService(t, newCatalogTestFileSystem())
 
-	strictErr := service.DeleteUser(context.Background(), groupAdminRequestContext(), "missing-user", "tempZone", UserMutationOptions{})
+	strictErr := service.DeleteUser(context.Background(), rodsAdminRequestContext(), "missing-user", "tempZone", UserMutationOptions{})
 	if !errors.Is(strictErr, ErrNotFound) {
 		t.Fatalf("expected strict delete not found, got %v", strictErr)
 	}
 
-	err := service.DeleteUser(context.Background(), groupAdminRequestContext(), "missing-user", "tempZone", UserMutationOptions{Reconcile: true})
+	err := service.DeleteUser(context.Background(), rodsAdminRequestContext(), "missing-user", "tempZone", UserMutationOptions{Reconcile: true})
 	if err != nil {
 		t.Fatalf("DeleteUser reconcile returned error: %v", err)
 	}
@@ -204,7 +295,11 @@ func TestNormalizeUserErrorMapsCatalogAlreadyHasItemToConflict(t *testing.T) {
 
 func newTestUserService(t *testing.T, filesystem *catalogTestFileSystem) UserService {
 	t.Helper()
+	return newTestUserServiceWithCatalogFileSystem(t, filesystem)
+}
 
+func newTestUserServiceWithCatalogFileSystem(t *testing.T, filesystem CatalogFileSystem) UserService {
+	t.Helper()
 	cfg := config.RestConfig{
 		IrodsZone:            "tempZone",
 		IrodsHost:            "irods.local",

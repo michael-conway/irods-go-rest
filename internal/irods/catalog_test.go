@@ -16,6 +16,7 @@ import (
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
 	metadataext "github.com/michael-conway/go-irodsclient-extensions/metadata"
 	s3adminext "github.com/michael-conway/go-irodsclient-extensions/s3admin"
+	usersandgroupsext "github.com/michael-conway/go-irodsclient-extensions/usersandgroups"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 )
 
@@ -776,6 +777,47 @@ func TestCatalogUpdatePathMetadataReplacesAVU(t *testing.T) {
 	}
 }
 
+func TestReplaceUserMetadataByIDRollsBackAddedAVUWhenDeleteOldFails(t *testing.T) {
+	filesystem := newCatalogTestFileSystem()
+	filesystem.addUserMetadata("alice", "tempZone", "role", "before", "test")
+
+	failing := &failingUserMetadataDeleteFileSystem{
+		catalogTestFileSystem: filesystem,
+		failAVUID:             1,
+	}
+	_, err := replaceUserMetadataByID(failing, "alice", "tempZone", 1, metadataext.AVUStat{
+		Name:  "role",
+		Value: "after",
+		Units: "test",
+	})
+	if err == nil {
+		t.Fatal("expected replace to fail when deleting old AVU fails")
+	}
+
+	metadata, err := filesystem.ListUserMetadata("alice", "tempZone")
+	if err != nil {
+		t.Fatalf("list user metadata: %v", err)
+	}
+	if len(metadata) != 1 {
+		t.Fatalf("expected rollback to leave one AVU, got %d: %+v", len(metadata), metadata)
+	}
+	if metadata[0].AVUID != 1 || metadata[0].Name != "role" || metadata[0].Value != "before" || metadata[0].Units != "test" {
+		t.Fatalf("expected original AVU after rollback, got %+v", metadata[0])
+	}
+}
+
+type failingUserMetadataDeleteFileSystem struct {
+	*catalogTestFileSystem
+	failAVUID int64
+}
+
+func (f *failingUserMetadataDeleteFileSystem) DeleteUserMetadata(username string, zoneName string, avuID int64) error {
+	if avuID == f.failAVUID {
+		return errors.New("forced delete failure")
+	}
+	return f.catalogTestFileSystem.DeleteUserMetadata(username, zoneName, avuID)
+}
+
 func TestCatalogGetPathChecksumReturnsTypedChecksum(t *testing.T) {
 	service := newTestCatalogService(t, newCatalogTestFileSystem())
 
@@ -1109,6 +1151,17 @@ type catalogTestFileSystem struct {
 	groupMembers   map[string][]string
 	metadataByUser map[string][]*irodstypes.IRODSMeta
 	released       bool
+}
+
+type adminLeakingCatalogFileSystem struct {
+	*catalogTestFileSystem
+}
+
+func (f *adminLeakingCatalogFileSystem) GetUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error) {
+	if strings.TrimSpace(username) == "alice" {
+		return f.catalogTestFileSystem.GetUser("rods", zoneName, userType)
+	}
+	return f.catalogTestFileSystem.GetUser(username, zoneName, userType)
 }
 
 func newCatalogTestFileSystem() *catalogTestFileSystem {
@@ -2152,6 +2205,49 @@ func (f *catalogTestFileSystem) AddUserMetadata(username string, zoneName string
 	return nil
 }
 
+func (f *catalogTestFileSystem) ReplaceUserMetadataByID(username string, zoneName string, avuID int64, target metadataext.AVUStat) (metadataext.AVUStat, error) {
+	if _, ok := f.usersByKey[catalogUserKey(username, zoneName)]; !ok {
+		return metadataext.AVUStat{}, irodstypes.NewUserNotFoundError(username)
+	}
+
+	key := catalogUserKey(username, zoneName)
+	metadata := f.metadataByUser[key]
+	for i, meta := range metadata {
+		if meta != nil && meta.AVUID == avuID {
+			meta.Name = target.Name
+			meta.Value = target.Value
+			meta.Units = target.Units
+			meta.ModifyTime = time.Now().UTC()
+			f.metadataByUser[key][i] = meta
+			return metadataext.AVUStat{ID: meta.AVUID, Name: meta.Name, Value: meta.Value, Units: meta.Units, CreateTime: meta.CreateTime, ModifyTime: meta.ModifyTime}, nil
+		}
+	}
+	return metadataext.AVUStat{}, metadataext.ErrAVUNotFound
+}
+
+func (f *catalogTestFileSystem) DeleteUserMetadata(username string, zoneName string, avuID int64) error {
+	if _, ok := f.usersByKey[catalogUserKey(username, zoneName)]; !ok {
+		return irodstypes.NewUserNotFoundError(username)
+	}
+
+	key := catalogUserKey(username, zoneName)
+	metadata := f.metadataByUser[key]
+	filtered := make([]*irodstypes.IRODSMeta, 0, len(metadata))
+	deleted := false
+	for _, meta := range metadata {
+		if meta != nil && meta.AVUID == avuID {
+			deleted = true
+			continue
+		}
+		filtered = append(filtered, meta)
+	}
+	if !deleted {
+		return metadataext.ErrAVUNotFound
+	}
+	f.metadataByUser[key] = filtered
+	return nil
+}
+
 func (f *catalogTestFileSystem) CreateUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error) {
 	key := catalogUserKey(username, zoneName)
 	if existing, ok := f.usersByKey[key]; ok {
@@ -2280,6 +2376,67 @@ func (f *catalogTestFileSystem) RemoveGroupMember(groupName string, username str
 
 func (f *catalogTestFileSystem) Release() {
 	f.released = true
+}
+
+func (f *catalogTestFileSystem) UsersAndGroupsCatalog() usersandgroupsext.Catalog {
+	return catalogTestUsersAndGroupsCatalog{filesystem: f}
+}
+
+type catalogTestUsersAndGroupsCatalog struct {
+	filesystem *catalogTestFileSystem
+}
+
+func (c catalogTestUsersAndGroupsCatalog) ListGroupSummaries(_ context.Context, _ usersandgroupsext.GroupSummaryOptions) ([]usersandgroupsext.GroupSummary, error) {
+	return nil, nil
+}
+
+func (c catalogTestUsersAndGroupsCatalog) ListUserMembershipSummaries(_ context.Context, _ usersandgroupsext.UserMembershipSummaryOptions) ([]usersandgroupsext.UserMembershipSummary, error) {
+	return nil, nil
+}
+
+func (c catalogTestUsersAndGroupsCatalog) ListGroupsForUser(_ context.Context, _ usersandgroupsext.GroupsForUserOptions) ([]usersandgroupsext.GroupRef, error) {
+	return nil, nil
+}
+
+func (c catalogTestUsersAndGroupsCatalog) SearchPrincipals(_ context.Context, _ usersandgroupsext.PrincipalSearchOptions) ([]usersandgroupsext.PrincipalSearchResult, error) {
+	return nil, nil
+}
+
+func (c catalogTestUsersAndGroupsCatalog) CreateRodsUserWithPassword(_ context.Context, request usersandgroupsext.CreateRodsUserWithPasswordRequest) (usersandgroupsext.User, error) {
+	user, err := c.filesystem.CreateUser(request.Name, request.Zone, irodstypes.IRODSUserRodsUser)
+	if err != nil {
+		return usersandgroupsext.User{}, err
+	}
+	if err := c.filesystem.ChangeUserPassword(request.Name, request.Zone, request.Password); err != nil {
+		return usersandgroupsext.User{}, err
+	}
+	return usersandgroupsext.User{
+		ID:   user.ID,
+		Name: user.Name,
+		Zone: user.Zone,
+		Type: user.Type,
+	}, nil
+}
+
+func (c catalogTestUsersAndGroupsCatalog) CreateGroup(_ context.Context, request usersandgroupsext.GroupRequest) (usersandgroupsext.GroupRef, error) {
+	group, err := c.filesystem.CreateUserGroup(request.Name, request.Zone)
+	if err != nil {
+		return usersandgroupsext.GroupRef{}, err
+	}
+	return usersandgroupsext.GroupRef{
+		ID:   group.ID,
+		Name: group.Name,
+		Zone: group.Zone,
+		Type: group.Type,
+	}, nil
+}
+
+func (c catalogTestUsersAndGroupsCatalog) AddGroupMember(_ context.Context, request usersandgroupsext.GroupMemberRequest) error {
+	return c.filesystem.AddGroupMember(request.GroupName, request.UserName, request.Zone)
+}
+
+func (c catalogTestUsersAndGroupsCatalog) RemoveGroupMember(_ context.Context, request usersandgroupsext.GroupMemberRequest) error {
+	return c.filesystem.RemoveGroupMember(request.GroupName, request.UserName, request.Zone)
 }
 
 func (f *catalogTestFileSystem) GetTicket(ticketName string) (*irodstypes.IRODSTicket, error) {

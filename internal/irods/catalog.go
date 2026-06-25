@@ -26,6 +26,8 @@ import (
 	metadatairodsfs "github.com/michael-conway/go-irodsclient-extensions/metadata/irodsfs"
 	s3adminext "github.com/michael-conway/go-irodsclient-extensions/s3admin"
 	s3adminirodsfs "github.com/michael-conway/go-irodsclient-extensions/s3admin/irodsfs"
+	usersandgroupsext "github.com/michael-conway/go-irodsclient-extensions/usersandgroups"
+	usersandgroupsirodsfs "github.com/michael-conway/go-irodsclient-extensions/usersandgroups/irodsfs"
 	usersyncirodsfs "github.com/michael-conway/go-irodsclient-extensions/usersync/irodsfs"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 	"github.com/michael-conway/irods-go-rest/internal/domain"
@@ -237,6 +239,8 @@ type CatalogFileSystem interface {
 	ListGroupMembers(zoneName string, groupName string) ([]*irodstypes.IRODSUser, error)
 	ListUserMetadata(username string, zoneName string) ([]*irodstypes.IRODSMeta, error)
 	AddUserMetadata(username string, zoneName string, attribute string, value string, unit string) error
+	ReplaceUserMetadataByID(username string, zoneName string, avuID int64, target metadataext.AVUStat) (metadataext.AVUStat, error)
+	DeleteUserMetadata(username string, zoneName string, avuID int64) error
 	CreateUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error)
 	CreateUserGroup(groupName string, zoneName string) (*irodstypes.IRODSUser, error)
 	ChangeUserPassword(username string, zoneName string, newPassword string) error
@@ -245,6 +249,7 @@ type CatalogFileSystem interface {
 	RemoveUserGroup(groupName string, zoneName string) error
 	AddGroupMember(groupName string, username string, zoneName string) error
 	RemoveGroupMember(groupName string, username string, zoneName string) error
+	UsersAndGroupsCatalog() usersandgroupsext.Catalog
 	GetTicket(ticketName string) (*irodstypes.IRODSTicket, error)
 	ListTickets() ([]*irodstypes.IRODSTicket, error)
 	CreateTicket(ticketName string, ticketType irodstypes.TicketType, path string) error
@@ -278,7 +283,11 @@ type catalogService struct {
 }
 
 func NewCatalogService(cfg config.RestConfig) CatalogService {
-	return NewCatalogServiceWithFactory(cfg, func(account *irodstypes.IRODSAccount, applicationName string) (CatalogFileSystem, error) {
+	return NewCatalogServiceWithFactory(cfg, defaultCatalogFileSystemFactory())
+}
+
+func defaultCatalogFileSystemFactory() CatalogFileSystemFactory {
+	return func(account *irodstypes.IRODSAccount, applicationName string) (CatalogFileSystem, error) {
 		filesystem, err := irodsfs.NewFileSystemWithDefault(account, applicationName)
 		if err != nil {
 			return nil, err
@@ -288,7 +297,7 @@ func NewCatalogService(cfg config.RestConfig) CatalogService {
 			filesystem: filesystem,
 			s3Adapter:  s3adminirodsfs.NewAdapterWithProxyAccount(filesystem, account, applicationName),
 		}, nil
-	})
+	}
 }
 
 func NewCatalogServiceWithFactory(cfg config.RestConfig, factory CatalogFileSystemFactory) CatalogService {
@@ -2409,6 +2418,10 @@ func (a *catalogFileSystemAdapter) S3AdminUserMappingFilesystem() s3adminext.Use
 	return s3adminirodsfs.NewAdapter(a.filesystem)
 }
 
+func (a *catalogFileSystemAdapter) UsersAndGroupsCatalog() usersandgroupsext.Catalog {
+	return usersandgroupsirodsfs.NewAdapter(a.filesystem)
+}
+
 func (a *catalogFileSystemAdapter) AddMetadata(irodsPath string, attName string, attValue string, attUnits string) error {
 	return a.filesystem.AddMetadata(irodsPath, attName, attValue, attUnits)
 }
@@ -2497,6 +2510,98 @@ func (a *catalogFileSystemAdapter) ListUserMetadata(username string, zoneName st
 
 func (a *catalogFileSystemAdapter) AddUserMetadata(username string, zoneName string, attribute string, value string, unit string) error {
 	return a.filesystem.AddUserMetadata(username, zoneName, attribute, value, unit)
+}
+
+func (a *catalogFileSystemAdapter) ReplaceUserMetadataByID(username string, zoneName string, avuID int64, target metadataext.AVUStat) (metadataext.AVUStat, error) {
+	return replaceUserMetadataByID(a.filesystem, username, zoneName, avuID, target)
+}
+
+type userMetadataMutator interface {
+	ListUserMetadata(username string, zoneName string) ([]*irodstypes.IRODSMeta, error)
+	AddUserMetadata(username string, zoneName string, attribute string, value string, unit string) error
+	DeleteUserMetadata(username string, zoneName string, avuID int64) error
+}
+
+func replaceUserMetadataByID(filesystem userMetadataMutator, username string, zoneName string, avuID int64, target metadataext.AVUStat) (metadataext.AVUStat, error) {
+	metadata, err := filesystem.ListUserMetadata(username, zoneName)
+	if err != nil {
+		return metadataext.AVUStat{}, err
+	}
+
+	var current *irodstypes.IRODSMeta
+	for _, meta := range metadata {
+		if meta != nil && meta.AVUID == avuID {
+			copy := *meta
+			current = &copy
+			break
+		}
+	}
+	if current == nil {
+		return metadataext.AVUStat{}, metadataext.ErrAVUNotFound
+	}
+
+	name := strings.TrimSpace(target.Name)
+	value := strings.TrimSpace(target.Value)
+	units := strings.TrimSpace(target.Units)
+	if err := filesystem.AddUserMetadata(username, zoneName, name, value, units); err != nil {
+		return metadataext.AVUStat{}, err
+	}
+	added, err := findLatestUserMetadata(filesystem, username, zoneName, name, value, units)
+	if err != nil {
+		return metadataext.AVUStat{}, err
+	}
+	if err := filesystem.DeleteUserMetadata(username, zoneName, current.AVUID); err != nil {
+		if added.ID > 0 {
+			if rollbackErr := filesystem.DeleteUserMetadata(username, zoneName, added.ID); rollbackErr != nil {
+				return metadataext.AVUStat{}, errors.Join(err, fmt.Errorf("rollback added AVU %d: %w", added.ID, rollbackErr))
+			}
+		}
+		return metadataext.AVUStat{}, err
+	}
+	if added.ID > 0 {
+		return added, nil
+	}
+
+	return metadataext.AVUStat{
+		Name:  name,
+		Value: value,
+		Units: units,
+	}, nil
+}
+
+func findLatestUserMetadata(filesystem userMetadataMutator, username string, zoneName string, name string, value string, units string) (metadataext.AVUStat, error) {
+	updated, err := filesystem.ListUserMetadata(username, zoneName)
+	if err != nil {
+		return metadataext.AVUStat{}, err
+	}
+
+	var selected *irodstypes.IRODSMeta
+	for _, meta := range updated {
+		if meta == nil {
+			continue
+		}
+		if strings.TrimSpace(meta.Name) == name && strings.TrimSpace(meta.Value) == value && strings.TrimSpace(meta.Units) == units {
+			if selected == nil || meta.AVUID > selected.AVUID {
+				selected = meta
+			}
+		}
+	}
+	if selected == nil {
+		return metadataext.AVUStat{}, nil
+	}
+
+	return metadataext.AVUStat{
+		ID:         selected.AVUID,
+		Name:       selected.Name,
+		Value:      selected.Value,
+		Units:      selected.Units,
+		CreateTime: selected.CreateTime,
+		ModifyTime: selected.ModifyTime,
+	}, nil
+}
+
+func (a *catalogFileSystemAdapter) DeleteUserMetadata(username string, zoneName string, avuID int64) error {
+	return a.filesystem.DeleteUserMetadata(username, zoneName, avuID)
 }
 
 func (a *catalogFileSystemAdapter) CreateUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error) {
@@ -2989,6 +3094,28 @@ func findLatestAVUMetadata(metas []*irodstypes.IRODSMeta, attrib string, value s
 	return avuMetadataEntry(selected), true
 }
 
+func waitForLatestUserAVUMetadata(filesystem CatalogFileSystem, username string, zone string, attrib string, value string, unit string) (domain.AVUMetadata, error) {
+	const waitStep = 100 * time.Millisecond
+	deadline := time.Now().Add(2 * time.Second)
+
+	var lastErr error
+	for {
+		metadata, err := filesystem.ListUserMetadata(username, zone)
+		if err != nil {
+			return domain.AVUMetadata{}, err
+		}
+		if avu, ok := findLatestAVUMetadata(metadata, attrib, value, unit); ok {
+			return avu, nil
+		}
+
+		lastErr = fmt.Errorf("metadata mutation completed but AVU was not visible for principal %q", username)
+		if time.Now().After(deadline) {
+			return domain.AVUMetadata{}, lastErr
+		}
+		time.Sleep(waitStep)
+	}
+}
+
 func findAVUMetadataByID(metas []*irodstypes.IRODSMeta, avuID string) (domain.AVUMetadata, bool) {
 	for _, meta := range metas {
 		if meta == nil {
@@ -2999,6 +3126,10 @@ func findAVUMetadataByID(metas []*irodstypes.IRODSMeta, avuID string) (domain.AV
 		}
 	}
 	return domain.AVUMetadata{}, false
+}
+
+func normalizeAVUInputs(attrib string, value string, unit string) (string, string, string) {
+	return strings.TrimSpace(attrib), strings.TrimSpace(value), strings.TrimSpace(unit)
 }
 
 func checksumString(entry *irodsfs.Entry) string {
