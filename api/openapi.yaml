@@ -271,8 +271,8 @@ paths:
           required: false
           schema:
             type: string
-            enum: [rodsuser, rodsadmin]
-          description: Optional user type filter.
+            enum: [rodsuser, groupadmin, rodsadmin]
+          description: Optional user type filter. When omitted, all non-group user principal types are returned.
         - in: query
           name: prefix
           required: false
@@ -311,10 +311,13 @@ paths:
       summary: Create one iRODS user
       description: |
         Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+        A `groupadmin` may create only `rodsuser` users and may set the initial
+        password at creation time. Only `rodsadmin` may create `groupadmin` or
+        `rodsadmin` users.
         Synchronization clients may use `reconcile=true` to make creation repeatable
-        when the existing principal is already the requested user type. The operation
-        remains a conflict when the existing principal is a group or when the existing
-        user type differs from the requested type.
+        when the existing principal is already the requested user type. Reconcile
+        mode requires `rodsadmin`. The operation remains a conflict when the existing
+        principal is a group or when the existing user type differs from the requested type.
       security:
         - BearerAuth: []
         - BasicAuth: []
@@ -368,7 +371,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: Authenticated iRODS user is not rodsadmin or groupadmin
+          description: Authenticated iRODS user cannot create the requested user
           content:
             application/json:
               schema:
@@ -453,8 +456,8 @@ paths:
           required: false
           schema:
             type: string
-            enum: [rodsuser, rodsadmin]
-          description: Optional user type filter.
+            enum: [rodsuser, groupadmin, rodsadmin]
+          description: Optional user type filter. When omitted, all non-group user principal types are returned.
         - in: query
           name: prefix
           required: false
@@ -544,9 +547,16 @@ paths:
     put:
       operationId: putUser
       tags: [user]
-      summary: Update one iRODS user
+      summary: Update one iRODS user (compatibility route)
       description: |
-        Requires the authenticated iRODS user to have type `rodsadmin`.
+        Requires the authenticated iRODS user to have type `rodsadmin`. New clients
+        should use `/api/v1/user/{user_name}/type` for user type changes and
+        `/api/v1/user/{user_name}/password` for password changes.
+
+        This compatibility route accepts exactly one of `type` or `password`;
+        requests that include both fields are rejected to avoid ambiguous user
+        administration intent.
+
         Synchronization clients may use `reconcile=true` as a constrained upsert:
         a missing user is created only when the request includes `type`. Password-only
         updates still require the user to exist, and existing non-user principals or
@@ -576,7 +586,7 @@ paths:
           description: |
             Desired-state sync mode. Create the user when missing if the request
             includes a target `type`; password-only updates still return 404 when
-            the user is absent. Reconciliation does not bypass rodsadmin authorization.
+            the user is absent. Reconciliation does not bypass update authorization.
       requestBody:
         required: true
         content:
@@ -603,7 +613,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: Authenticated iRODS user is not rodsadmin
+          description: Authenticated iRODS user is not allowed to perform the requested update
           content:
             application/json:
               schema:
@@ -619,7 +629,7 @@ paths:
       tags: [user]
       summary: Delete one iRODS user
       description: |
-        Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+        Requires the authenticated iRODS user to have type `rodsadmin`.
         Synchronization clients may use `reconcile=true` so deleting an already absent
         user is reported as success. The operation does not delete groups or other
         non-user principals with the same name.
@@ -658,7 +668,135 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: Authenticated iRODS user is not rodsadmin or groupadmin
+          description: Authenticated iRODS user is not rodsadmin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/user/{user_name}/type:
+    put:
+      operationId: putUserType
+      tags: [user]
+      summary: Update one iRODS user's type
+      description: |
+        Changes an existing iRODS user's type. Requires the authenticated iRODS user
+        to have type `rodsadmin`.
+
+        This route is intentionally separate from password update so callers cannot
+        accidentally combine credential and privilege changes in one request.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: user_name
+          required: true
+          schema:
+            type: string
+          description: iRODS username.
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserTypeUpdateRequest"
+      responses:
+        "200":
+          description: User type updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "400":
+          description: Invalid user type update request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Authenticated iRODS user is not allowed to change user type
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/user/{user_name}/password:
+    put:
+      operationId: putUserPassword
+      tags: [user]
+      summary: Update one iRODS user's password
+      description: |
+        Changes an existing iRODS user's password. Requires the authenticated iRODS
+        user to have type `rodsadmin`.
+
+        Group administrators may set an initial password only when creating a
+        `rodsuser`; password reset remains a rodsadmin operation.
+      security:
+        - BearerAuth: []
+        - BasicAuth: []
+      parameters:
+        - in: path
+          name: user_name
+          required: true
+          schema:
+            type: string
+          description: iRODS username.
+        - in: query
+          name: zone
+          required: false
+          schema:
+            type: string
+          description: iRODS zone. Defaults to the configured iRODS zone.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserPasswordUpdateRequest"
+      responses:
+        "200":
+          description: User password updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "400":
+          description: Invalid password update request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Authenticated iRODS user is not allowed to change user password
           content:
             application/json:
               schema:
@@ -1222,7 +1360,7 @@ paths:
         reconcile group removal should call this route rather than an `/api/v1/ext`
         route.
 
-        Requires the authenticated iRODS user to have type `rodsadmin` or `groupadmin`.
+        Requires the authenticated iRODS user to have type `rodsadmin`.
         Synchronization clients may use `reconcile=true` so deleting an already absent
         group is reported as success. The operation does not delete users or other
         non-group principals with the same name. Reconcile delete of an existing
@@ -1262,7 +1400,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "403":
-          description: Authenticated iRODS user is not rodsadmin or groupadmin
+          description: Authenticated iRODS user is not rodsadmin
           content:
             application/json:
               schema:
@@ -5942,6 +6080,10 @@ components:
           $ref: "#/components/schemas/ActionLink"
         update:
           $ref: "#/components/schemas/ActionLink"
+        update_type:
+          $ref: "#/components/schemas/ActionLink"
+        update_password:
+          $ref: "#/components/schemas/ActionLink"
         delete:
           $ref: "#/components/schemas/ActionLink"
         avus:
@@ -6048,7 +6190,7 @@ components:
           type: string
         type:
           type: string
-          enum: [rodsuser, rodsadmin]
+          enum: [rodsuser, groupadmin, rodsadmin]
         prefix:
           type: string
         limit:
@@ -6062,7 +6204,7 @@ components:
           description: iRODS username to create.
         type:
           type: string
-          enum: [rodsuser, rodsadmin]
+          enum: [rodsuser, groupadmin, rodsadmin]
           description: iRODS user type for the new user.
         password:
           type: string
@@ -6070,12 +6212,32 @@ components:
           description: Optional initial iRODS user password.
     UserUpdateRequest:
       type: object
-      description: At least one of `type` or `password` is required.
+      maxProperties: 1
+      description: |
+        Compatibility update request. Exactly one of `type` or `password` is
+        required. New clients should use UserTypeUpdateRequest or
+        UserPasswordUpdateRequest on the explicit action routes.
       properties:
         type:
           type: string
-          enum: [rodsuser, rodsadmin]
+          enum: [rodsuser, groupadmin, rodsadmin]
           description: New iRODS user type.
+        password:
+          type: string
+          format: password
+          description: New iRODS user password.
+    UserTypeUpdateRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [rodsuser, groupadmin, rodsadmin]
+          description: New iRODS user type.
+    UserPasswordUpdateRequest:
+      type: object
+      required: [password]
+      properties:
         password:
           type: string
           format: password

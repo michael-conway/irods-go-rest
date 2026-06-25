@@ -107,6 +107,116 @@ func TestUserGroupAdminRoutesAndPrincipalAVUsE2E(t *testing.T) {
 	requireUserGroupAdminStatusE2E(t, status, body, http.StatusNoContent)
 }
 
+func TestCreateRodsUserThenPromoteToGroupAdminRejectsSelfTypeChangesE2E(t *testing.T) {
+	baseURL := requireE2EBaseURL(t)
+	client := newE2EHTTPClient()
+	zone := e2eIRODSZone(t)
+
+	adminUser := e2eBasicUsername(t)
+	if adminUser != "test1" {
+		t.Fatalf("expected IrodsPrimaryTestUser to be test1 for this admin e2e test, got %q", adminUser)
+	}
+
+	userName := "e2egroupadmin" + randomToken(nil, 8)
+	userPassword := "e2eGroupAdminPass-" + randomToken(nil, 12)
+	managedUserName := "e2egamember" + randomToken(nil, 8)
+	managedUserPassword := "e2eManagedUserPass-" + randomToken(nil, 12)
+	groupName := "e2egagrp" + randomToken(nil, 8)
+	cleanupUserGroupAdminSubjectsE2E(t, client, baseURL, userName, "")
+	cleanupUserGroupAdminSubjectsE2E(t, client, baseURL, managedUserName, groupName)
+	t.Cleanup(func() {
+		cleanupUserGroupAdminSubjectsE2E(t, client, baseURL, managedUserName, groupName)
+		cleanupUserGroupAdminSubjectsE2E(t, client, baseURL, userName, "")
+	})
+
+	userCollectionURL := userGroupAdminURL(baseURL, "/api/v1/user", zone)
+	userURL := userGroupAdminURL(baseURL, "/api/v1/user/"+url.PathEscape(userName), zone)
+	userTypeURL := userGroupAdminURL(baseURL, "/api/v1/user/"+url.PathEscape(userName)+"/type", zone)
+	managedUserURL := userGroupAdminURL(baseURL, "/api/v1/user/"+url.PathEscape(managedUserName), zone)
+	groupCollectionURL := userGroupAdminURL(baseURL, "/api/v1/usergroup", zone)
+	groupURL := userGroupAdminURL(baseURL, "/api/v1/usergroup/"+url.PathEscape(groupName), zone)
+	memberCollectionURL := userGroupAdminURL(baseURL, "/api/v1/usergroup/"+url.PathEscape(groupName)+"/member", zone)
+	memberURL := userGroupAdminURL(baseURL, "/api/v1/usergroup/"+url.PathEscape(groupName)+"/member/"+url.PathEscape(managedUserName), zone)
+
+	status, body := requestUserGroupAdminE2E(t, client, http.MethodPost, userCollectionURL, map[string]any{
+		"name":     userName,
+		"type":     "rodsuser",
+		"password": userPassword,
+	})
+	requireUserGroupAdminStatusE2E(t, status, body, http.StatusCreated)
+	assertUserAdminUserE2E(t, decodeUserAdminUserResponseE2E(t, body).User, userName, zone, "rodsuser")
+
+	status, body = requestUserGroupAdminE2E(t, client, http.MethodPut, userTypeURL, map[string]any{
+		"type": "groupadmin",
+	})
+	requireUserGroupAdminStatusE2E(t, status, body, http.StatusOK)
+	assertUserAdminUserE2E(t, decodeUserAdminUserResponseE2E(t, body).User, userName, zone, "groupadmin")
+
+	status, body = requestUserGroupAdminE2E(t, client, http.MethodGet, userURL, nil)
+	requireUserGroupAdminStatusE2E(t, status, body, http.StatusOK)
+	assertUserAdminUserE2E(t, decodeUserAdminUserResponseE2E(t, body).User, userName, zone, "groupadmin")
+
+	membershipSummaryURL := userGroupAdminURL(baseURL, "/api/v1/user/membership-summary", zone) + "&prefix=" + url.QueryEscape(userName) + "&limit=10"
+	status, body = requestUserGroupAdminE2E(t, client, http.MethodGet, membershipSummaryURL, nil)
+	requireUserGroupAdminStatusE2E(t, status, body, http.StatusOK)
+	if !strings.Contains(body, `"name":"`+userName+`"`) || !strings.Contains(body, `"type":"groupadmin"`) {
+		t.Fatalf("expected membership summary to include promoted groupadmin user %q, got %s", userName, body)
+	}
+
+	status, body = requestUserGroupAdminE2EAs(t, client, http.MethodPost, userCollectionURL, map[string]any{
+		"name":     managedUserName,
+		"type":     "rodsuser",
+		"password": managedUserPassword,
+	}, userName, userPassword)
+	requireUserGroupAdminStatusForRequestE2E(t, http.MethodPost, userCollectionURL, status, body, http.StatusCreated)
+	assertUserAdminUserE2E(t, decodeUserAdminUserResponseE2E(t, body).User, managedUserName, zone, "rodsuser")
+
+	currentUserURL := userGroupAdminURL(baseURL, "/api/v1/user/me", zone)
+	status, body = requestUserGroupAdminE2EAs(t, client, http.MethodGet, currentUserURL, nil, managedUserName, managedUserPassword)
+	requireUserGroupAdminStatusForRequestE2E(t, http.MethodGet, currentUserURL, status, body, http.StatusOK)
+	if !strings.Contains(body, `"name":"`+managedUserName+`"`) || !strings.Contains(body, `"type":"rodsuser"`) {
+		t.Fatalf("expected created rodsuser %q to authenticate with initial password, got %s", managedUserName, body)
+	}
+
+	status, body = requestUserGroupAdminE2EAs(t, client, http.MethodDelete, managedUserURL, nil, userName, userPassword)
+	requireUserGroupAdminStatusForRequestE2E(t, http.MethodDelete, managedUserURL, status, body, http.StatusForbidden)
+
+	status, body = requestUserGroupAdminE2EAs(t, client, http.MethodPost, groupCollectionURL, map[string]any{
+		"name": groupName,
+	}, userName, userPassword)
+	requireUserGroupAdminStatusForRequestE2E(t, http.MethodPost, groupCollectionURL, status, body, http.StatusCreated)
+	assertUserAdminGroupE2E(t, decodeUserAdminGroupResponseE2E(t, body).Group, groupName, zone)
+
+	status, body = requestUserGroupAdminE2EAs(t, client, http.MethodPost, memberCollectionURL, map[string]any{
+		"user_name": managedUserName,
+	}, userName, userPassword)
+	requireUserGroupAdminStatusForRequestE2E(t, http.MethodPost, memberCollectionURL, status, body, http.StatusOK)
+	assertUserAdminGroupMemberE2E(t, decodeUserAdminGroupResponseE2E(t, body).Group, managedUserName, true)
+
+	status, body = requestUserGroupAdminE2EAs(t, client, http.MethodDelete, memberURL, nil, userName, userPassword)
+	requireUserGroupAdminStatusForRequestE2E(t, http.MethodDelete, memberURL, status, body, http.StatusOK)
+	assertUserAdminGroupMemberE2E(t, decodeUserAdminGroupResponseE2E(t, body).Group, managedUserName, false)
+
+	status, body = requestUserGroupAdminE2EAs(t, client, http.MethodDelete, groupURL, nil, userName, userPassword)
+	requireUserGroupAdminStatusForRequestE2E(t, http.MethodDelete, groupURL, status, body, http.StatusForbidden)
+
+	status, body = requestUserGroupAdminE2E(t, client, http.MethodDelete, groupURL, nil)
+	requireUserGroupAdminStatusForRequestE2E(t, http.MethodDelete, groupURL, status, body, http.StatusNoContent)
+
+	status, body = requestUserGroupAdminE2EAs(t, client, http.MethodPut, userTypeURL, map[string]any{
+		"type": "rodsadmin",
+	}, userName, userPassword)
+	requireUserGroupAdminStatusForRequestE2E(t, http.MethodPut, userTypeURL, status, body, http.StatusForbidden)
+
+	status, body = requestUserGroupAdminE2EAs(t, client, http.MethodPut, userTypeURL, map[string]any{
+		"type": "rodsuser",
+	}, userName, userPassword)
+	requireUserGroupAdminStatusForRequestE2E(t, http.MethodPut, userTypeURL, status, body, http.StatusForbidden)
+
+	status, body = requestUserGroupAdminE2E(t, client, http.MethodDelete, userURL, nil)
+	requireUserGroupAdminStatusE2E(t, status, body, http.StatusNoContent)
+}
+
 func TestUserGroupSummaryAndPrincipalSearchRoutesE2E(t *testing.T) {
 	token := requireE2EBearerToken(t)
 	baseURL := requireE2EBaseURL(t)
@@ -203,6 +313,11 @@ type userGroupAdminAVUE2E struct {
 
 func requestUserGroupAdminE2E(t *testing.T, client *http.Client, method string, requestURL string, payload any) (int, string) {
 	t.Helper()
+	return requestUserGroupAdminE2EAs(t, client, method, requestURL, payload, e2eBasicUsername(t), e2eBasicPassword(t))
+}
+
+func requestUserGroupAdminE2EAs(t *testing.T, client *http.Client, method string, requestURL string, payload any, username string, password string) (int, string) {
+	t.Helper()
 
 	var bodyReader io.Reader
 	if payload != nil {
@@ -217,7 +332,7 @@ func requestUserGroupAdminE2E(t *testing.T, client *http.Client, method string, 
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	setBasicAuthCredentials(req, e2eBasicUsername(t), e2eBasicPassword(t))
+	setBasicAuthCredentials(req, username, password)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -307,6 +422,17 @@ func requireUserGroupAdminStatusE2E(t *testing.T, got int, body string, expected
 		}
 	}
 	t.Fatalf("expected status %v, got %d: %s", expected, got, strings.TrimSpace(body))
+}
+
+func requireUserGroupAdminStatusForRequestE2E(t *testing.T, method string, requestURL string, got int, body string, expected ...int) {
+	t.Helper()
+
+	for _, status := range expected {
+		if got == status {
+			return
+		}
+	}
+	t.Fatalf("expected status %v for %s %s, got %d: %s", expected, method, requestURL, got, strings.TrimSpace(body))
 }
 
 func decodeUserAdminUserResponseE2E(t *testing.T, body string) struct {

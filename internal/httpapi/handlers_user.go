@@ -17,17 +17,27 @@ type userUpdateRequest struct {
 	Password *string `json:"password"`
 }
 
+type userTypeUpdateRequest struct {
+	Type *string `json:"type"`
+}
+
+type userPasswordUpdateRequest struct {
+	Password *string `json:"password"`
+}
+
 type userCreateRequest struct {
 	Name     string  `json:"name"`
 	Type     *string `json:"type"`
 	Password *string `json:"password"`
 }
 
+const restUserTypeValidationMessage = "type must be rodsuser, groupadmin, or rodsadmin"
+
 func (h *Handler) getUsers(w http.ResponseWriter, r *http.Request) {
 	zone := h.userZoneFromRequest(r)
 	userType := strings.TrimSpace(r.URL.Query().Get("type"))
 	if userType != "" && !validRESTUserType(userType) {
-		writeError(w, http.StatusBadRequest, "invalid_request", "type must be rodsuser or rodsadmin")
+		writeError(w, http.StatusBadRequest, "invalid_request", restUserTypeValidationMessage)
 		return
 	}
 
@@ -159,6 +169,70 @@ func (h *Handler) putUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) putUserType(w http.ResponseWriter, r *http.Request) {
+	username := pathValue(r, "user_name")
+	if username == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "user_name path parameter is required")
+		return
+	}
+
+	var request userTypeUpdateRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON with only supported fields")
+		return
+	}
+
+	options, fields := userTypeUpdateOptionsFromRequest(h.userZoneFromRequest(r), request)
+	if len(fields) > 0 {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "user type update validation failed", fields)
+		return
+	}
+
+	user, err := h.users.UpdateUser(r.Context(), username, options, restservice.UserMutationOptions{})
+	if err != nil {
+		writeUserError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user": userResponse(user),
+	})
+}
+
+func (h *Handler) putUserPassword(w http.ResponseWriter, r *http.Request) {
+	username := pathValue(r, "user_name")
+	if username == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "user_name path parameter is required")
+		return
+	}
+
+	var request userPasswordUpdateRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON with only supported fields")
+		return
+	}
+
+	options, fields := userPasswordUpdateOptionsFromRequest(h.userZoneFromRequest(r), request)
+	if len(fields) > 0 {
+		writeValidationError(w, http.StatusBadRequest, "invalid_request", "user password update validation failed", fields)
+		return
+	}
+
+	user, err := h.users.UpdateUser(r.Context(), username, options, restservice.UserMutationOptions{})
+	if err != nil {
+		writeUserError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user": userResponse(user),
+	})
+}
+
 func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 	mutation, ok := userMutationOptionsFromRequest(w, r)
 	if !ok {
@@ -188,7 +262,7 @@ func userUpdateOptionsFromRequest(zone string, request userUpdateRequest) (rests
 	if request.Type != nil {
 		userType := strings.TrimSpace(*request.Type)
 		if !validRESTUserType(userType) {
-			fields["type"] = "type must be rodsuser or rodsadmin"
+			fields["type"] = restUserTypeValidationMessage
 		} else {
 			options.Type = userType
 			options.ChangeType = true
@@ -207,6 +281,57 @@ func userUpdateOptionsFromRequest(zone string, request userUpdateRequest) (rests
 
 	if request.Type == nil && request.Password == nil {
 		fields["request"] = "type or password is required"
+	}
+	if request.Type != nil && request.Password != nil {
+		fields["request"] = "type and password updates must use separate routes"
+	}
+
+	if len(fields) == 0 {
+		return options, nil
+	}
+	return options, fields
+}
+
+func userTypeUpdateOptionsFromRequest(zone string, request userTypeUpdateRequest) (restservice.UserUpdateOptions, map[string]string) {
+	options := restservice.UserUpdateOptions{
+		Zone: zone,
+	}
+	fields := map[string]string{}
+
+	if request.Type == nil {
+		fields["type"] = "type is required"
+	} else {
+		userType := strings.TrimSpace(*request.Type)
+		if !validRESTUserType(userType) {
+			fields["type"] = restUserTypeValidationMessage
+		} else {
+			options.Type = userType
+			options.ChangeType = true
+		}
+	}
+
+	if len(fields) == 0 {
+		return options, nil
+	}
+	return options, fields
+}
+
+func userPasswordUpdateOptionsFromRequest(zone string, request userPasswordUpdateRequest) (restservice.UserUpdateOptions, map[string]string) {
+	options := restservice.UserUpdateOptions{
+		Zone: zone,
+	}
+	fields := map[string]string{}
+
+	if request.Password == nil {
+		fields["password"] = "password is required"
+	} else {
+		password := strings.TrimSpace(*request.Password)
+		if password == "" {
+			fields["password"] = "password cannot be empty"
+		} else {
+			options.Password = *request.Password
+			options.ChangePassword = true
+		}
 	}
 
 	if len(fields) == 0 {
@@ -229,11 +354,11 @@ func userCreateOptionsFromRequest(
 	}
 
 	if request.Type == nil {
-		fields["type"] = "type is required and must be rodsuser or rodsadmin"
+		fields["type"] = "type is required and must be rodsuser, groupadmin, or rodsadmin"
 	} else {
 		userType := strings.TrimSpace(*request.Type)
 		if !validRESTUserType(userType) {
-			fields["type"] = "type must be rodsuser or rodsadmin"
+			fields["type"] = restUserTypeValidationMessage
 		} else {
 			options.Type = userType
 		}
@@ -256,7 +381,7 @@ func userCreateOptionsFromRequest(
 
 func validRESTUserType(userType string) bool {
 	switch strings.TrimSpace(userType) {
-	case "rodsuser", "rodsadmin":
+	case "rodsuser", "groupadmin", "rodsadmin":
 		return true
 	default:
 		return false
@@ -294,6 +419,8 @@ func userLinks(user domain.User) *domain.UserLinks {
 	}
 
 	href := userHref(user.Name, user.Zone)
+	typeHref := userActionHref(user.Name, user.Zone, "type")
+	passwordHref := userActionHref(user.Name, user.Zone, "password")
 	return &domain.UserLinks{
 		Self: &domain.ActionLink{
 			Href:   href,
@@ -301,6 +428,14 @@ func userLinks(user domain.User) *domain.UserLinks {
 		},
 		Update: &domain.ActionLink{
 			Href:   href,
+			Method: http.MethodPut,
+		},
+		UpdateType: &domain.ActionLink{
+			Href:   typeHref,
+			Method: http.MethodPut,
+		},
+		UpdatePassword: &domain.ActionLink{
+			Href:   passwordHref,
 			Method: http.MethodPut,
 		},
 		Delete: &domain.ActionLink{
@@ -319,12 +454,19 @@ func userLinks(user domain.User) *domain.UserLinks {
 }
 
 func userHref(username string, zone string) string {
+	return userActionHref(username, zone, "")
+}
+
+func userActionHref(username string, zone string, action string) string {
 	query := url.Values{}
 	if strings.TrimSpace(zone) != "" {
 		query.Set("zone", strings.TrimSpace(zone))
 	}
 
 	href := "/api/v1/user/" + url.PathEscape(strings.TrimSpace(username))
+	if strings.TrimSpace(action) != "" {
+		href += "/" + url.PathEscape(strings.TrimSpace(action))
+	}
 	if encoded := query.Encode(); encoded != "" {
 		href += "?" + encoded
 	}

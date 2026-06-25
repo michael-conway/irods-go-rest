@@ -110,6 +110,8 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("PUT /api/v1/user/{user_name}/avu/{avu_id}", h.requireBearer(http.HandlerFunc(h.putUserAVU)))
 	mux.Handle("DELETE /api/v1/user/{user_name}/avu/{avu_id}", h.requireBearer(http.HandlerFunc(h.deleteUserAVU)))
 	mux.Handle("GET /api/v1/user/{user_name}/usergroup", h.requireBearer(http.HandlerFunc(h.getUserGroupsForUser)))
+	mux.Handle("PUT /api/v1/user/{user_name}/type", h.requireBearer(http.HandlerFunc(h.putUserType)))
+	mux.Handle("PUT /api/v1/user/{user_name}/password", h.requireBearer(http.HandlerFunc(h.putUserPassword)))
 	mux.Handle("PUT /api/v1/user/{user_name}", h.requireBearer(http.HandlerFunc(h.putUser)))
 	mux.Handle("DELETE /api/v1/user/{user_name}", h.requireBearer(http.HandlerFunc(h.deleteUser)))
 	mux.Handle("GET /api/v1/usergroup", h.requireBearer(http.HandlerFunc(h.getUserGroups)))

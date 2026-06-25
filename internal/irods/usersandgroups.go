@@ -138,9 +138,6 @@ func (s *usersAndGroupsService) ListUserMembershipSummaries(ctx context.Context,
 	zone := s.userZone(options.Zone)
 	prefix := strings.TrimSpace(options.Prefix)
 	userType := irodstypes.IRODSUserType(strings.TrimSpace(options.Type))
-	if userType == "" {
-		userType = irodstypes.IRODSUserRodsUser
-	}
 	slog.Debug("usersandgroups ListUserMembershipSummaries start", append([]any{"zone", zone, "prefix", prefix, "type", userType, "limit", options.Limit}, requestContextLogArgs(requestContext)...)...)
 
 	service, release, err := s.extensionServiceForRequest(requestContext, zone, "irods-go-rest-list-user-membership-summaries")

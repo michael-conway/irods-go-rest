@@ -9,9 +9,11 @@ type User struct {
 }
 
 type UserLinks struct {
-	Self      *ActionLink `json:"self,omitempty"`
-	Update    *ActionLink `json:"update,omitempty"`
-	Delete    *ActionLink `json:"delete,omitempty"`
-	AVUs      *ActionLink `json:"avus,omitempty"`
-	CreateAVU *ActionLink `json:"create_avu,omitempty"`
+	Self           *ActionLink `json:"self,omitempty"`
+	Update         *ActionLink `json:"update,omitempty"`
+	UpdateType     *ActionLink `json:"update_type,omitempty"`
+	UpdatePassword *ActionLink `json:"update_password,omitempty"`
+	Delete         *ActionLink `json:"delete,omitempty"`
+	AVUs           *ActionLink `json:"avus,omitempty"`
+	CreateAVU      *ActionLink `json:"create_avu,omitempty"`
 }

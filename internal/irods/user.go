@@ -211,7 +211,11 @@ func (s *userService) CreateUser(ctx context.Context, requestContext *RequestCon
 	}
 	defer filesystem.Release()
 
-	if err := s.requireCreateDeleteUserPermission(filesystem, requestContext); err != nil {
+	actorType, err := s.requireCreateUserPermission(filesystem, requestContext)
+	if err != nil {
+		return domain.User{}, err
+	}
+	if err := s.requireCreateUserTypePermission(actorType, userType, mutation); err != nil {
 		return domain.User{}, err
 	}
 
@@ -272,11 +276,12 @@ func (s *userService) UpdateUser(ctx context.Context, requestContext *RequestCon
 	}
 	defer filesystem.Release()
 
-	if err := s.requireRodsAdmin(filesystem, requestContext); err != nil {
+	actorType, err := s.authenticatedUserType(filesystem, requestContext, "user update")
+	if err != nil {
 		return domain.User{}, err
 	}
 
-	if mutation.Reconcile {
+	if mutation.Reconcile && actorType == irodstypes.IRODSUserRodsAdmin {
 		result, err := newUserSyncService(filesystem, zone, requestContext).UpdateUser(ctx, usersyncext.UpdateUserRequest{
 			Name:            username,
 			Zone:            zone,
@@ -416,41 +421,46 @@ func (s *userService) userMetadataFilesystem(requestContext *RequestContext, use
 	return filesystem, username, zone, nil
 }
 
-func (s *userService) requireRodsAdmin(filesystem CatalogFileSystem, requestContext *RequestContext) error {
-	username := strings.TrimSpace(safeUsername(requestContext))
-	if username == "" {
-		return fmt.Errorf("%w: user update/delete requires rodsadmin", ErrPermissionDenied)
-	}
-
-	user, err := filesystem.GetUser(username, s.userZone(""), "")
-	if err != nil {
-		return fmt.Errorf("%w: user update/delete requires rodsadmin", ErrPermissionDenied)
-	}
-	if user == nil || user.Type != irodstypes.IRODSUserRodsAdmin {
-		return fmt.Errorf("%w: user update/delete requires rodsadmin", ErrPermissionDenied)
-	}
-
-	return nil
+func (s *userService) authenticatedUserType(filesystem CatalogFileSystem, requestContext *RequestContext, operation string) (irodstypes.IRODSUserType, error) {
+	return authenticatedPrincipalType(
+		filesystem,
+		requestContext,
+		s.userZone(""),
+		operation,
+		irodstypes.IRODSUserRodsAdmin,
+	)
 }
 
 func (s *userService) requireCreateDeleteUserPermission(filesystem CatalogFileSystem, requestContext *RequestContext) error {
-	username := strings.TrimSpace(safeUsername(requestContext))
-	if username == "" {
-		return fmt.Errorf("%w: user create/delete requires rodsadmin or groupadmin", ErrPermissionDenied)
-	}
+	_, err := authenticatedPrincipalType(
+		filesystem,
+		requestContext,
+		s.userZone(""),
+		"user create/delete",
+		irodstypes.IRODSUserRodsAdmin,
+	)
+	return err
+}
 
-	user, err := filesystem.GetUser(username, s.userZone(""), "")
-	if err != nil {
-		return fmt.Errorf("%w: user create/delete requires rodsadmin or groupadmin", ErrPermissionDenied)
-	}
-	if user == nil {
-		return fmt.Errorf("%w: user create/delete requires rodsadmin or groupadmin", ErrPermissionDenied)
-	}
-	if user.Type != irodstypes.IRODSUserRodsAdmin && user.Type != irodstypes.IRODSUserGroupAdmin {
-		return fmt.Errorf("%w: user create/delete requires rodsadmin or groupadmin", ErrPermissionDenied)
-	}
+func (s *userService) requireCreateUserPermission(filesystem CatalogFileSystem, requestContext *RequestContext) (irodstypes.IRODSUserType, error) {
+	return authenticatedPrincipalType(
+		filesystem,
+		requestContext,
+		s.userZone(""),
+		"user create",
+		irodstypes.IRODSUserRodsAdmin,
+		irodstypes.IRODSUserGroupAdmin,
+	)
+}
 
-	return nil
+func (s *userService) requireCreateUserTypePermission(actorType irodstypes.IRODSUserType, userType irodstypes.IRODSUserType, mutation UserMutationOptions) error {
+	if actorType == irodstypes.IRODSUserRodsAdmin {
+		return nil
+	}
+	if actorType == irodstypes.IRODSUserGroupAdmin && !mutation.Reconcile && userType == irodstypes.IRODSUserRodsUser {
+		return nil
+	}
+	return fmt.Errorf("%w: user create requires rodsadmin; groupadmin may create rodsuser only", ErrPermissionDenied)
 }
 
 func (s *userService) userZone(zone string) string {
@@ -478,16 +488,22 @@ func userTypesForList(rawType string) []irodstypes.IRODSUserType {
 	switch strings.TrimSpace(rawType) {
 	case string(irodstypes.IRODSUserRodsUser):
 		return []irodstypes.IRODSUserType{irodstypes.IRODSUserRodsUser}
+	case string(irodstypes.IRODSUserGroupAdmin):
+		return []irodstypes.IRODSUserType{irodstypes.IRODSUserGroupAdmin}
 	case string(irodstypes.IRODSUserRodsAdmin):
 		return []irodstypes.IRODSUserType{irodstypes.IRODSUserRodsAdmin}
 	default:
-		return []irodstypes.IRODSUserType{irodstypes.IRODSUserRodsUser, irodstypes.IRODSUserRodsAdmin}
+		return []irodstypes.IRODSUserType{
+			irodstypes.IRODSUserRodsUser,
+			irodstypes.IRODSUserGroupAdmin,
+			irodstypes.IRODSUserRodsAdmin,
+		}
 	}
 }
 
 func isUserType(userType string) bool {
 	switch strings.TrimSpace(userType) {
-	case string(irodstypes.IRODSUserRodsUser), string(irodstypes.IRODSUserRodsAdmin):
+	case string(irodstypes.IRODSUserRodsUser), string(irodstypes.IRODSUserGroupAdmin), string(irodstypes.IRODSUserRodsAdmin):
 		return true
 	default:
 		return false

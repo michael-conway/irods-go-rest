@@ -182,7 +182,7 @@ func (s *userGroupService) CreateUserGroup(ctx context.Context, requestContext *
 	}
 	defer filesystem.Release()
 
-	if err := s.requireManageUserGroupsPermission(filesystem, requestContext); err != nil {
+	if err := s.requireManageUserGroupsPermission(filesystem, requestContext, "user group create"); err != nil {
 		return domain.UserGroup{}, err
 	}
 
@@ -236,7 +236,7 @@ func (s *userGroupService) DeleteUserGroup(ctx context.Context, requestContext *
 	}
 	defer filesystem.Release()
 
-	if err := s.requireManageUserGroupsPermission(filesystem, requestContext); err != nil {
+	if err := s.requireDeleteUserGroupPermission(filesystem, requestContext); err != nil {
 		return err
 	}
 
@@ -290,7 +290,7 @@ func (s *userGroupService) AddUserToGroup(ctx context.Context, requestContext *R
 	}
 	defer filesystem.Release()
 
-	if err := s.requireManageUserGroupsPermission(filesystem, requestContext); err != nil {
+	if err := s.requireManageUserGroupsPermission(filesystem, requestContext, "user group membership update"); err != nil {
 		return domain.UserGroup{}, err
 	}
 
@@ -358,7 +358,7 @@ func (s *userGroupService) RemoveUserFromGroup(ctx context.Context, requestConte
 	}
 	defer filesystem.Release()
 
-	if err := s.requireManageUserGroupsPermission(filesystem, requestContext); err != nil {
+	if err := s.requireManageUserGroupsPermission(filesystem, requestContext, "user group membership update"); err != nil {
 		return domain.UserGroup{}, err
 	}
 
@@ -425,24 +425,27 @@ func (s *userGroupService) groupMetadataFilesystem(requestContext *RequestContex
 	return filesystem, groupName, zone, nil
 }
 
-func (s *userGroupService) requireManageUserGroupsPermission(filesystem CatalogFileSystem, requestContext *RequestContext) error {
-	username := strings.TrimSpace(safeUsername(requestContext))
-	if username == "" {
-		return fmt.Errorf("%w: user group create/delete requires rodsadmin or groupadmin", ErrPermissionDenied)
-	}
+func (s *userGroupService) requireManageUserGroupsPermission(filesystem CatalogFileSystem, requestContext *RequestContext, operation string) error {
+	_, err := authenticatedPrincipalType(
+		filesystem,
+		requestContext,
+		s.userZone(""),
+		operation,
+		irodstypes.IRODSUserRodsAdmin,
+		irodstypes.IRODSUserGroupAdmin,
+	)
+	return err
+}
 
-	user, err := filesystem.GetUser(username, s.userZone(""), "")
-	if err != nil {
-		return fmt.Errorf("%w: user group create/delete requires rodsadmin or groupadmin", ErrPermissionDenied)
-	}
-	if user == nil {
-		return fmt.Errorf("%w: user group create/delete requires rodsadmin or groupadmin", ErrPermissionDenied)
-	}
-	if user.Type != irodstypes.IRODSUserRodsAdmin && user.Type != irodstypes.IRODSUserGroupAdmin {
-		return fmt.Errorf("%w: user group create/delete requires rodsadmin or groupadmin", ErrPermissionDenied)
-	}
-
-	return nil
+func (s *userGroupService) requireDeleteUserGroupPermission(filesystem CatalogFileSystem, requestContext *RequestContext) error {
+	_, err := authenticatedPrincipalType(
+		filesystem,
+		requestContext,
+		s.userZone(""),
+		"user group delete",
+		irodstypes.IRODSUserRodsAdmin,
+	)
+	return err
 }
 
 func (s *userGroupService) getGroup(filesystem CatalogFileSystem, groupName string, zone string) (domain.UserGroup, error) {

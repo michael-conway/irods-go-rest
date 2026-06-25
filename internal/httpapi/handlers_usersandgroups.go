@@ -83,7 +83,7 @@ func (h *Handler) getUserMembershipSummaries(w http.ResponseWriter, r *http.Requ
 	}
 	userType := strings.TrimSpace(r.URL.Query().Get("type"))
 	if userType != "" && !validRESTUserType(userType) {
-		writeError(w, http.StatusBadRequest, "invalid_request", "type must be rodsuser or rodsadmin")
+		writeError(w, http.StatusBadRequest, "invalid_request", restUserTypeValidationMessage)
 		return
 	}
 

@@ -9,7 +9,7 @@ Keep the public API path-oriented:
 - `irods_path` stays in the query string for full iRODS logical paths.
 - Generic iRODS operations stay under `/api/v1/path*`, `/api/v1/user*`, `/api/v1/usergroup*`, `/api/v1/ticket*`, and `/api/v1/server`.
 - Workflow-specific APIs stay under `/api/v1/ext/*`.
-- Do not introduce parallel Keycloak-specific user/group routes when the generic iRODS user and group routes express the operation.
+- Do not introduce parallel external-authorization-source-specific user/group routes when the generic iRODS user and group routes express the operation.
 
 Extension support signaling:
 
@@ -48,7 +48,7 @@ Keep service-local behavior in this repository when it depends on HTTP request c
 
 API routes remain stateless at request time:
 
-- Bearer tokens are validated through OIDC/Keycloak.
+- Bearer tokens are validated through the configured external authorization source.
 - Basic auth maps directly to iRODS user credentials.
 - `Bearer irods-ticket:<ticket>` is accepted only for content download flows.
 - `/web/*` browser login uses server-side sessions, but `/api/v1/*` must not depend on web session state.
@@ -60,22 +60,49 @@ Bearer token acquisition options targeted for beta:
 - Client Credentials for service-to-service automation.
 - Token exchange when scoped downstream tokens are required.
 
-Keycloak admin/scripted token minting is a development convenience, not production UX.
+Scripted token minting through an authorization source admin API is a development convenience, not production UX.
 
 ## User And Group Sync
 
-`reconcile=true` user and usergroup calls use normal iRODS authority. REST does not maintain a separate sync ACL or service-account state store.
+There are two intentionally different ways to administer users and groups.
 
-Service-account bearer callers follow the same path as other bearer callers: validate token, resolve effective/proxy iRODS account, then let iRODS user type determine whether catalog mutation can proceed.
+Normal user and group routes are direct iRODS administration:
 
-Keep sync policy in `go-irodsclient-extensions/usersync` where possible:
+- `POST /api/v1/user`
+- `PUT /api/v1/user/{user_name}/type`
+- `PUT /api/v1/user/{user_name}/password`
+- `PUT /api/v1/user/{user_name}` as a compatibility route for one update field only
+- `DELETE /api/v1/user/{user_name}`
+- `POST /api/v1/usergroup`
+- `DELETE /api/v1/usergroup/{group_name}`
+- `POST /api/v1/usergroup/{group_name}/member`
+- `DELETE /api/v1/usergroup/{group_name}/member/{user_name}`
+
+Use normal routes when a caller is intentionally making an iRODS catalog change.
+The result should reflect the requested operation exactly. For example, creating
+an already-existing user is a conflict unless the route documents a specific
+idempotent behavior.
+
+`reconcile=true` changes the meaning of the same user and group mutation routes.
+It is for desired-state sync from an external authorization source. The caller is
+not saying "create this row now" as much as "make iRODS match this external
+source record." That means reconcile calls may treat already-correct state as
+success and may enforce sync ownership rules before changing or deleting a
+principal.
+
+REST does not maintain a separate sync ACL or service-account state store.
+Service-account bearer callers follow the same path as other bearer callers:
+validate token, resolve the effective/proxy iRODS account, then let the iRODS
+user type determine whether catalog mutation can proceed.
+
+Keep desired-state sync policy in `go-irodsclient-extensions/usersync` where possible:
 
 - sync assumes an already-authorized iRODS filesystem
 - sync may manage normal `rodsuser` accounts and `rodsgroup` groups
 - sync must not manage `groupadmin` or `rodsadmin` users
 - iRODS privilege changes stay outside sync and should be handled through iRODS admin workflows
 
-Durable sync ownership state must be iRODS-native AVUs:
+Durable sync ownership state is recorded as iRODS-native AVUs on the user or group:
 
 - `iRODS:USER_SYNCH:MANAGED`
 - `iRODS:USER_SYNCH:SOURCE`
@@ -84,16 +111,20 @@ Durable sync ownership state must be iRODS-native AVUs:
 - `iRODS:USER_SYNCH:LAST_SYNC_AT`
 - `iRODS:USER_SYNCH:LAST_PLAN_ID`
 
-### Starbase Users And Groups Administration
+Those AVUs are the guardrail that lets reconcile delete or revise only the
+principals the sync process owns. A normal admin-created user or group should not
+be removed by reconcile unless it has been marked as sync-managed.
 
-`starbase` is adding a top-level `Users & Groups` function backed by the
-generic user and usergroup APIs. Preserve the current generic route family as
-the first contract for this UI:
+### Users And Groups Administration
+
+Generic iRODS user and usergroup APIs :
 
 - `GET /api/v1/user`
 - `POST /api/v1/user`
 - `GET /api/v1/user/{user_name}`
-- `PUT /api/v1/user/{user_name}`
+- `PUT /api/v1/user/{user_name}/type`
+- `PUT /api/v1/user/{user_name}/password`
+- `PUT /api/v1/user/{user_name}` as a compatibility route for one update field only
 - `DELETE /api/v1/user/{user_name}`
 - `GET /api/v1/user/{user_name}/avu`
 - `POST /api/v1/user/{user_name}/avu`
@@ -110,31 +141,33 @@ the first contract for this UI:
 - `POST /api/v1/usergroup/{group_name}/member`
 - `DELETE /api/v1/usergroup/{group_name}/member/{user_name}`
 
-Frontend requirements to watch:
+These are iRODS administration operations, not external-source sync operations.
+Use `reconcile=true` only for flows that are explicitly syncing desired state
+from an external authorization source.
 
-- Basic read-only tables can use the existing list endpoints.
-- User autocomplete and group autocomplete should keep using prefix filters on
-  the generic list routes.
-- User/group core updates are intentionally narrow. Use principal AVU routes
-  for editable user/group annotations instead of adding generic group update
-  routes without a concrete catalog field requirement.
-- Starbase must not perform broad client-side joins, catalog-wide filtering, or
-  repeated per-row group detail fetches for list-scale views.
-- If the UI needs group member counts, users with membership summaries, groups
-  containing a given user, or principal search across users and groups, add a
-  documented REST route here instead of pushing that logic into the browser.
+Keep user type and password updates separate. A type change is a privilege
+change, while a password change is a credential change. New clients should use
+the explicit `/type` and `/password` routes. The compatibility `PUT
+/api/v1/user/{user_name}` route must reject requests that include both fields.
 
-Likely efficient API candidates:
+Match the iRODS `igroupadmin` privilege boundary for `groupadmin` callers:
 
-- a GenQuery-backed group summary route that returns group rows with member
-  counts for list views
-- a GenQuery-backed user membership summary route that returns each user with
-  zero or more group names
-- a GenQuery-backed reverse membership route for groups containing one selected
-  user
-- a principal search route only if a combined user/group search is demonstrably
-  better than the existing separate `/api/v1/user` and `/api/v1/usergroup`
-  prefix searches
+- may create `rodsuser` users and set an initial password at creation time
+- may create groups
+- may add users to groups and remove users from groups
+- may not delete users
+- may not delete groups
+- may not change user type, including self-promotion to `rodsadmin` or self-demotion to `rodsuser`
+- may not create `groupadmin` or `rodsadmin` users
+- may not use user reconcile/sync operations
+
+Use the efficient summary/search routes for list-scale views:
+
+- `GET /api/v1/usergroup/summary`
+- `GET /api/v1/user/membership-summary`
+- `GET /api/v1/user/{user_name}/usergroup`
+- `GET /api/v1/principal`
+- `GET /api/v1/user/me`
 
 Any new route must be added to `api/openapi.yaml`, mapped through
 `internal/httpapi/`, shaped in `internal/domain/`, and implemented in the

@@ -1153,6 +1153,17 @@ type catalogTestFileSystem struct {
 	released       bool
 }
 
+type adminLeakingCatalogFileSystem struct {
+	*catalogTestFileSystem
+}
+
+func (f *adminLeakingCatalogFileSystem) GetUser(username string, zoneName string, userType irodstypes.IRODSUserType) (*irodstypes.IRODSUser, error) {
+	if strings.TrimSpace(username) == "alice" {
+		return f.catalogTestFileSystem.GetUser("rods", zoneName, userType)
+	}
+	return f.catalogTestFileSystem.GetUser(username, zoneName, userType)
+}
+
 func newCatalogTestFileSystem() *catalogTestFileSystem {
 	now := time.Unix(1_700_000_000, 0)
 
