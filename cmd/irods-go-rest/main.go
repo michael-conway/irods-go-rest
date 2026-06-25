@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	log.Printf("starting irods-go-rest (startup marker: auth-config-debug-v2)")
+	log.Printf("starting irods-go-rest")
 
 	cfg, err := config.ReadRestConfig("rest-config", "yaml", []string{})
 

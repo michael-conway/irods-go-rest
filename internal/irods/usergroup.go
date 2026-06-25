@@ -2,12 +2,14 @@ package irods
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
 
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
+	usersandgroupsext "github.com/michael-conway/go-irodsclient-extensions/usersandgroups"
 	usersyncext "github.com/michael-conway/go-irodsclient-extensions/usersync"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 	"github.com/michael-conway/irods-go-rest/internal/domain"
@@ -182,7 +184,8 @@ func (s *userGroupService) CreateUserGroup(ctx context.Context, requestContext *
 	}
 	defer filesystem.Release()
 
-	if err := s.requireManageUserGroupsPermission(filesystem, requestContext, "user group create"); err != nil {
+	actorType, err := s.requireManageUserGroupsPermission(filesystem, requestContext, "user group create")
+	if err != nil {
 		return domain.UserGroup{}, err
 	}
 
@@ -201,6 +204,10 @@ func (s *userGroupService) CreateUserGroup(ctx context.Context, requestContext *
 		return mapUserSyncGroup(result.Group), nil
 	}
 
+	if actorType == irodstypes.IRODSUserGroupAdmin {
+		return s.createGroupAsGroupAdmin(ctx, filesystem, requestContext, groupName, zone)
+	}
+
 	if _, err := filesystem.CreateUserGroup(groupName, zone); err != nil {
 		normalizedErr := normalizeUserGroupError("create group", groupName, zone, err)
 		logIRODSError("usergroup CreateUserGroup failed", normalizedErr, append([]any{"group", groupName, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
@@ -212,6 +219,26 @@ func (s *userGroupService) CreateUserGroup(ctx context.Context, requestContext *
 		return domain.UserGroup{}, err
 	}
 
+	group, err = s.groupWithMembers(filesystem, group)
+	if err != nil {
+		return domain.UserGroup{}, err
+	}
+	slog.Info("usergroup CreateUserGroup completed", append([]any{"group", groupName, "zone", zone, "outcome", "created"}, requestContextLogArgs(requestContext)...)...)
+	return group, nil
+}
+
+func (s *userGroupService) createGroupAsGroupAdmin(ctx context.Context, filesystem CatalogFileSystem, requestContext *RequestContext, groupName string, zone string) (domain.UserGroup, error) {
+	service := usersandgroupsext.NewService(filesystem.UsersAndGroupsCatalog(), zone)
+	if _, err := service.CreateGroup(ctx, usersandgroupsext.GroupRequest{Zone: zone, Name: groupName}); err != nil {
+		normalizedErr := s.normalizeUsersAndGroupsMutationError("groupadmin create group", groupName, zone, err)
+		logIRODSError("usergroup CreateUserGroup groupadmin mkgroup failed", normalizedErr, append([]any{"group", groupName, "zone", zone, "reconcile", false}, requestContextLogArgs(requestContext)...)...)
+		return domain.UserGroup{}, normalizedErr
+	}
+
+	group, err := s.getGroup(filesystem, groupName, zone)
+	if err != nil {
+		return domain.UserGroup{}, err
+	}
 	group, err = s.groupWithMembers(filesystem, group)
 	if err != nil {
 		return domain.UserGroup{}, err
@@ -290,7 +317,8 @@ func (s *userGroupService) AddUserToGroup(ctx context.Context, requestContext *R
 	}
 	defer filesystem.Release()
 
-	if err := s.requireManageUserGroupsPermission(filesystem, requestContext, "user group membership update"); err != nil {
+	actorType, err := s.requireManageUserGroupsPermission(filesystem, requestContext, "user group membership update")
+	if err != nil {
 		return domain.UserGroup{}, err
 	}
 
@@ -324,13 +352,7 @@ func (s *userGroupService) AddUserToGroup(ctx context.Context, requestContext *R
 		return domain.UserGroup{}, fmt.Errorf("%w: user %q", ErrNotFound, username)
 	}
 
-	if err := filesystem.AddGroupMember(group.Name, user.Name, zone); err != nil {
-		normalizedErr := normalizeUserGroupError("add group member", groupName, zone, err)
-		logIRODSError("usergroup AddUserToGroup failed", normalizedErr, append([]any{"group", groupName, "user", username, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
-		return domain.UserGroup{}, normalizedErr
-	}
-
-	group, err = s.groupWithMembers(filesystem, group)
+	group, err = s.changeGroupMember(ctx, filesystem, requestContext, actorType, group, user.Name, zone, groupMemberMutationAdd, options)
 	if err != nil {
 		return domain.UserGroup{}, err
 	}
@@ -358,7 +380,8 @@ func (s *userGroupService) RemoveUserFromGroup(ctx context.Context, requestConte
 	}
 	defer filesystem.Release()
 
-	if err := s.requireManageUserGroupsPermission(filesystem, requestContext, "user group membership update"); err != nil {
+	actorType, err := s.requireManageUserGroupsPermission(filesystem, requestContext, "user group membership update")
+	if err != nil {
 		return domain.UserGroup{}, err
 	}
 
@@ -383,18 +406,80 @@ func (s *userGroupService) RemoveUserFromGroup(ctx context.Context, requestConte
 		return domain.UserGroup{}, err
 	}
 
-	if err := filesystem.RemoveGroupMember(group.Name, username, zone); err != nil {
-		normalizedErr := normalizeUserGroupError("remove group member", groupName, zone, err)
-		logIRODSError("usergroup RemoveUserFromGroup failed", normalizedErr, append([]any{"group", groupName, "user", username, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
-		return domain.UserGroup{}, normalizedErr
-	}
-
-	group, err = s.groupWithMembers(filesystem, group)
+	group, err = s.changeGroupMember(ctx, filesystem, requestContext, actorType, group, username, zone, groupMemberMutationRemove, options)
 	if err != nil {
 		return domain.UserGroup{}, err
 	}
 	slog.Info("usergroup RemoveUserFromGroup completed", append([]any{"group", groupName, "user", username, "zone", zone, "outcome", "removed"}, requestContextLogArgs(requestContext)...)...)
 	return group, nil
+}
+
+type groupMemberMutation string
+
+const (
+	groupMemberMutationAdd    groupMemberMutation = "add"
+	groupMemberMutationRemove groupMemberMutation = "remove"
+)
+
+func (s *userGroupService) changeGroupMember(ctx context.Context, filesystem CatalogFileSystem, requestContext *RequestContext, actorType irodstypes.IRODSUserType, group domain.UserGroup, username string, zone string, mutation groupMemberMutation, options UserGroupMutationOptions) (domain.UserGroup, error) {
+	if actorType == irodstypes.IRODSUserGroupAdmin {
+		if err := s.changeGroupMemberAsGroupAdmin(ctx, filesystem, group, username, zone, mutation); err != nil {
+			operation, logMessage := groupMemberMutationLabels(mutation, true)
+			normalizedErr := s.normalizeUsersAndGroupsMutationError(operation, group.Name, zone, err)
+			logIRODSError(logMessage, normalizedErr, append([]any{"group", group.Name, "user", username, "zone", zone, "reconcile", false}, requestContextLogArgs(requestContext)...)...)
+			return domain.UserGroup{}, normalizedErr
+		}
+		return s.groupWithMembers(filesystem, group)
+	}
+
+	if err := changeGroupMemberStrict(filesystem, group.Name, username, zone, mutation); err != nil {
+		operation, logMessage := groupMemberMutationLabels(mutation, false)
+		normalizedErr := normalizeUserGroupError(operation, group.Name, zone, err)
+		logIRODSError(logMessage, normalizedErr, append([]any{"group", group.Name, "user", username, "zone", zone, "reconcile", options.Reconcile}, requestContextLogArgs(requestContext)...)...)
+		return domain.UserGroup{}, normalizedErr
+	}
+	return s.groupWithMembers(filesystem, group)
+}
+
+func (s *userGroupService) changeGroupMemberAsGroupAdmin(ctx context.Context, filesystem CatalogFileSystem, group domain.UserGroup, username string, zone string, mutation groupMemberMutation) error {
+	service := usersandgroupsext.NewService(filesystem.UsersAndGroupsCatalog(), zone)
+	request := usersandgroupsext.GroupMemberRequest{Zone: zone, GroupName: group.Name, UserName: username}
+	switch mutation {
+	case groupMemberMutationAdd:
+		return service.AddGroupMember(ctx, request)
+	case groupMemberMutationRemove:
+		return service.RemoveGroupMember(ctx, request)
+	default:
+		return fmt.Errorf("%w: unsupported group member mutation %q", ErrInvalidRequest, mutation)
+	}
+}
+
+func changeGroupMemberStrict(filesystem CatalogFileSystem, groupName string, username string, zone string, mutation groupMemberMutation) error {
+	switch mutation {
+	case groupMemberMutationAdd:
+		return filesystem.AddGroupMember(groupName, username, zone)
+	case groupMemberMutationRemove:
+		return filesystem.RemoveGroupMember(groupName, username, zone)
+	default:
+		return fmt.Errorf("%w: unsupported group member mutation %q", ErrInvalidRequest, mutation)
+	}
+}
+
+func groupMemberMutationLabels(mutation groupMemberMutation, groupAdmin bool) (string, string) {
+	switch mutation {
+	case groupMemberMutationAdd:
+		if groupAdmin {
+			return "groupadmin add group member", "usergroup AddUserToGroup groupadmin atg failed"
+		}
+		return "add group member", "usergroup AddUserToGroup failed"
+	case groupMemberMutationRemove:
+		if groupAdmin {
+			return "groupadmin remove group member", "usergroup RemoveUserFromGroup groupadmin rfg failed"
+		}
+		return "remove group member", "usergroup RemoveUserFromGroup failed"
+	default:
+		return string(mutation), "usergroup member mutation failed"
+	}
 }
 
 func (s *userGroupService) filesystemForRequest(requestContext *RequestContext, applicationName string) (CatalogFileSystem, error) {
@@ -425,8 +510,8 @@ func (s *userGroupService) groupMetadataFilesystem(requestContext *RequestContex
 	return filesystem, groupName, zone, nil
 }
 
-func (s *userGroupService) requireManageUserGroupsPermission(filesystem CatalogFileSystem, requestContext *RequestContext, operation string) error {
-	_, err := authenticatedPrincipalType(
+func (s *userGroupService) requireManageUserGroupsPermission(filesystem CatalogFileSystem, requestContext *RequestContext, operation string) (irodstypes.IRODSUserType, error) {
+	return authenticatedPrincipalType(
 		filesystem,
 		requestContext,
 		s.userZone(""),
@@ -434,7 +519,6 @@ func (s *userGroupService) requireManageUserGroupsPermission(filesystem CatalogF
 		irodstypes.IRODSUserRodsAdmin,
 		irodstypes.IRODSUserGroupAdmin,
 	)
-	return err
 }
 
 func (s *userGroupService) requireDeleteUserGroupPermission(filesystem CatalogFileSystem, requestContext *RequestContext) error {
@@ -446,6 +530,13 @@ func (s *userGroupService) requireDeleteUserGroupPermission(filesystem CatalogFi
 		irodstypes.IRODSUserRodsAdmin,
 	)
 	return err
+}
+
+func (s *userGroupService) normalizeUsersAndGroupsMutationError(operation string, name string, zone string, err error) error {
+	if errors.Is(err, usersandgroupsext.ErrInvalidRequest) || errors.Is(err, usersandgroupsext.ErrMissingCatalog) {
+		return newInvalidRequestError(err.Error())
+	}
+	return normalizeUserGroupError(operation, name, zone, err)
 }
 
 func (s *userGroupService) getGroup(filesystem CatalogFileSystem, groupName string, zone string) (domain.UserGroup, error) {

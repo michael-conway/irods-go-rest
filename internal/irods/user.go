@@ -2,12 +2,14 @@ package irods
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
 
 	irodstypes "github.com/cyverse/go-irodsclient/irods/types"
+	usersandgroupsext "github.com/michael-conway/go-irodsclient-extensions/usersandgroups"
 	usersyncext "github.com/michael-conway/go-irodsclient-extensions/usersync"
 	"github.com/michael-conway/irods-go-rest/internal/config"
 	"github.com/michael-conway/irods-go-rest/internal/domain"
@@ -236,6 +238,10 @@ func (s *userService) CreateUser(ctx context.Context, requestContext *RequestCon
 		return mapUserSyncUser(result.User), nil
 	}
 
+	if actorType == irodstypes.IRODSUserGroupAdmin {
+		return s.createRodsUserAsGroupAdmin(ctx, filesystem, requestContext, username, zone, options.Password)
+	}
+
 	if _, err := filesystem.CreateUser(username, zone, userType); err != nil {
 		normalizedErr := normalizeUserError("create user", username, zone, err)
 		logIRODSError("user CreateUser create failed", normalizedErr, append([]any{"user", username, "zone", zone, "type", userType, "reconcile", mutation.Reconcile}, requestContextLogArgs(requestContext)...)...)
@@ -258,6 +264,36 @@ func (s *userService) CreateUser(ctx context.Context, requestContext *RequestCon
 
 	slog.Info("user CreateUser completed", append([]any{"user", username, "zone", zone, "type", userType, "outcome", "created"}, requestContextLogArgs(requestContext)...)...)
 	return mapUser(created), nil
+}
+
+func (s *userService) createRodsUserAsGroupAdmin(ctx context.Context, filesystem CatalogFileSystem, requestContext *RequestContext, username string, zone string, password string) (domain.User, error) {
+	if strings.TrimSpace(password) == "" {
+		return domain.User{}, newInvalidRequestError("groupadmin user create requires an initial password")
+	}
+
+	service := usersandgroupsext.NewService(filesystem.UsersAndGroupsCatalog(), zone)
+	created, err := service.CreateRodsUserWithPassword(ctx, usersandgroupsext.CreateRodsUserWithPasswordRequest{
+		Zone:     zone,
+		Name:     username,
+		Password: password,
+	})
+	if err != nil {
+		if errors.Is(err, usersandgroupsext.ErrInvalidRequest) || errors.Is(err, usersandgroupsext.ErrMissingCatalog) {
+			err = newInvalidRequestError(err.Error())
+		} else {
+			err = normalizeUserError("groupadmin create user", username, zone, err)
+		}
+		logIRODSError("user CreateUser groupadmin mkuser failed", err, append([]any{"user", username, "zone", zone, "type", irodstypes.IRODSUserRodsUser, "reconcile", false}, requestContextLogArgs(requestContext)...)...)
+		return domain.User{}, err
+	}
+
+	slog.Info("user CreateUser completed", append([]any{"user", username, "zone", zone, "type", created.Type, "outcome", "created"}, requestContextLogArgs(requestContext)...)...)
+	return domain.User{
+		ID:   created.ID,
+		Name: created.Name,
+		Zone: created.Zone,
+		Type: string(created.Type),
+	}, nil
 }
 
 func (s *userService) UpdateUser(ctx context.Context, requestContext *RequestContext, username string, options UserUpdateOptions, mutation UserMutationOptions) (domain.User, error) {

@@ -4768,6 +4768,43 @@ func (c testUsersAndGroupsCatalog) SearchPrincipals(_ context.Context, options u
 	return results, nil
 }
 
+func (c testUsersAndGroupsCatalog) CreateRodsUserWithPassword(_ context.Context, request usersandgroupsext.CreateRodsUserWithPasswordRequest) (usersandgroupsext.User, error) {
+	user, err := c.filesystem.CreateUser(request.Name, request.Zone, irodstypes.IRODSUserRodsUser)
+	if err != nil {
+		return usersandgroupsext.User{}, err
+	}
+	if err := c.filesystem.ChangeUserPassword(request.Name, request.Zone, request.Password); err != nil {
+		return usersandgroupsext.User{}, err
+	}
+	return usersandgroupsext.User{
+		ID:   user.ID,
+		Name: user.Name,
+		Zone: user.Zone,
+		Type: user.Type,
+	}, nil
+}
+
+func (c testUsersAndGroupsCatalog) CreateGroup(_ context.Context, request usersandgroupsext.GroupRequest) (usersandgroupsext.GroupRef, error) {
+	group, err := c.filesystem.CreateUserGroup(request.Name, request.Zone)
+	if err != nil {
+		return usersandgroupsext.GroupRef{}, err
+	}
+	return usersandgroupsext.GroupRef{
+		ID:   group.ID,
+		Name: group.Name,
+		Zone: group.Zone,
+		Type: group.Type,
+	}, nil
+}
+
+func (c testUsersAndGroupsCatalog) AddGroupMember(_ context.Context, request usersandgroupsext.GroupMemberRequest) error {
+	return c.filesystem.AddGroupMember(request.GroupName, request.UserName, request.Zone)
+}
+
+func (c testUsersAndGroupsCatalog) RemoveGroupMember(_ context.Context, request usersandgroupsext.GroupMemberRequest) error {
+	return c.filesystem.RemoveGroupMember(request.GroupName, request.UserName, request.Zone)
+}
+
 func (c testUsersAndGroupsCatalog) groupsForUser(username string, zone string) []usersandgroupsext.GroupRef {
 	groups := make([]usersandgroupsext.GroupRef, 0)
 	for key, members := range c.filesystem.groupMembers {
@@ -5466,6 +5503,24 @@ func TestPostUserCreatesRodsUserAsGroupAdmin(t *testing.T) {
 	handler := testHandler(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/user", strings.NewReader(`{"name":"charlie","type":"rodsuser","password":"initial-pass"}`))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !containsAll(body, `"name":"charlie"`, `"type":"rodsuser"`) {
+		t.Fatalf("unexpected response body: %q", body)
+	}
+}
+
+func TestPostUserCreatesRodsUserAsGroupAdminWithReconcileFalse(t *testing.T) {
+	handler := testHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/user?reconcile=false", strings.NewReader(`{"name":"charlie","type":"rodsuser","password":"initial-pass"}`))
 	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("groupadmin:secret")))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()

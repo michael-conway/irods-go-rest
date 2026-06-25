@@ -2379,7 +2379,64 @@ func (f *catalogTestFileSystem) Release() {
 }
 
 func (f *catalogTestFileSystem) UsersAndGroupsCatalog() usersandgroupsext.Catalog {
-	return nil
+	return catalogTestUsersAndGroupsCatalog{filesystem: f}
+}
+
+type catalogTestUsersAndGroupsCatalog struct {
+	filesystem *catalogTestFileSystem
+}
+
+func (c catalogTestUsersAndGroupsCatalog) ListGroupSummaries(_ context.Context, _ usersandgroupsext.GroupSummaryOptions) ([]usersandgroupsext.GroupSummary, error) {
+	return nil, nil
+}
+
+func (c catalogTestUsersAndGroupsCatalog) ListUserMembershipSummaries(_ context.Context, _ usersandgroupsext.UserMembershipSummaryOptions) ([]usersandgroupsext.UserMembershipSummary, error) {
+	return nil, nil
+}
+
+func (c catalogTestUsersAndGroupsCatalog) ListGroupsForUser(_ context.Context, _ usersandgroupsext.GroupsForUserOptions) ([]usersandgroupsext.GroupRef, error) {
+	return nil, nil
+}
+
+func (c catalogTestUsersAndGroupsCatalog) SearchPrincipals(_ context.Context, _ usersandgroupsext.PrincipalSearchOptions) ([]usersandgroupsext.PrincipalSearchResult, error) {
+	return nil, nil
+}
+
+func (c catalogTestUsersAndGroupsCatalog) CreateRodsUserWithPassword(_ context.Context, request usersandgroupsext.CreateRodsUserWithPasswordRequest) (usersandgroupsext.User, error) {
+	user, err := c.filesystem.CreateUser(request.Name, request.Zone, irodstypes.IRODSUserRodsUser)
+	if err != nil {
+		return usersandgroupsext.User{}, err
+	}
+	if err := c.filesystem.ChangeUserPassword(request.Name, request.Zone, request.Password); err != nil {
+		return usersandgroupsext.User{}, err
+	}
+	return usersandgroupsext.User{
+		ID:   user.ID,
+		Name: user.Name,
+		Zone: user.Zone,
+		Type: user.Type,
+	}, nil
+}
+
+func (c catalogTestUsersAndGroupsCatalog) CreateGroup(_ context.Context, request usersandgroupsext.GroupRequest) (usersandgroupsext.GroupRef, error) {
+	group, err := c.filesystem.CreateUserGroup(request.Name, request.Zone)
+	if err != nil {
+		return usersandgroupsext.GroupRef{}, err
+	}
+	return usersandgroupsext.GroupRef{
+		ID:   group.ID,
+		Name: group.Name,
+		Zone: group.Zone,
+		Type: group.Type,
+	}, nil
+}
+
+func (c catalogTestUsersAndGroupsCatalog) AddGroupMember(_ context.Context, request usersandgroupsext.GroupMemberRequest) error {
+	return c.filesystem.AddGroupMember(request.GroupName, request.UserName, request.Zone)
+}
+
+func (c catalogTestUsersAndGroupsCatalog) RemoveGroupMember(_ context.Context, request usersandgroupsext.GroupMemberRequest) error {
+	return c.filesystem.RemoveGroupMember(request.GroupName, request.UserName, request.Zone)
 }
 
 func (f *catalogTestFileSystem) GetTicket(ticketName string) (*irodstypes.IRODSTicket, error) {

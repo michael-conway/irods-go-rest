@@ -161,6 +161,11 @@ Match the iRODS `igroupadmin` privilege boundary for `groupadmin` callers:
 - may not create `groupadmin` or `rodsadmin` users
 - may not use user reconcile/sync operations
 
+The groupadmin `rodsuser` create path should call
+`go-irodsclient-extensions/usersandgroups` so it matches `igroupadmin mkuser`.
+Do not route that case through the generic go-irodsclient user create primitive;
+that path is rodsadmin-oriented and does not model the groupadmin command.
+
 Use the efficient summary/search routes for list-scale views:
 
 - `GET /api/v1/usergroup/summary`

@@ -129,16 +129,16 @@ func TestCreateRodsUserThenPromoteToGroupAdminRejectsSelfTypeChangesE2E(t *testi
 		cleanupUserGroupAdminSubjectsE2E(t, client, baseURL, userName, "")
 	})
 
-	userCollectionURL := userGroupAdminURL(baseURL, "/api/v1/user", zone)
+	strictUserCollectionURL := userGroupAdminURL(baseURL, "/api/v1/user", zone) + "&reconcile=false"
 	userURL := userGroupAdminURL(baseURL, "/api/v1/user/"+url.PathEscape(userName), zone)
 	userTypeURL := userGroupAdminURL(baseURL, "/api/v1/user/"+url.PathEscape(userName)+"/type", zone)
 	managedUserURL := userGroupAdminURL(baseURL, "/api/v1/user/"+url.PathEscape(managedUserName), zone)
-	groupCollectionURL := userGroupAdminURL(baseURL, "/api/v1/usergroup", zone)
+	strictGroupCollectionURL := userGroupAdminURL(baseURL, "/api/v1/usergroup", zone) + "&reconcile=false"
 	groupURL := userGroupAdminURL(baseURL, "/api/v1/usergroup/"+url.PathEscape(groupName), zone)
 	memberCollectionURL := userGroupAdminURL(baseURL, "/api/v1/usergroup/"+url.PathEscape(groupName)+"/member", zone)
 	memberURL := userGroupAdminURL(baseURL, "/api/v1/usergroup/"+url.PathEscape(groupName)+"/member/"+url.PathEscape(managedUserName), zone)
 
-	status, body := requestUserGroupAdminE2E(t, client, http.MethodPost, userCollectionURL, map[string]any{
+	status, body := requestUserGroupAdminE2E(t, client, http.MethodPost, strictUserCollectionURL, map[string]any{
 		"name":     userName,
 		"type":     "rodsuser",
 		"password": userPassword,
@@ -163,12 +163,12 @@ func TestCreateRodsUserThenPromoteToGroupAdminRejectsSelfTypeChangesE2E(t *testi
 		t.Fatalf("expected membership summary to include promoted groupadmin user %q, got %s", userName, body)
 	}
 
-	status, body = requestUserGroupAdminE2EAs(t, client, http.MethodPost, userCollectionURL, map[string]any{
+	status, body = requestUserGroupAdminE2EAs(t, client, http.MethodPost, strictUserCollectionURL, map[string]any{
 		"name":     managedUserName,
 		"type":     "rodsuser",
 		"password": managedUserPassword,
 	}, userName, userPassword)
-	requireUserGroupAdminStatusForRequestE2E(t, http.MethodPost, userCollectionURL, status, body, http.StatusCreated)
+	requireUserGroupAdminStatusForRequestE2E(t, http.MethodPost, strictUserCollectionURL, status, body, http.StatusCreated)
 	assertUserAdminUserE2E(t, decodeUserAdminUserResponseE2E(t, body).User, managedUserName, zone, "rodsuser")
 
 	currentUserURL := userGroupAdminURL(baseURL, "/api/v1/user/me", zone)
@@ -181,11 +181,17 @@ func TestCreateRodsUserThenPromoteToGroupAdminRejectsSelfTypeChangesE2E(t *testi
 	status, body = requestUserGroupAdminE2EAs(t, client, http.MethodDelete, managedUserURL, nil, userName, userPassword)
 	requireUserGroupAdminStatusForRequestE2E(t, http.MethodDelete, managedUserURL, status, body, http.StatusForbidden)
 
-	status, body = requestUserGroupAdminE2EAs(t, client, http.MethodPost, groupCollectionURL, map[string]any{
+	status, body = requestUserGroupAdminE2EAs(t, client, http.MethodPost, strictGroupCollectionURL, map[string]any{
 		"name": groupName,
 	}, userName, userPassword)
-	requireUserGroupAdminStatusForRequestE2E(t, http.MethodPost, groupCollectionURL, status, body, http.StatusCreated)
+	requireUserGroupAdminStatusForRequestE2E(t, http.MethodPost, strictGroupCollectionURL, status, body, http.StatusCreated)
 	assertUserAdminGroupE2E(t, decodeUserAdminGroupResponseE2E(t, body).Group, groupName, zone)
+
+	status, body = requestUserGroupAdminE2EAs(t, client, http.MethodPost, memberCollectionURL, map[string]any{
+		"user_name": userName,
+	}, userName, userPassword)
+	requireUserGroupAdminStatusForRequestE2E(t, http.MethodPost, memberCollectionURL, status, body, http.StatusOK)
+	assertUserAdminGroupMemberE2E(t, decodeUserAdminGroupResponseE2E(t, body).Group, userName, true)
 
 	status, body = requestUserGroupAdminE2EAs(t, client, http.MethodPost, memberCollectionURL, map[string]any{
 		"user_name": managedUserName,
